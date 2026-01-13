@@ -1,0 +1,29 @@
+{
+  "name": "gdpr-auditor-frontend",
+  "version": "1.0.0",
+  "description": "GDPR Privacy & Cookie Compliance Auditor Frontend",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "keywords": ["gdpr", "privacy", "cookies", "compliance", "auditor"],
+  "author": "CraftPolicy",
+  "license": "ISC",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "next": "^14.0.0",
+    "chart.js": "^4.4.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-hook-form": "^7.48.0",
+    "zod": "^3.22.0",
+    "@hookform/resolvers": "^3.3.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.3.5",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31"
+  }
+}
