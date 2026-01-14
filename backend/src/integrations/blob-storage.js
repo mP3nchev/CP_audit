@@ -68,6 +68,38 @@ async function uploadScreenshots(screenshots, auditUid) {
 }
 
 /**
+ * Upload any file to Vercel Blob storage (generic function)
+ * @param {Buffer} buffer - File buffer
+ * @param {string} filename - File name with extension
+ * @param {Object} options - Upload options
+ * @returns {Promise<string>} Public URL of uploaded file
+ */
+async function uploadBlob(buffer, filename, options = {}) {
+  if (!process.env.VERCEL_BLOB_TOKEN) {
+    throw new Error('VERCEL_BLOB_TOKEN not configured');
+  }
+
+  const uploadFn = async () => {
+    const blob = await put(filename, buffer, {
+      access: 'public',
+      token: process.env.VERCEL_BLOB_TOKEN,
+      ...options
+    });
+
+    return blob.url;
+  };
+
+  try {
+    const url = await retryBlobUpload(uploadFn, filename);
+    console.log(`✅ Uploaded file: ${filename} → ${url}`);
+    return url;
+  } catch (error) {
+    console.error(`❌ Failed to upload file ${filename}:`, error.message);
+    throw new Error(constants.ERROR_CODES.BLOB_UPLOAD_FAILED.message);
+  }
+}
+
+/**
  * Test blob storage connection
  * @returns {Promise<boolean>} True if connection successful
  */
@@ -95,5 +127,6 @@ async function testBlobConnection() {
 module.exports = {
   uploadScreenshot,
   uploadScreenshots,
+  uploadBlob,
   testBlobConnection
 };

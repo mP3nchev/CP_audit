@@ -38,11 +38,12 @@ app.get('/', (req, res) => {
     name: 'GDPR Privacy & Cookie Compliance Auditor API',
     version: '1.0.0',
     status: 'running',
-    phase: 'Phase 3 - Technical Audits & Risk Assessment Active',
+    phase: 'Phase 4 - HTML Report Generation Active',
     features: {
       phase1: 'Puppeteer Scanner (cookies, tracking, screenshots)',
       phase2: 'Privacy Policy Analysis (37 GDPR criteria)',
-      phase3: 'Risk Assessment, noyb Checklist, Consent Mode V2, Cookie Comparison, Solutions'
+      phase3: 'Risk Assessment, noyb Checklist, Consent Mode V2, Cookie Comparison, Solutions',
+      phase4: 'HTML Report Generation with Chart.js Visualizations & Shareable Links'
     },
     endpoints: {
       health: '/health',
@@ -52,7 +53,9 @@ app.get('/', (req, res) => {
       auditResults: 'GET /api/audit/:id/results',
       listAudits: 'GET /api/audits',
       uploadPolicy: 'POST /api/audit/:id/privacy-policy',
-      getPolicyAnalysis: 'GET /api/audit/:id/policy-analysis'
+      getPolicyAnalysis: 'GET /api/audit/:id/policy-analysis',
+      viewReport: 'GET /api/audit/:id/report',
+      shareReport: 'GET /api/audit/:id/share'
     }
   });
 });
@@ -71,7 +74,9 @@ app.use((req, res) => {
       'GET /api/audit/:id/results',
       'GET /api/audits',
       'POST /api/audit/:id/privacy-policy',
-      'GET /api/audit/:id/policy-analysis'
+      'GET /api/audit/:id/policy-analysis',
+      'GET /api/audit/:id/report',
+      'GET /api/audit/:id/share'
     ]
   });
 });

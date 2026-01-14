@@ -8,6 +8,8 @@ const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-pol
 const { assessRisk, saveRiskAssessment } = require('../analyzers/risk-assessor');
 const { generateSolutions } = require('../analyzers/solution-generator');
 const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
+const { generateReport } = require('../generators/html-report-builder');
+const { uploadBlob } = require('../integrations/blob-storage');
 const constants = require('../config/constants');
 const crypto = require('crypto');
 
@@ -559,6 +561,111 @@ router.get('/api/audit/:audit_id/policy-analysis', (req, res) => {
     console.error('❌ Failed to get policy analysis:', error);
     res.status(500).json({
       error: 'Failed to get policy analysis',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Generate and view HTML report
+ * GET /api/audit/:audit_id/report
+ */
+router.get('/api/audit/:audit_id/report', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    console.log(`📊 Generating report for audit ${audit_id}...`);
+
+    // Verify audit exists
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is completed
+    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
+      return res.status(400).json({
+        error: 'Audit not completed',
+        message: 'Report cannot be generated until audit is complete',
+        status: audit.status
+      });
+    }
+
+    // Generate HTML report
+    const html = await generateReport(audit_id);
+
+    // Return HTML
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+
+  } catch (error) {
+    console.error('❌ Failed to generate report:', error);
+    res.status(500).json({
+      error: 'Failed to generate report',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Generate shareable report link (upload to Vercel Blob)
+ * GET /api/audit/:audit_id/share
+ */
+router.get('/api/audit/:audit_id/share', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    console.log(`🔗 Generating shareable link for audit ${audit_id}...`);
+
+    // Verify audit exists
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is completed
+    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
+      return res.status(400).json({
+        error: 'Audit not completed',
+        message: 'Report cannot be shared until audit is complete',
+        status: audit.status
+      });
+    }
+
+    // Generate HTML report
+    const html = await generateReport(audit_id);
+
+    // Upload to Vercel Blob
+    const filename = `report-${audit_id}-${Date.now()}.html`;
+    const blobUrl = await uploadBlob(Buffer.from(html, 'utf8'), filename);
+
+    console.log(`✅ Report uploaded: ${blobUrl}`);
+
+    res.json({
+      audit_id: audit_id,
+      share_url: blobUrl,
+      filename: filename,
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to generate shareable link:', error);
+    res.status(500).json({
+      error: 'Failed to generate shareable link',
       message: error.message
     });
   }
