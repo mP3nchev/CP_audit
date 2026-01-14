@@ -20,12 +20,14 @@ export default function RootLayout({ children }) {
         <div className="min-h-screen bg-gray-50">
           <header className="bg-white shadow-sm border-b border-gray-200">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-              <h1 className="text-2xl font-bold text-primary-900">
-                GDPR Auditor
-              </h1>
-              <p className="text-sm text-gray-600 mt-1">
-                Privacy & Cookie Compliance Scanner
-              </p>
+              <a href="/" className="block hover:no-underline">
+                <h1 className="text-2xl font-bold text-primary-900 hover:text-primary-600 transition-colors">
+                  GDPR Auditor
+                </h1>
+                <p className="text-sm text-gray-600 mt-1">
+                  Privacy & Cookie Compliance Scanner
+                </p>
+              </a>
             </div>
           </header>
 

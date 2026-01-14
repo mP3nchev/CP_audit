@@ -41,24 +41,18 @@ NEXT_PUBLIC_APP_NAME=GDPR Auditor
 ```
 frontend/
 ├── app/
-│   ├── layout.jsx          # Root layout
-│   ├── page.jsx            # Home page
-│   ├── globals.css         # Global styles
-│   └── audit/              # Audit pages (Phase 5)
-│       └── [id]/
-│           └── page.jsx    # Audit report viewer
-├── components/             # React components (Phase 5)
-│   ├── audit/
-│   │   ├── AuditForm.jsx
-│   │   ├── FileUpload.jsx
-│   │   └── LoadingState.jsx
-│   └── ui/
-│       ├── Button.jsx
-│       ├── Card.jsx
-│       └── Input.jsx
-├── lib/                    # Utilities
-│   ├── api.js             # API client
-│   └── utils.js           # Helper functions
+│   ├── components/         # React components
+│   │   ├── AuditForm.jsx        # Main audit form with validation
+│   │   ├── FileUpload.jsx       # Drag-and-drop file upload
+│   │   ├── LoadingSpinner.jsx   # Loading indicator
+│   │   ├── StatusBadge.jsx      # Status display component
+│   │   └── ResultsDisplay.jsx   # Results and report preview
+│   ├── report/
+│   │   └── [id]/
+│   │       └── page.jsx         # Report viewer page (iframe)
+│   ├── layout.jsx          # Root layout (header, footer)
+│   ├── page.jsx            # Home page with audit flow
+│   └── globals.css         # Global styles + CSS variables
 ├── tailwind.config.js      # Tailwind configuration
 ├── next.config.js          # Next.js configuration
 └── package.json
@@ -66,18 +60,23 @@ frontend/
 
 ## Features
 
-### Phase 0 (Current)
-- ✅ Basic homepage
-- ✅ API health check display
-- ✅ Responsive layout with Tailwind CSS
-- ✅ Design system with GDPR color palette
+### Phase 5: Frontend UI (Complete) ✅
+- ✅ Audit form with URL input
+- ✅ File upload component (drag-and-drop for privacy policy)
+- ✅ Form validation (React Hook Form + Zod)
+- ✅ Loading states and progress indicators
+- ✅ Real-time audit status polling
+- ✅ Report viewer page (iframe embed)
+- ✅ Share functionality with copy-to-clipboard
+- ✅ Results display with report preview
+- ✅ Responsive design (mobile-first)
 
-### Phase 5 (Coming)
-- ⏳ Audit request form
-- ⏳ File upload (drag & drop)
-- ⏳ Progress tracking
-- ⏳ Report viewer
-- ⏳ Share functionality
+### Previous Phases (Complete)
+- ✅ Phase 0: Project setup
+- ✅ Phase 1: Puppeteer scanner
+- ✅ Phase 2: Privacy policy analysis
+- ✅ Phase 3: Risk assessment
+- ✅ Phase 4: HTML report generation
 
 ## Styling
 
@@ -89,10 +88,49 @@ Project uses Tailwind CSS with custom color palette:
 
 See `app/globals.css` for full design system.
 
+## User Flow
+
+1. **Home Page** (`/`)
+   - Enter website URL to audit
+   - Optional: Upload privacy policy file (TXT, PDF, HTML)
+   - Click "Start GDPR Audit"
+
+2. **Processing**
+   - Loading spinner with real-time progress updates
+   - Status polling: scanning → analyzing → generating report
+   - Shows estimated time and current step
+
+3. **Results**
+   - Success message with audit ID
+   - "View Full Report" button (opens report in new tab)
+   - "Copy Share Link" button for sharing
+   - Inline report preview (iframe)
+   - "Start New Audit" button
+
+4. **Report Page** (`/report/[id]`)
+   - Full-screen iframe displaying HTML report
+   - Shareable URL for clients
+   - Error handling for missing reports
+
+## API Integration
+
+Frontend integrates with backend API at `NEXT_PUBLIC_API_URL`:
+
+- **POST** `/api/audit/start` - Start new audit
+- **GET** `/api/audit/:id/status` - Poll audit status
+- **POST** `/api/audit/:id/privacy-policy` - Upload policy file
+- **GET** `/api/audit/:id/report` - Get HTML report
+- **GET** `/api/audit/:id/share` - Shareable report link
+
 ## Testing
 
-Visit http://localhost:3000 and verify:
-- Page loads without errors
-- API status shows "Connected"
-- All feature cards display correctly
-- Responsive design works on mobile
+1. Start backend: `cd backend && npm run dev` (port 3001)
+2. Start frontend: `cd frontend && npm run dev` (port 3000)
+3. Visit http://localhost:3000 and verify:
+   - Page loads without errors
+   - Form validation works (invalid URLs show errors)
+   - File upload accepts drag-and-drop
+   - Can submit audit request
+   - Progress updates appear
+   - Report displays after completion
+   - Share link copies to clipboard
