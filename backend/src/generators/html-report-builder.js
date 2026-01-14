@@ -1,25 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const Handlebars = require('handlebars');
 const { getDatabase } = require('../database/db');
 const { getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
-const {
-  processCookieCategoriesChart,
-  processCriteriaChart,
-  processCookieComparisonChart,
-  getScoreColors,
-  getGradeCategory,
-  getRiskLevelClass,
-  getNoybBadgeStyle,
-  formatEUR,
-  formatDate,
-  truncate,
-  getStatusIcon,
-  getSeverityBadge,
-  escapeHtml
-} = require('./chart-data-processor');
 
 /**
- * Generate HTML report for an audit
+ * Generate HTML report using user's gdpr-report-template.html
  * @param {string} auditUid - Audit UID
  * @returns {Promise<string>} Complete HTML report
  */
@@ -27,19 +13,23 @@ async function generateReport(auditUid) {
   try {
     console.log(`📊 Generating HTML report for audit ${auditUid}...`);
 
-    // Load template
-    const templatePath = path.join(__dirname, '../../templates/report-template.html');
-    let template = fs.readFileSync(templatePath, 'utf8');
+    // Load user's template
+    const templatePath = path.join(__dirname, '../../templates/gdpr-report-template.html');
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = Handlebars.compile(templateSource);
 
     // Gather all audit data
     const data = await gatherAuditData(auditUid);
 
-    // Inject data into template
-    template = injectData(template, data);
+    // Transform data to match template structure
+    const templateData = transformDataForTemplate(data);
 
-    console.log(`✅ Report generated successfully (${(template.length / 1024).toFixed(2)} KB)`);
+    // Render template with data
+    const html = template(templateData);
 
-    return template;
+    console.log(`✅ Report generated successfully (${(html.length / 1024).toFixed(2)} KB)`);
+
+    return html;
   } catch (error) {
     console.error('❌ Report generation failed:', error.message);
     throw error;
@@ -70,7 +60,6 @@ async function gatherAuditData(auditUid) {
 
   // Get policy analysis
   const privacyAnalysis = getPolicyAnalysis(audit.id, 'privacy');
-  const cookieAnalysis = getPolicyAnalysis(audit.id, 'cookie');
 
   // Get cookie comparison
   const cookieComparison = db.prepare(`
@@ -89,8 +78,6 @@ async function gatherAuditData(auditUid) {
   const consentModeStatus = scanResults?.consent_mode_v2_status ?
     JSON.parse(scanResults.consent_mode_v2_status) : null;
 
-  const violationsData = riskAssessment ? JSON.parse(riskAssessment.violations_json || '{}') : {};
-
   return {
     audit,
     scanResults,
@@ -99,7 +86,6 @@ async function gatherAuditData(auditUid) {
     bannerViolations,
     consentModeStatus,
     privacyAnalysis,
-    cookieAnalysis,
     cookieComparison: cookieComparison ? {
       declared: JSON.parse(cookieComparison.declared_cookies_json || '[]'),
       undeclared: JSON.parse(cookieComparison.undeclared_cookies_json || '[]'),
@@ -107,347 +93,272 @@ async function gatherAuditData(auditUid) {
     } : null,
     riskAssessment: riskAssessment ? {
       ...riskAssessment,
-      violations: violationsData.articles || [],
-      aggravating_factors: violationsData.aggravating_factors || [],
-      mitigating_factors: violationsData.mitigating_factors || [],
-      cited_precedents: violationsData.cited_precedents || []
+      violations_json: JSON.parse(riskAssessment.violations_json || '{}')
     } : null
   };
 }
 
 /**
- * Inject data into template
- * @param {string} template - HTML template
- * @param {Object} data - Audit data
- * @returns {string} Populated template
+ * Transform data to match gdpr-report-template.html structure
+ * @param {Object} data - Raw audit data
+ * @returns {Object} Template-compatible data
  */
-function injectData(template, data) {
+function transformDataForTemplate(data) {
   const {
     audit,
     cookies,
     networkRequests,
     bannerViolations,
-    consentModeStatus,
     privacyAnalysis,
     cookieComparison,
     riskAssessment
   } = data;
 
-  // Basic metadata
-  template = template.replace(/{{websiteUrl}}/g, escapeHtml(audit.website_url));
-  template = template.replace(/{{auditId}}/g, escapeHtml(audit.audit_uid));
-  template = template.replace(/{{auditDate}}/g, formatDate(audit.created_at));
-  template = template.replace(/{{reportDate}}/g, formatDate(new Date().toISOString()));
-
-  // Overall score
+  // 1. Executive Summary
   const overallScore = audit.overall_score || 0;
-  const scoreGrade = audit.score_grade || 'F';
-  const scoreColors = getScoreColors(scoreGrade);
-  const scoreCategory = getGradeCategory(scoreGrade);
+  const criticalViolations = bannerViolations.filter(v => v.severity === 'critical');
+  const undeclaredCookies = cookieComparison?.undeclared || [];
+  const passedCriteria = privacyAnalysis?.criteria?.filter(c => c.score >= c.weight) || [];
 
-  template = template.replace(/{{overallScore}}/g, overallScore);
-  template = template.replace(/{{scoreGrade}}/g, scoreGrade);
-  template = template.replace(/{{scoreCategory}}/g, scoreCategory);
-  template = template.replace(/{{scoreColor}}/g, scoreColors.color);
-  template = template.replace(/{{scoreColorDark}}/g, scoreColors.dark);
+  // 2. Scan Results
+  const trackingBeforeConsent = data.scanResults?.tracking_before_consent ? 'YES' : 'NO';
+  const preConsentRequests = networkRequests.filter(r => r.beforeConsent);
 
-  // Component scores (mock calculation from overall data)
-  const privacyScore = privacyAnalysis ? Math.round(privacyAnalysis.percentage) : 0;
-  const bannerScore = Math.round(((8 - bannerViolations.length) / 8) * 100);
-  const technicalScore = data.scanResults?.tracking_before_consent ? 0 : 100;
-  const cookiePolicyScore = cookieComparison ?
-    Math.round((cookieComparison.declared.length / Math.max(cookies.length, 1)) * 100) : 50;
+  // Timeline data for chart
+  const timelineData = {
+    labels: networkRequests.slice(0, 20).map((r, i) => `R${i + 1}`),
+    beforeConsent: networkRequests.slice(0, 20).map(r => r.beforeConsent ? r.timestamp * 1000 : 0),
+    afterConsent: networkRequests.slice(0, 20).map(r => !r.beforeConsent ? r.timestamp * 1000 : 0)
+  };
 
-  template = template.replace(/{{privacyPolicyScore}}/g, privacyScore);
-  template = template.replace(/{{cookieBannerScore}}/g, bannerScore);
-  template = template.replace(/{{technicalScore}}/g, technicalScore);
-  template = template.replace(/{{cookiePolicyScore}}/g, cookiePolicyScore);
+  // 3. Privacy Policy Analysis - Group by tier
+  const tier1 = privacyAnalysis?.criteria?.filter(c => c.tier === 1) || [];
+  const tier2 = privacyAnalysis?.criteria?.filter(c => c.tier === 2) || [];
+  const tier3 = privacyAnalysis?.criteria?.filter(c => c.tier === 3) || [];
+  const tier4 = privacyAnalysis?.criteria?.filter(c => c.tier === 4) || [];
 
-  // Risk data
-  if (riskAssessment) {
-    template = template.replace(/{{riskLevel}}/g, riskAssessment.risk_level || 'Unknown');
-    template = template.replace(/{{riskMin}}/g, formatEUR(riskAssessment.total_risk_min || 0));
-    template = template.replace(/{{riskMax}}/g, formatEUR(riskAssessment.total_risk_max || 0));
-    template = template.replace(/{{riskLevelClass}}/g, getRiskLevelClass(riskAssessment.risk_level));
-    template = template.replace(/{{confidenceLevel}}/g, 'Medium');
-  } else {
-    template = template.replace(/{{riskLevel}}/g, 'Unknown');
-    template = template.replace(/{{riskMin}}/g, '0');
-    template = template.replace(/{{riskMax}}/g, '0');
-    template = template.replace(/{{riskLevelClass}}/g, 'medium');
-    template = template.replace(/{{confidenceLevel}}/g, 'Low');
-  }
+  const calculateTierPercentage = (criteria) => {
+    if (criteria.length === 0) return 100;
+    const totalScore = criteria.reduce((sum, c) => sum + c.score, 0);
+    const maxScore = criteria.reduce((sum, c) => sum + c.weight, 0);
+    return Math.round((totalScore / maxScore) * 100);
+  };
 
-  // Scanner results
-  template = template.replace(/{{totalCookies}}/g, cookies.length);
-  const trackingBeforeConsent = data.scanResults?.tracking_before_consent;
-  template = template.replace(/{{trackingStatus}}/g, trackingBeforeConsent ? 'YES' : 'NO');
-  template = template.replace(/{{trackingColor}}/g, trackingBeforeConsent ? '#ef4444' : '#10b981');
-  const preConsentRequests = networkRequests.filter(r => r.beforeConsent).length;
-  template = template.replace(/{{preConsentRequests}}/g, preConsentRequests);
+  // 4. Cookie Comparison
+  const detectedCookies = cookies.map(cookie => {
+    const isDeclared = cookieComparison?.declared.some(d =>
+      d.name.toLowerCase() === cookie.name.toLowerCase()
+    );
 
-  // Charts
-  const cookieChart = processCookieCategoriesChart(cookies);
-  template = template.replace(/{{cookieCategoriesLabels}}/g, cookieChart.labels);
-  template = template.replace(/{{cookieCategoriesData}}/g, cookieChart.data);
+    return {
+      name: cookie.name,
+      category: cookie.category || 'Unknown',
+      purpose: cookie.purpose || 'Not specified',
+      lifespan: cookie.expiry || 'Session',
+      status_declared: isDeclared,
+      status_undeclared: !isDeclared
+    };
+  });
 
-  if (privacyAnalysis && privacyAnalysis.criteria) {
-    const criteriaChart = processCriteriaChart(privacyAnalysis.criteria);
-    template = template.replace(/{{criteriaLabels}}/g, criteriaChart.labels);
-    template = template.replace(/{{criteriaScores}}/g, criteriaChart.scores);
-  } else {
-    template = template.replace(/{{criteriaLabels}}/g, '[]');
-    template = template.replace(/{{criteriaScores}}/g, '[]');
-  }
+  // 5. Consent Compliance Checklist (noyb violations)
+  const consentViolations = [
+    { rule: 'No tracking before consent', status_pass: !data.scanResults?.tracking_before_consent, status_fail: data.scanResults?.tracking_before_consent, severity: 'critical' },
+    { rule: 'Reject button present', status_pass: !bannerViolations.some(v => v.id === 'type_a'), status_fail: bannerViolations.some(v => v.id === 'type_a'), severity: 'critical' },
+    { rule: 'No pre-ticked boxes', status_pass: !bannerViolations.some(v => v.id === 'type_b'), status_fail: bannerViolations.some(v => v.id === 'type_b'), severity: 'critical' },
+    { rule: 'Fair button design', status_pass: !bannerViolations.some(v => ['type_c', 'type_d', 'type_e'].includes(v.id)), status_fail: bannerViolations.some(v => ['type_c', 'type_d', 'type_e'].includes(v.id)), severity: 'high' },
+    { rule: 'No legitimate interest for ads', status_pass: !bannerViolations.some(v => v.id === 'type_h'), status_fail: bannerViolations.some(v => v.id === 'type_h'), severity: 'critical' },
+    { rule: 'Cookies properly categorized', status_pass: !bannerViolations.some(v => v.id === 'type_i'), status_fail: bannerViolations.some(v => v.id === 'type_i'), severity: 'medium' },
+    { rule: 'Consent withdrawal available', status_pass: !bannerViolations.some(v => v.id === 'type_k'), status_fail: bannerViolations.some(v => v.id === 'type_k'), severity: 'high' }
+  ];
 
-  if (cookieComparison) {
-    const comparisonChart = processCookieComparisonChart({
-      matched: cookieComparison.declared,
-      undeclared: cookieComparison.undeclared,
-      missing: cookieComparison.missing
-    });
-    template = template.replace(/{{cookieComparisonData}}/g, comparisonChart.data);
-  } else {
-    template = template.replace(/{{cookieComparisonData}}/g, '[0, 0, 0]');
-  }
+  // 6. Risk Assessment
+  const riskBreakdown = [
+    {
+      category: 'Tracking Before Consent',
+      percentage: data.scanResults?.tracking_before_consent ? 100 : 0,
+      description: data.scanResults?.tracking_before_consent ?
+        `${preConsentRequests.length} tracking requests detected before user consent` :
+        'No tracking before consent detected',
+      severity: data.scanResults?.tracking_before_consent ? 'critical' : 'low'
+    },
+    {
+      category: 'Cookie Banner Compliance',
+      percentage: Math.round(((8 - bannerViolations.length) / 8) * 100),
+      description: `${bannerViolations.length} violations found in cookie banner implementation`,
+      severity: bannerViolations.length > 3 ? 'critical' : bannerViolations.length > 0 ? 'high' : 'low'
+    },
+    {
+      category: 'Privacy Policy Completeness',
+      percentage: privacyAnalysis?.percentage || 0,
+      description: `${privacyAnalysis?.criteria?.length || 0} GDPR criteria evaluated`,
+      severity: (privacyAnalysis?.percentage || 0) < 50 ? 'critical' : (privacyAnalysis?.percentage || 0) < 70 ? 'high' : 'medium'
+    },
+    {
+      category: 'Cookie Declaration Accuracy',
+      percentage: cookieComparison ? Math.round((cookieComparison.declared.length / Math.max(cookies.length, 1)) * 100) : 0,
+      description: undeclaredCookies.length > 0 ?
+        `${undeclaredCookies.length} undeclared cookies found` :
+        'All cookies properly declared',
+      severity: undeclaredCookies.length > 10 ? 'high' : undeclaredCookies.length > 0 ? 'medium' : 'low'
+    }
+  ];
 
-  // Tables
-  template = template.replace(/{{cookieTableRows}}/g, buildCookieTable(cookies));
-  template = template.replace(/{{criteriaTableRows}}/g, buildCriteriaTable(privacyAnalysis));
-  template = template.replace(/{{precedentsTableRows}}/g, buildPrecedentsTable(riskAssessment));
+  // 7. Recommendations
+  const recommendations = generateRecommendations(data);
 
-  // noyb violations
-  const noybPassedCount = 8 - bannerViolations.length;
-  const noybPercentage = Math.round((noybPassedCount / 8) * 100);
-  const noybBadge = getNoybBadgeStyle(noybPercentage);
+  // 8. Technical Details
+  const scanDate = new Date(audit.created_at);
 
-  template = template.replace(/{{noybPassedCount}}/g, noybPassedCount);
-  template = template.replace(/{{noybPercentage}}/g, noybPercentage);
-  template = template.replace(/{{noybBadgeClass}}/g, noybBadge.class);
-  template = template.replace(/{{noybBarColor}}/g, noybBadge.color);
-  template = template.replace(/{{noybViolationCards}}/g, buildNoybViolationCards(bannerViolations));
+  return {
+    // Header & Meta
+    website: audit.website_url,
+    scan_date: scanDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    scan_date_full: scanDate.toLocaleString('en-US'),
+    scan_id: audit.audit_uid,
+    scanner_version: '1.0.0',
+    target_url: audit.website_url,
+    user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
 
-  // Consent Mode
-  template = template.replace(/{{consentModeIcon}}/g, consentModeStatus?.compliant ? '✓' : '✗');
-  template = template.replace(/{{consentModeStatus}}/g,
-    consentModeStatus?.detected ?
-      (consentModeStatus.compliant ? 'V2 Compliant' : 'V2 Issues Detected') :
-      'Not Detected'
-  );
-  template = template.replace(/{{consentModeMessage}}/g,
-    consentModeStatus?.detected ?
-      (consentModeStatus.compliant ? 'Google Consent Mode V2 is properly configured' : 'Configuration issues found') :
-      'Google Consent Mode not implemented'
-  );
-  template = template.replace(/{{consentModeBackground}}/g,
-    consentModeStatus?.compliant ? '#d1fae5' : '#fef2f2'
-  );
-  template = template.replace(/{{consentModeBorder}}/g,
-    consentModeStatus?.compliant ? '#a7f3d0' : '#fecaca'
-  );
-  template = template.replace(/{{consentModeDetails}}/g, buildConsentModeDetails(consentModeStatus));
+    // Executive Summary
+    overall_score: overallScore,
+    risk_level: getRiskLevelClass(riskAssessment?.risk_level),
+    risk_level_text: riskAssessment?.risk_level || 'Unknown',
+    critical_count: criticalViolations.length,
+    undeclared_count: undeclaredCookies.length,
+    passed_count: passedCriteria.length,
+    critical_violations_title: criticalViolations.length > 0 ?
+      `${criticalViolations.length} Critical Violations Detected` :
+      'No Critical Violations',
+    critical_violations_description: criticalViolations.length > 0 ?
+      `Your website has ${criticalViolations.length} critical GDPR violations requiring immediate attention.` :
+      'Great! No critical violations detected.',
+    undeclared_cookies_title: undeclaredCookies.length > 0 ?
+      `${undeclaredCookies.length} Undeclared Cookies Found` :
+      'All Cookies Declared',
+    undeclared_cookies_description: undeclaredCookies.length > 0 ?
+      `${undeclaredCookies.length} cookies are active on your website but not listed in your Cookie Policy.` :
+      'All detected cookies are properly declared in your Cookie Policy.',
+    passed_criteria_title: `${passedCriteria.length} Criteria Passed`,
+    passed_criteria_description: `Your Privacy Policy meets ${passedCriteria.length} out of 37 GDPR compliance criteria.`,
+    fine_min_eur: formatNumber(riskAssessment?.total_risk_min || 0),
+    fine_max_eur: formatNumber(riskAssessment?.total_risk_max || 0),
 
-  // Cookie comparison content
-  template = template.replace(/{{cookieComparisonContent}}/g, buildCookieComparisonContent(cookieComparison));
+    // Scan Results
+    cookies_detected: cookies.length,
+    cookies_declared: cookieComparison?.declared.length || 0,
+    tracking_before_consent: trackingBeforeConsent,
+    fine_min: formatNumber(riskAssessment?.total_risk_min || 0),
+    fine_max: formatNumber(riskAssessment?.total_risk_max || 0),
+    timeline_data_json: JSON.stringify(timelineData),
 
-  // Risk articles
-  template = template.replace(/{{articleBadges}}/g, buildArticleBadges(riskAssessment));
+    // Privacy Policy Analysis
+    tier1_criteria: tier1.map(c => formatCriterion(c)),
+    tier2_criteria: tier2.map(c => formatCriterion(c)),
+    tier3_criteria: tier3.map(c => formatCriterion(c)),
+    tier4_criteria: tier4.map(c => formatCriterion(c)),
+    tier1_percentage: calculateTierPercentage(tier1),
+    tier2_percentage: calculateTierPercentage(tier2),
+    tier3_percentage: calculateTierPercentage(tier3),
+    tier4_percentage: calculateTierPercentage(tier4),
+    final_percentage: privacyAnalysis?.percentage || 0,
+    final_achieved: privacyAnalysis?.total_score || 0,
+    final_total: privacyAnalysis?.max_score || 100,
 
-  // Solutions (generate mock solutions if not available)
-  template = template.replace(/{{solutionCards}}/g, buildSolutionCards(data));
+    // Cookie Comparison
+    detected_cookies: detectedCookies,
 
-  return template;
+    // Consent Compliance
+    consent_violations: consentViolations,
+
+    // Risk Assessment
+    risk_breakdown: riskBreakdown,
+
+    // Recommendations
+    recommendations: recommendations
+  };
 }
 
 /**
- * Build cookie table rows
+ * Format criterion for template
  */
-function buildCookieTable(cookies) {
-  if (!cookies || cookies.length === 0) {
-    return '<tr><td colspan="5" style="text-align: center; color: #6b7280;">No cookies detected</td></tr>';
-  }
-
-  return cookies.slice(0, 50).map(cookie => `
-    <tr>
-      <td><code>${escapeHtml(cookie.name)}</code></td>
-      <td>${escapeHtml(cookie.domain)}</td>
-      <td>${getSeverityBadge(cookie.category)}</td>
-      <td>${cookie.type === 'third-party' ? '3rd Party' : '1st Party'}</td>
-      <td>${cookie.setBeforeConsent ? '<span style="color: #ef4444;">YES</span>' : '<span style="color: #10b981;">NO</span>'}</td>
-    </tr>
-  `).join('');
+function formatCriterion(criterion) {
+  const passed = criterion.score >= criterion.weight;
+  return {
+    name: criterion.name,
+    score: criterion.score,
+    max_score: criterion.weight,
+    explanation: criterion.recommendation || 'No explanation available',
+    status_pass: passed,
+    status_warning: !passed && criterion.score > 0,
+    status_fail: criterion.score === 0
+  };
 }
 
 /**
- * Build criteria table rows
+ * Generate recommendations
  */
-function buildCriteriaTable(privacyAnalysis) {
-  if (!privacyAnalysis || !privacyAnalysis.criteria) {
-    return '<tr><td colspan="5" style="text-align: center; color: #6b7280;">Policy analysis not available</td></tr>';
-  }
-
-  return privacyAnalysis.criteria.slice(0, 37).map(criterion => {
-    const passed = criterion.score >= criterion.weight;
-    return `
-    <tr>
-      <td>${escapeHtml(criterion.name)}</td>
-      <td><span class="badge badge-${criterion.tier === 1 ? 'critical' : criterion.tier === 2 ? 'high' : 'medium'}">Tier ${criterion.tier}</span></td>
-      <td>${criterion.score}/${criterion.weight}</td>
-      <td>${getStatusIcon(passed)}</td>
-      <td>${truncate(escapeHtml(criterion.recommendation || 'No recommendation'), 100)}</td>
-    </tr>
-  `}).join('');
-}
-
-/**
- * Build precedents table rows
- */
-function buildPrecedentsTable(riskAssessment) {
-  if (!riskAssessment || !riskAssessment.cited_precedents || riskAssessment.cited_precedents.length === 0) {
-    return '<tr><td colspan="5" style="text-align: center; color: #6b7280;">No precedents available</td></tr>';
-  }
-
-  return riskAssessment.cited_precedents.map(p => `
-    <tr>
-      <td>${escapeHtml(p.case_number || 'N/A')}</td>
-      <td>${escapeHtml(p.dpa || 'Unknown')}</td>
-      <td>${formatDate(p.decision_date)}</td>
-      <td style="font-weight: 600;">€${formatEUR(p.fine_eur || 0)}</td>
-      <td>${truncate(escapeHtml(p.summary || 'No summary'), 150)}</td>
-    </tr>
-  `).join('');
-}
-
-/**
- * Build noyb violation cards
- */
-function buildNoybViolationCards(violations) {
-  if (!violations || violations.length === 0) {
-    return '<div style="padding: 20px; background: #d1fae5; border-radius: 8px; color: #059669; text-align: center;">✓ All noyb checks passed!</div>';
-  }
-
-  return violations.map(v => `
-    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin-bottom: 15px;">
-      <div style="display: flex; align-items: center; margin-bottom: 10px;">
-        <span style="font-size: 24px; margin-right: 10px;">✗</span>
-        <div style="flex: 1;">
-          <div style="font-weight: 600; font-size: 16px;">${escapeHtml(v.name)}</div>
-          <div style="font-size: 12px; color: #6b7280;">${escapeHtml(v.id?.toUpperCase())}</div>
-        </div>
-        ${getSeverityBadge(v.severity)}
-      </div>
-      <p style="color: #6b7280; margin-bottom: 10px;">${escapeHtml(v.description)}</p>
-      <div style="font-size: 12px; color: #4b5563;"><strong>Legal Basis:</strong> ${escapeHtml(v.legal_basis)}</div>
-    </div>
-  `).join('');
-}
-
-/**
- * Build consent mode details
- */
-function buildConsentModeDetails(consentModeStatus) {
-  if (!consentModeStatus || !consentModeStatus.detected) {
-    return '<p style="color: #6b7280;">Google Consent Mode not detected on this website.</p>';
-  }
-
-  const issues = consentModeStatus.issues || [];
-
-  if (issues.length === 0) {
-    return '<p style="color: #059669;">All parameters configured correctly.</p>';
-  }
-
-  return `
-    <h4 style="margin-bottom: 10px;">Issues Found:</h4>
-    <ul style="margin-left: 20px; color: #6b7280;">
-      ${issues.map(issue => `<li style="margin-bottom: 5px;">${escapeHtml(issue)}</li>`).join('')}
-    </ul>
-  `;
-}
-
-/**
- * Build cookie comparison content
- */
-function buildCookieComparisonContent(cookieComparison) {
-  if (!cookieComparison) {
-    return '<p style="color: #6b7280;">Cookie policy comparison not available.</p>';
-  }
-
-  return `
-    <div style="margin-top: 30px;">
-      <h3 style="margin-bottom: 15px;">Undeclared Cookies (${cookieComparison.undeclared.length})</h3>
-      ${cookieComparison.undeclared.length > 0 ?
-        `<div style="background: #fef2f2; padding: 15px; border-radius: 8px;">
-          ${cookieComparison.undeclared.slice(0, 10).map(c => `<code style="display: inline-block; margin: 5px; padding: 5px 10px; background: white; border-radius: 4px;">${escapeHtml(c.name)}</code>`).join('')}
-        </div>` :
-        '<p style="color: #059669;">✓ All cookies are declared in Cookie Policy</p>'
-      }
-    </div>
-  `;
-}
-
-/**
- * Build article badges
- */
-function buildArticleBadges(riskAssessment) {
-  if (!riskAssessment || !riskAssessment.violations || riskAssessment.violations.length === 0) {
-    return '<span class="badge badge-pass">No violations detected</span>';
-  }
-
-  return riskAssessment.violations.map(article =>
-    `<span class="badge badge-high">${escapeHtml(article)}</span>`
-  ).join('\n');
-}
-
-/**
- * Build solution cards
- */
-function buildSolutionCards(data) {
-  // Generate mock solutions based on violations
-  const solutions = [];
+function generateRecommendations(data) {
+  const recommendations = [];
 
   if (data.scanResults?.tracking_before_consent) {
-    solutions.push({
+    recommendations.push({
       title: 'Remove Tracking Before Consent',
-      priority: 'Critical',
-      problem: 'Tracking technologies are loaded before user consent.',
-      action: 'Delay all tracking script execution until after user accepts cookies. Implement Google Consent Mode V2 with defaults set to "denied".',
-      impact: 'Eliminates the most severe GDPR violation.'
+      priority: 'critical',
+      description: 'Your website loads tracking technologies before user consent, violating ePrivacy Directive Article 5(3).',
+      action: 'Delay all tracking script execution until after user accepts cookies. Implement Google Consent Mode V2 with all defaults set to "denied".'
     });
   }
 
-  if (data.bannerViolations.length > 0) {
-    solutions.push({
-      title: 'Fix Cookie Banner Violations',
-      priority: 'Critical',
-      problem: `${data.bannerViolations.length} noyb violations detected in cookie banner.`,
-      action: 'Add equally prominent Reject button, remove pre-ticked boxes, ensure fair design.',
-      impact: 'Achieves consent mechanism compliance.'
+  if (data.bannerViolations.some(v => v.id === 'type_a')) {
+    recommendations.push({
+      title: 'Add Prominent Reject Button',
+      priority: 'critical',
+      description: 'Cookie banner lacks an equally prominent "Reject" button, violating GDPR Article 7(4).',
+      action: 'Add a "Reject All" button with the same size, color, and visibility as the "Accept" button on the first layer of your cookie banner.'
     });
   }
 
-  if (!solutions.length) {
-    return '<p style="color: #6b7280;">Great job! No critical issues detected.</p>';
+  if (data.privacyAnalysis && data.privacyAnalysis.percentage < 60) {
+    recommendations.push({
+      title: 'Update Privacy Policy',
+      priority: 'high',
+      description: `Privacy Policy scored ${data.privacyAnalysis.percentage}% - below acceptable compliance threshold.`,
+      action: 'Update your Privacy Policy to include missing GDPR requirements: legal basis for each processing activity, data retention periods, DPO contact details, and information about automated decision-making.'
+    });
   }
 
-  return solutions.map((sol, i) => `
-    <div class="solution-card priority-${sol.priority.toLowerCase()}">
-      <div class="solution-header">
-        <div style="display: flex; align-items: center; flex: 1;">
-          <div class="solution-number">${i + 1}</div>
-          <div class="solution-title">${escapeHtml(sol.title)}</div>
-        </div>
-        <span class="solution-priority badge badge-${sol.priority.toLowerCase()}">${sol.priority}</span>
-      </div>
-      <div class="solution-content">
-        <p><strong>Problem:</strong> ${escapeHtml(sol.problem)}</p>
-        <p><strong>Action:</strong> ${escapeHtml(sol.action)}</p>
-        <p><strong>Impact:</strong> ${escapeHtml(sol.impact)}</p>
-      </div>
-    </div>
-  `).join('');
+  if (data.cookieComparison && data.cookieComparison.undeclared.length > 0) {
+    recommendations.push({
+      title: 'Declare All Cookies',
+      priority: 'high',
+      description: `${data.cookieComparison.undeclared.length} cookies detected on website are not listed in Cookie Policy.`,
+      action: `Add these cookies to your Cookie Policy: ${data.cookieComparison.undeclared.slice(0, 5).map(c => c.name).join(', ')}`
+    });
+  }
+
+  return recommendations.slice(0, 10);
+}
+
+/**
+ * Get risk level CSS class
+ */
+function getRiskLevelClass(riskLevel) {
+  const map = {
+    'Critical': 'critical',
+    'High': 'high',
+    'Medium': 'medium',
+    'Low': 'low'
+  };
+  return map[riskLevel] || 'medium';
+}
+
+/**
+ * Format number with thousands separator
+ */
+function formatNumber(num) {
+  return new Intl.NumberFormat('en-US').format(num);
 }
 
 module.exports = {
-  generateReport,
-  gatherAuditData
+  generateReport
 };
