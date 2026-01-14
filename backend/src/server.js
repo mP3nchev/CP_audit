@@ -5,6 +5,22 @@ const { initDatabase, closeDatabase } = require('./database/db');
 const healthRoutes = require('./routes/health.routes');
 const auditRoutes = require('./routes/audit.routes');
 const constants = require('./config/constants');
+const { errorHandler } = require('./config/error-codes');
+
+// Environment variable validation
+const requiredEnvVars = ['CLAUDE_API_KEY', 'VERCEL_BLOB_TOKEN'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:');
+  missingEnvVars.forEach(varName => {
+    console.error(`   - ${varName}`);
+  });
+  console.error('\nPlease check your .env file and ensure all required variables are set.');
+  process.exit(1);
+}
+
+console.log('✅ Environment variables validated');
 
 const app = express();
 
@@ -81,14 +97,8 @@ app.use((req, res) => {
   });
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('❌ Error:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
-    code: err.code || 'E500'
-  });
-});
+// Global error handling middleware (must be last)
+app.use(errorHandler);
 
 // Start server
 const PORT = constants.PORT;

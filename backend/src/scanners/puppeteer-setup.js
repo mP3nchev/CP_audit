@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer');
 const constants = require('../config/constants');
+const { saveErrorScreenshot } = require('../utils/error-logger');
 
 /**
  * Launch Puppeteer browser with optimized settings
@@ -61,12 +62,13 @@ async function createPage(browser) {
 }
 
 /**
- * Navigate to URL with retry logic
+ * Navigate to URL with retry logic and error screenshot capture
  * @param {Page} page - Puppeteer page
  * @param {string} url - URL to navigate to
+ * @param {string} auditId - Optional audit ID for error screenshots
  * @returns {Promise<Response>} Navigation response
  */
-async function navigateToUrl(page, url) {
+async function navigateToUrl(page, url, auditId = 'unknown') {
   try {
     console.log(`🌐 Navigating to: ${url}`);
 
@@ -89,6 +91,15 @@ async function navigateToUrl(page, url) {
     return response;
   } catch (error) {
     console.error(`❌ Navigation failed: ${error.message}`);
+
+    // Capture screenshot for debugging
+    try {
+      const screenshot = await page.screenshot({ fullPage: false });
+      await saveErrorScreenshot(screenshot, auditId, 'navigation-failure');
+    } catch (screenshotError) {
+      console.error('Failed to capture error screenshot:', screenshotError);
+    }
+
     throw error;
   }
 }
@@ -137,11 +148,41 @@ async function getPageMetadata(page) {
   return { title, url };
 }
 
+/**
+ * Capture screenshot on error for debugging
+ * @param {Page} page - Puppeteer page
+ * @param {string} auditId - Audit ID
+ * @param {string} errorType - Type of error (timeout, crash, etc.)
+ * @returns {Promise<string>} Path to saved screenshot
+ */
+async function captureErrorScreenshot(page, auditId, errorType = 'error') {
+  try {
+    if (!page || page.isClosed()) {
+      console.log('⚠️  Cannot capture screenshot - page is closed');
+      return null;
+    }
+
+    const screenshot = await page.screenshot({
+      fullPage: false,
+      type: 'png'
+    });
+
+    const filepath = await saveErrorScreenshot(screenshot, auditId, errorType);
+    console.log(`📸 Error screenshot saved: ${filepath}`);
+
+    return filepath;
+  } catch (error) {
+    console.error('❌ Failed to capture error screenshot:', error);
+    return null;
+  }
+}
+
 module.exports = {
   launchBrowser,
   createPage,
   navigateToUrl,
   waitForPageStability,
   closeBrowser,
-  getPageMetadata
+  getPageMetadata,
+  captureErrorScreenshot
 };
