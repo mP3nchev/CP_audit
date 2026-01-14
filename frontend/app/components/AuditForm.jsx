@@ -36,20 +36,36 @@ export default function AuditForm({ onAuditComplete }) {
       setProgress('Starting audit scan...');
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      console.log('API URL:', apiUrl);
+      console.log('Sending request to:', `${apiUrl}/api/audit/start`);
 
       // Step 1: Start audit
       const startResponse = await fetch(`${apiUrl}/api/audit/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ websiteUrl: data.websiteUrl })
+        body: JSON.stringify({ website_url: data.websiteUrl })
       });
 
-      if (!startResponse.ok) {
-        const error = await startResponse.json();
-        throw new Error(error.error || 'Failed to start audit');
+      console.log('Response status:', startResponse.status);
+      console.log('Response headers:', Object.fromEntries(startResponse.headers.entries()));
+
+      // Read response body once
+      const responseText = await startResponse.text();
+      console.log('Response body:', responseText);
+
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse response as JSON:', parseError);
+        throw new Error('Server returned invalid response. Please check if backend is running correctly.');
       }
 
-      const { auditId } = await startResponse.json();
+      if (!startResponse.ok) {
+        throw new Error(responseData.error || `Server error: ${startResponse.status}`);
+      }
+
+      const auditId = responseData.audit_id || responseData.auditId;
       console.log('Audit started:', auditId);
 
       // Step 2: Upload privacy policy if provided
