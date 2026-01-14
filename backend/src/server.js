@@ -38,14 +38,16 @@ app.get('/', (req, res) => {
     name: 'GDPR Privacy & Cookie Compliance Auditor API',
     version: '1.0.0',
     status: 'running',
-    phase: 'Phase 1 - Scanner Active',
+    phase: 'Phase 2 - Privacy Policy Analyzer Active',
     endpoints: {
       health: '/health',
       detailedHealth: '/health/detailed',
       startAudit: 'POST /api/audit/start',
       auditStatus: 'GET /api/audit/:id/status',
       auditResults: 'GET /api/audit/:id/results',
-      listAudits: 'GET /api/audits'
+      listAudits: 'GET /api/audits',
+      uploadPolicy: 'POST /api/audit/:id/privacy-policy',
+      getPolicyAnalysis: 'GET /api/audit/:id/policy-analysis'
     }
   });
 });
@@ -62,7 +64,9 @@ app.use((req, res) => {
       'POST /api/audit/start',
       'GET /api/audit/:id/status',
       'GET /api/audit/:id/results',
-      'GET /api/audits'
+      'GET /api/audits',
+      'POST /api/audit/:id/privacy-policy',
+      'GET /api/audit/:id/policy-analysis'
     ]
   });
 });

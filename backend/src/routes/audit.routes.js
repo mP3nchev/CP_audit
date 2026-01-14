@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { getDatabase } = require('../database/db');
 const { scanWebsite } = require('../scanners/website-scanner');
+const { analyzePolicyFile, getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
+const { uploadMultipleFiles } = require('../middleware/file-upload');
 const constants = require('../config/constants');
 const crypto = require('crypto');
 
@@ -277,6 +279,146 @@ router.get('/api/audits', (req, res) => {
     console.error('❌ Failed to list audits:', error);
     res.status(500).json({
       error: 'Failed to list audits',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Upload and analyze privacy policy
+ * POST /api/audit/:audit_id/privacy-policy
+ * Form data: privacy_policy (file), cookie_policy (file, optional)
+ */
+router.post(
+  '/api/audit/:audit_id/privacy-policy',
+  uploadMultipleFiles([
+    { name: 'privacy_policy', maxCount: 1 },
+    { name: 'cookie_policy', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    try {
+      const { audit_id } = req.params;
+
+      // Get audit from database
+      const db = getDatabase();
+      const audit = db.prepare(`
+        SELECT * FROM audits WHERE audit_uid = ?
+      `).get(audit_id);
+
+      if (!audit) {
+        return res.status(404).json({
+          error: 'Audit not found',
+          code: 'E404'
+        });
+      }
+
+      // Check if files were uploaded
+      if (!req.files || !req.files.privacy_policy) {
+        return res.status(400).json({
+          error: 'Missing privacy_policy file',
+          message: 'Please upload a privacy policy file (PDF, DOCX, or HTML)'
+        });
+      }
+
+      const privacyPolicyFile = req.files.privacy_policy[0];
+      const cookiePolicyFile = req.files.cookie_policy ? req.files.cookie_policy[0] : null;
+
+      console.log(`📤 Received policy files for audit ${audit_id}`);
+      console.log(`   Privacy policy: ${privacyPolicyFile.originalname} (${(privacyPolicyFile.size / 1024).toFixed(2)} KB)`);
+      if (cookiePolicyFile) {
+        console.log(`   Cookie policy: ${cookiePolicyFile.originalname} (${(cookiePolicyFile.size / 1024).toFixed(2)} KB)`);
+      }
+
+      // Analyze privacy policy
+      const privacyResult = await analyzePolicyFile(
+        privacyPolicyFile.buffer,
+        privacyPolicyFile.originalname,
+        audit.id,
+        'privacy'
+      );
+
+      // Analyze cookie policy if provided
+      let cookieResult = null;
+      if (cookiePolicyFile) {
+        cookieResult = await analyzePolicyFile(
+          cookiePolicyFile.buffer,
+          cookiePolicyFile.originalname,
+          audit.id,
+          'cookie'
+        );
+      }
+
+      // Return results
+      res.json({
+        audit_id: audit.audit_uid,
+        privacy_policy: {
+          analyzed: true,
+          score: privacyResult.analysis.total_score,
+          max_score: privacyResult.analysis.max_score,
+          percentage: privacyResult.analysis.percentage,
+          category: privacyResult.analysis.category,
+          criteria_count: privacyResult.analysis.criteria?.length || 0,
+          cost: `$${privacyResult.usage.cost_usd.toFixed(4)}`,
+          duration: `${privacyResult.duration}s`
+        },
+        cookie_policy: cookieResult ? {
+          analyzed: true,
+          score: cookieResult.analysis.total_score,
+          max_score: cookieResult.analysis.max_score,
+          percentage: cookieResult.analysis.percentage,
+          category: cookieResult.analysis.category,
+          cost: `$${cookieResult.usage.cost_usd.toFixed(4)}`,
+          duration: `${cookieResult.duration}s`
+        } : {
+          analyzed: false,
+          message: 'Cookie policy not provided'
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Failed to analyze policy:', error);
+      res.status(500).json({
+        error: 'Failed to analyze policy',
+        message: error.message
+      });
+    }
+  }
+);
+
+/**
+ * Get policy analysis results
+ * GET /api/audit/:audit_id/policy-analysis
+ */
+router.get('/api/audit/:audit_id/policy-analysis', (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Get policy analyses
+    const privacyAnalysis = getPolicyAnalysis(audit.id, 'privacy');
+    const cookieAnalysis = getPolicyAnalysis(audit.id, 'cookie');
+
+    res.json({
+      audit_id: audit.audit_uid,
+      privacy_policy: privacyAnalysis || { analyzed: false },
+      cookie_policy: cookieAnalysis || { analyzed: false }
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to get policy analysis:', error);
+    res.status(500).json({
+      error: 'Failed to get policy analysis',
       message: error.message
     });
   }
