@@ -4,6 +4,10 @@ const { getDatabase } = require('../database/db');
 const { scanWebsite } = require('../scanners/website-scanner');
 const { analyzePolicyFile, getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
 const { uploadMultipleFiles } = require('../middleware/file-upload');
+const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-policy-comparator');
+const { assessRisk, saveRiskAssessment } = require('../analyzers/risk-assessor');
+const { generateSolutions } = require('../analyzers/solution-generator');
+const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
 const constants = require('../config/constants');
 const crypto = require('crypto');
 
@@ -285,7 +289,7 @@ router.get('/api/audits', (req, res) => {
 });
 
 /**
- * Upload and analyze privacy policy
+ * Upload and analyze privacy policy + run Phase 3 audits
  * POST /api/audit/:audit_id/privacy-policy
  * Form data: privacy_policy (file), cookie_policy (file, optional)
  */
@@ -329,7 +333,9 @@ router.post(
         console.log(`   Cookie policy: ${cookiePolicyFile.originalname} (${(cookiePolicyFile.size / 1024).toFixed(2)} KB)`);
       }
 
-      // Analyze privacy policy
+      // PHASE 2: Analyze privacy policy
+      console.log('');
+      console.log('=== PHASE 2: Privacy Policy Analysis ===');
       const privacyResult = await analyzePolicyFile(
         privacyPolicyFile.buffer,
         privacyPolicyFile.originalname,
@@ -348,9 +354,22 @@ router.post(
         );
       }
 
-      // Return results
+      // PHASE 3: Run comprehensive analysis asynchronously
+      console.log('');
+      console.log('=== PHASE 3: Technical Audits & Risk Assessment ===');
+      runPhase3Analysis(audit.id, audit.audit_uid, cookiePolicyFile)
+        .then(() => {
+          console.log(`✅ Phase 3 complete for audit ${audit.audit_uid}`);
+        })
+        .catch(error => {
+          console.error(`❌ Phase 3 failed for audit ${audit.audit_uid}:`, error.message);
+        });
+
+      // Return immediate results (Phase 2 only)
       res.json({
         audit_id: audit.audit_uid,
+        phase: 2,
+        message: 'Privacy policy analyzed. Phase 3 (risk assessment, solutions) running in background.',
         privacy_policy: {
           analyzed: true,
           score: privacyResult.analysis.total_score,
@@ -384,6 +403,127 @@ router.post(
     }
   }
 );
+
+/**
+ * Run Phase 3 analysis (async)
+ * @param {number} auditId - Audit ID
+ * @param {string} auditUid - Audit UID
+ * @param {Object} cookiePolicyFile - Cookie policy file (if provided)
+ */
+async function runPhase3Analysis(auditId, auditUid, cookiePolicyFile) {
+  try {
+    const db = getDatabase();
+
+    // Get scan results from Phase 1
+    const scanResults = db.prepare(`
+      SELECT * FROM scan_results WHERE audit_id = ?
+    `).get(auditId);
+
+    if (!scanResults) {
+      console.log('⚠️  Scan results not found, skipping Phase 3');
+      return;
+    }
+
+    // Get policy analysis from Phase 2
+    const privacyAnalysis = getPolicyAnalysis(auditId, 'privacy');
+
+    if (!privacyAnalysis) {
+      console.log('⚠️  Privacy policy analysis not found, skipping Phase 3');
+      return;
+    }
+
+    // Parse scan results
+    const cookies = JSON.parse(scanResults.cookies_json || '[]');
+    const networkRequests = JSON.parse(scanResults.network_requests_json || '[]');
+    const bannerViolations = JSON.parse(scanResults.banner_violations_json || '[]');
+    const consentModeStatus = scanResults.consent_mode_v2_status ?
+      JSON.parse(scanResults.consent_mode_v2_status) : null;
+
+    // Task 1: Cookie Policy Comparison (if cookie policy provided)
+    let cookieComparison = null;
+    if (cookiePolicyFile) {
+      try {
+        console.log('🍪 Comparing Cookie Policy with detected cookies...');
+        cookieComparison = await compareCookiePolicy(
+          cookiePolicyFile.buffer,
+          cookiePolicyFile.originalname,
+          cookies,
+          auditId
+        );
+
+        // Save to database
+        saveComparison(db, auditId, cookieComparison);
+      } catch (error) {
+        console.error('Cookie comparison failed:', error.message);
+      }
+    }
+
+    // Task 2: Risk Assessment
+    console.log('⚖️  Assessing GDPR compliance risk...');
+    const violations = {
+      trackingBeforeConsent: !!scanResults.tracking_before_consent,
+      trackingBeforeConsentCount: networkRequests.filter(r => r.beforeConsent).length,
+      bannerViolations,
+      privacyPolicyScore: privacyAnalysis.percentage || 0,
+      privacyPolicyFailedCriteria: privacyAnalysis.criteria?.filter(c => c.score < c.weight) || [],
+      undeclaredCookies: cookieComparison?.undeclared || [],
+      consentModeCompliant: consentModeStatus?.compliant || false,
+      consentModeIssues: consentModeStatus?.issues || []
+    };
+
+    const riskAssessment = await assessRisk(violations);
+    saveRiskAssessment(db, auditId, riskAssessment, violations);
+
+    // Task 3: Generate Solutions
+    console.log('💡 Generating personalized solutions...');
+    const auditData = {
+      ...violations,
+      websiteUrl: scanResults.website_url,
+      overallScore: 0,  // Will be calculated next
+      riskLevel: riskAssessment.risk_level
+    };
+
+    const solutions = await generateSolutions(auditData);
+
+    // Task 4: Calculate Overall Compliance Score
+    console.log('📊 Calculating overall compliance score...');
+    const scoreResult = calculateOverallScore({
+      scanResults: {
+        tracking_before_consent: !!scanResults.tracking_before_consent,
+        cookies
+      },
+      policyAnalysis: privacyAnalysis,
+      bannerAnalysis: {
+        violations: bannerViolations,
+        totalChecks: 8,
+        passedCount: 8 - bannerViolations.length
+      },
+      consentModeAnalysis: consentModeStatus,
+      cookieComparison
+    });
+
+    // Update audit record with overall score
+    db.prepare(`
+      UPDATE audits
+      SET overall_score = ?,
+          score_grade = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(scoreResult.overallScore, scoreResult.grade, auditId);
+
+    console.log('');
+    console.log('✅ === PHASE 3 COMPLETE ===');
+    console.log(`   Overall Score: ${scoreResult.overallScore}/100 (Grade ${scoreResult.grade})`);
+    console.log(`   Risk Level: ${riskAssessment.risk_level}`);
+    console.log(`   Risk Range: €${riskAssessment.risk_min} - €${riskAssessment.risk_max}`);
+    console.log(`   Solutions: ${solutions.length} recommendations generated`);
+    console.log('');
+
+  } catch (error) {
+    console.error('❌ Phase 3 analysis failed:', error);
+    throw error;
+  }
+}
 
 /**
  * Get policy analysis results

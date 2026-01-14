@@ -38,7 +38,12 @@ app.get('/', (req, res) => {
     name: 'GDPR Privacy & Cookie Compliance Auditor API',
     version: '1.0.0',
     status: 'running',
-    phase: 'Phase 2 - Privacy Policy Analyzer Active',
+    phase: 'Phase 3 - Technical Audits & Risk Assessment Active',
+    features: {
+      phase1: 'Puppeteer Scanner (cookies, tracking, screenshots)',
+      phase2: 'Privacy Policy Analysis (37 GDPR criteria)',
+      phase3: 'Risk Assessment, noyb Checklist, Consent Mode V2, Cookie Comparison, Solutions'
+    },
     endpoints: {
       health: '/health',
       detailedHealth: '/health/detailed',
