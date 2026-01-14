@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { initDatabase, closeDatabase } = require('./database/db');
 const healthRoutes = require('./routes/health.routes');
+const auditRoutes = require('./routes/audit.routes');
 const constants = require('./config/constants');
 
 const app = express();
@@ -29,6 +30,7 @@ try {
 
 // Routes
 app.use('/', healthRoutes);
+app.use('/', auditRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -36,9 +38,14 @@ app.get('/', (req, res) => {
     name: 'GDPR Privacy & Cookie Compliance Auditor API',
     version: '1.0.0',
     status: 'running',
+    phase: 'Phase 1 - Scanner Active',
     endpoints: {
       health: '/health',
-      detailedHealth: '/health/detailed'
+      detailedHealth: '/health/detailed',
+      startAudit: 'POST /api/audit/start',
+      auditStatus: 'GET /api/audit/:id/status',
+      auditResults: 'GET /api/audit/:id/results',
+      listAudits: 'GET /api/audits'
     }
   });
 });
@@ -51,7 +58,11 @@ app.use((req, res) => {
     availableEndpoints: [
       'GET /',
       'GET /health',
-      'GET /health/detailed'
+      'GET /health/detailed',
+      'POST /api/audit/start',
+      'GET /api/audit/:id/status',
+      'GET /api/audit/:id/results',
+      'GET /api/audits'
     ]
   });
 });

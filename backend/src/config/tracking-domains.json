@@ -1,0 +1,50 @@
+{
+  "analytics": [
+    "google-analytics.com",
+    "googletagmanager.com",
+    "analytics.google.com",
+    "stats.g.doubleclick.net",
+    "hotjar.com",
+    "mouseflow.com",
+    "crazyegg.com",
+    "clicky.com",
+    "statcounter.com",
+    "matomo.org",
+    "piwik.org",
+    "mixpanel.com",
+    "segment.com",
+    "amplitude.com",
+    "heap.io",
+    "fullstory.com"
+  ],
+  "advertising": [
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "adservice.google.com",
+    "facebook.com/tr",
+    "facebook.net",
+    "connect.facebook.net",
+    "ads.linkedin.com",
+    "px.ads.linkedin.com",
+    "adnxs.com",
+    "adsrvr.org",
+    "criteo.com",
+    "outbrain.com",
+    "taboola.com",
+    "quantserve.com",
+    "rubiconproject.com",
+    "pubmatic.com"
+  ],
+  "social_media": [
+    "facebook.com",
+    "facebook.net",
+    "twitter.com",
+    "linkedin.com",
+    "instagram.com",
+    "pinterest.com",
+    "youtube.com",
+    "tiktok.com",
+    "snapchat.com"
+  ]
+}
