@@ -1,0 +1,674 @@
+const express = require('express');
+const router = express.Router();
+const { getDatabase } = require('../database/db');
+const { scanWebsite } = require('../scanners/website-scanner');
+const { analyzePolicyFile, getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
+const { uploadMultipleFiles } = require('../middleware/file-upload');
+const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-policy-comparator');
+const { assessRisk, saveRiskAssessment } = require('../analyzers/risk-assessor');
+const { generateSolutions } = require('../analyzers/solution-generator');
+const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
+const { generateReport } = require('../generators/html-report-builder');
+const { uploadBlob } = require('../integrations/blob-storage');
+const constants = require('../config/constants');
+const crypto = require('crypto');
+
+/**
+ * Start a new audit
+ * POST /api/audit/start
+ * Body: { website_url: string }
+ */
+router.post('/api/audit/start', async (req, res) => {
+  let auditId = null;
+
+  try {
+    const { website_url } = req.body;
+
+    // Validate URL
+    if (!website_url) {
+      return res.status(400).json({
+        error: 'Missing website_url',
+        code: 'E003'
+      });
+    }
+
+    // Validate URL format
+    try {
+      new URL(website_url);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid URL format',
+        code: 'E003',
+        message: constants.ERROR_CODES.INVALID_URL.message
+      });
+    }
+
+    // Generate unique audit ID
+    const auditUid = `aud_${crypto.randomBytes(8).toString('hex')}`;
+
+    // Create audit record
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO audits (audit_uid, website_url, status, created_at, updated_at)
+      VALUES (?, ?, ?, datetime('now'), datetime('now'))
+    `);
+
+    const result = stmt.run(auditUid, website_url, constants.AUDIT_STATUS.PROCESSING);
+    auditId = result.lastInsertRowid;
+
+    console.log(`📝 Created audit: ${auditUid} (ID: ${auditId})`);
+
+    // Start scanning asynchronously
+    scanWebsite(website_url, auditId, auditUid)
+      .then(scanResults => {
+        // Update audit status to completed
+        const updateStmt = db.prepare(`
+          UPDATE audits
+          SET status = ?,
+              completed_at = datetime('now'),
+              updated_at = datetime('now')
+          WHERE id = ?
+        `);
+        updateStmt.run(constants.AUDIT_STATUS.COMPLETED, auditId);
+
+        console.log(`✅ Audit ${auditUid} completed successfully`);
+      })
+      .catch(error => {
+        // Update audit status to failed
+        const updateStmt = db.prepare(`
+          UPDATE audits
+          SET status = ?,
+              error_message = ?,
+              updated_at = datetime('now')
+          WHERE id = ?
+        `);
+        updateStmt.run(
+          constants.AUDIT_STATUS.FAILED,
+          error.message,
+          auditId
+        );
+
+        console.error(`❌ Audit ${auditUid} failed:`, error.message);
+      });
+
+    // Return immediate response
+    res.status(200).json({
+      audit_id: auditUid,
+      status: 'processing',
+      created_at: new Date().toISOString(),
+      estimated_duration: '3-5 minutes',
+      message: 'Audit started successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to start audit:', error);
+
+    // If audit was created, mark it as failed
+    if (auditId) {
+      try {
+        const db = getDatabase();
+        const updateStmt = db.prepare(`
+          UPDATE audits
+          SET status = ?, error_message = ?
+          WHERE id = ?
+        `);
+        updateStmt.run(constants.AUDIT_STATUS.FAILED, error.message, auditId);
+      } catch (dbError) {
+        console.error('Failed to update audit status:', dbError);
+      }
+    }
+
+    res.status(500).json({
+      error: 'Failed to start audit',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get audit status
+ * GET /api/audit/:audit_id/status
+ */
+router.get('/api/audit/:audit_id/status', (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT
+        audit_uid,
+        website_url,
+        status,
+        error_message,
+        created_at,
+        updated_at,
+        completed_at
+      FROM audits
+      WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    const response = {
+      audit_id: audit.audit_uid,
+      website_url: audit.website_url,
+      status: audit.status,
+      created_at: audit.created_at,
+      updated_at: audit.updated_at
+    };
+
+    if (audit.status === constants.AUDIT_STATUS.COMPLETED) {
+      response.completed_at = audit.completed_at;
+      response.report_url = `/api/audit/${audit.audit_uid}/report`;
+    }
+
+    if (audit.status === constants.AUDIT_STATUS.FAILED) {
+      response.error_message = audit.error_message;
+    }
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('❌ Failed to get audit status:', error);
+    res.status(500).json({
+      error: 'Failed to get audit status',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get audit results (detailed)
+ * GET /api/audit/:audit_id/results
+ */
+router.get('/api/audit/:audit_id/results', (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    const db = getDatabase();
+
+    // Get audit info
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
+      return res.status(400).json({
+        error: 'Audit not completed',
+        status: audit.status,
+        message: audit.status === constants.AUDIT_STATUS.FAILED
+          ? audit.error_message
+          : 'Audit is still processing'
+      });
+    }
+
+    // Get scan results
+    const scanResults = db.prepare(`
+      SELECT * FROM scan_results WHERE audit_id = ?
+    `).get(audit.id);
+
+    if (!scanResults) {
+      return res.status(404).json({
+        error: 'Scan results not found'
+      });
+    }
+
+    // Parse JSON fields
+    const results = {
+      audit: {
+        audit_id: audit.audit_uid,
+        website_url: audit.website_url,
+        status: audit.status,
+        created_at: audit.created_at,
+        completed_at: audit.completed_at
+      },
+      scan: {
+        cookies: JSON.parse(scanResults.cookies_json || '[]'),
+        network_requests: JSON.parse(scanResults.network_requests_json || '[]'),
+        tracking_before_consent: !!scanResults.tracking_before_consent,
+        screenshots: {
+          full: scanResults.screenshot_full_url,
+          banner: scanResults.screenshot_banner_url
+        },
+        scan_duration_seconds: scanResults.scan_duration_seconds
+      }
+    };
+
+    res.json(results);
+
+  } catch (error) {
+    console.error('❌ Failed to get audit results:', error);
+    res.status(500).json({
+      error: 'Failed to get audit results',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * List all audits
+ * GET /api/audits
+ */
+router.get('/api/audits', (req, res) => {
+  try {
+    const db = getDatabase();
+    const audits = db.prepare(`
+      SELECT
+        audit_uid,
+        website_url,
+        status,
+        created_at,
+        completed_at
+      FROM audits
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).all();
+
+    res.json({
+      count: audits.length,
+      audits: audits
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to list audits:', error);
+    res.status(500).json({
+      error: 'Failed to list audits',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Upload and analyze privacy policy + run Phase 3 audits
+ * POST /api/audit/:audit_id/privacy-policy
+ * Form data: privacy_policy (file), cookie_policy (file, optional)
+ */
+router.post(
+  '/api/audit/:audit_id/privacy-policy',
+  uploadMultipleFiles([
+    { name: 'privacy_policy', maxCount: 1 },
+    { name: 'cookie_policy', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    try {
+      const { audit_id } = req.params;
+
+      // Get audit from database
+      const db = getDatabase();
+      const audit = db.prepare(`
+        SELECT * FROM audits WHERE audit_uid = ?
+      `).get(audit_id);
+
+      if (!audit) {
+        return res.status(404).json({
+          error: 'Audit not found',
+          code: 'E404'
+        });
+      }
+
+      // Check if files were uploaded
+      if (!req.files || !req.files.privacy_policy) {
+        return res.status(400).json({
+          error: 'Missing privacy_policy file',
+          message: 'Please upload a privacy policy file (PDF, DOCX, or HTML)'
+        });
+      }
+
+      const privacyPolicyFile = req.files.privacy_policy[0];
+      const cookiePolicyFile = req.files.cookie_policy ? req.files.cookie_policy[0] : null;
+
+      console.log(`📤 Received policy files for audit ${audit_id}`);
+      console.log(`   Privacy policy: ${privacyPolicyFile.originalname} (${(privacyPolicyFile.size / 1024).toFixed(2)} KB)`);
+      if (cookiePolicyFile) {
+        console.log(`   Cookie policy: ${cookiePolicyFile.originalname} (${(cookiePolicyFile.size / 1024).toFixed(2)} KB)`);
+      }
+
+      // PHASE 2: Analyze privacy policy
+      console.log('');
+      console.log('=== PHASE 2: Privacy Policy Analysis ===');
+      const privacyResult = await analyzePolicyFile(
+        privacyPolicyFile.buffer,
+        privacyPolicyFile.originalname,
+        audit.id,
+        'privacy'
+      );
+
+      // Analyze cookie policy if provided
+      let cookieResult = null;
+      if (cookiePolicyFile) {
+        cookieResult = await analyzePolicyFile(
+          cookiePolicyFile.buffer,
+          cookiePolicyFile.originalname,
+          audit.id,
+          'cookie'
+        );
+      }
+
+      // PHASE 3: Run comprehensive analysis asynchronously
+      console.log('');
+      console.log('=== PHASE 3: Technical Audits & Risk Assessment ===');
+      runPhase3Analysis(audit.id, audit.audit_uid, cookiePolicyFile)
+        .then(() => {
+          console.log(`✅ Phase 3 complete for audit ${audit.audit_uid}`);
+        })
+        .catch(error => {
+          console.error(`❌ Phase 3 failed for audit ${audit.audit_uid}:`, error.message);
+        });
+
+      // Return immediate results (Phase 2 only)
+      res.json({
+        audit_id: audit.audit_uid,
+        phase: 2,
+        message: 'Privacy policy analyzed. Phase 3 (risk assessment, solutions) running in background.',
+        privacy_policy: {
+          analyzed: true,
+          score: privacyResult.analysis.total_score,
+          max_score: privacyResult.analysis.max_score,
+          percentage: privacyResult.analysis.percentage,
+          category: privacyResult.analysis.category,
+          criteria_count: privacyResult.analysis.criteria?.length || 0,
+          cost: `$${privacyResult.usage.cost_usd.toFixed(4)}`,
+          duration: `${privacyResult.duration}s`
+        },
+        cookie_policy: cookieResult ? {
+          analyzed: true,
+          score: cookieResult.analysis.total_score,
+          max_score: cookieResult.analysis.max_score,
+          percentage: cookieResult.analysis.percentage,
+          category: cookieResult.analysis.category,
+          cost: `$${cookieResult.usage.cost_usd.toFixed(4)}`,
+          duration: `${cookieResult.duration}s`
+        } : {
+          analyzed: false,
+          message: 'Cookie policy not provided'
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Failed to analyze policy:', error);
+      res.status(500).json({
+        error: 'Failed to analyze policy',
+        message: error.message
+      });
+    }
+  }
+);
+
+/**
+ * Run Phase 3 analysis (async)
+ * @param {number} auditId - Audit ID
+ * @param {string} auditUid - Audit UID
+ * @param {Object} cookiePolicyFile - Cookie policy file (if provided)
+ */
+async function runPhase3Analysis(auditId, auditUid, cookiePolicyFile) {
+  try {
+    const db = getDatabase();
+
+    // Get scan results from Phase 1
+    const scanResults = db.prepare(`
+      SELECT * FROM scan_results WHERE audit_id = ?
+    `).get(auditId);
+
+    if (!scanResults) {
+      console.log('⚠️  Scan results not found, skipping Phase 3');
+      return;
+    }
+
+    // Get policy analysis from Phase 2
+    const privacyAnalysis = getPolicyAnalysis(auditId, 'privacy');
+
+    if (!privacyAnalysis) {
+      console.log('⚠️  Privacy policy analysis not found, skipping Phase 3');
+      return;
+    }
+
+    // Parse scan results
+    const cookies = JSON.parse(scanResults.cookies_json || '[]');
+    const networkRequests = JSON.parse(scanResults.network_requests_json || '[]');
+    const bannerViolations = JSON.parse(scanResults.banner_violations_json || '[]');
+    const consentModeStatus = scanResults.consent_mode_v2_status ?
+      JSON.parse(scanResults.consent_mode_v2_status) : null;
+
+    // Task 1: Cookie Policy Comparison (if cookie policy provided)
+    let cookieComparison = null;
+    if (cookiePolicyFile) {
+      try {
+        console.log('🍪 Comparing Cookie Policy with detected cookies...');
+        cookieComparison = await compareCookiePolicy(
+          cookiePolicyFile.buffer,
+          cookiePolicyFile.originalname,
+          cookies,
+          auditId
+        );
+
+        // Save to database
+        saveComparison(db, auditId, cookieComparison);
+      } catch (error) {
+        console.error('Cookie comparison failed:', error.message);
+      }
+    }
+
+    // Task 2: Risk Assessment
+    console.log('⚖️  Assessing GDPR compliance risk...');
+    const violations = {
+      trackingBeforeConsent: !!scanResults.tracking_before_consent,
+      trackingBeforeConsentCount: networkRequests.filter(r => r.beforeConsent).length,
+      bannerViolations,
+      privacyPolicyScore: privacyAnalysis.percentage || 0,
+      privacyPolicyFailedCriteria: privacyAnalysis.criteria?.filter(c => c.score < c.weight) || [],
+      undeclaredCookies: cookieComparison?.undeclared || [],
+      consentModeCompliant: consentModeStatus?.compliant || false,
+      consentModeIssues: consentModeStatus?.issues || []
+    };
+
+    const riskAssessment = await assessRisk(violations);
+    saveRiskAssessment(db, auditId, riskAssessment, violations);
+
+    // Task 3: Generate Solutions
+    console.log('💡 Generating personalized solutions...');
+    const auditData = {
+      ...violations,
+      websiteUrl: scanResults.website_url,
+      overallScore: 0,  // Will be calculated next
+      riskLevel: riskAssessment.risk_level
+    };
+
+    const solutions = await generateSolutions(auditData);
+
+    // Task 4: Calculate Overall Compliance Score
+    console.log('📊 Calculating overall compliance score...');
+    const scoreResult = calculateOverallScore({
+      scanResults: {
+        tracking_before_consent: !!scanResults.tracking_before_consent,
+        cookies
+      },
+      policyAnalysis: privacyAnalysis,
+      bannerAnalysis: {
+        violations: bannerViolations,
+        totalChecks: 8,
+        passedCount: 8 - bannerViolations.length
+      },
+      consentModeAnalysis: consentModeStatus,
+      cookieComparison
+    });
+
+    // Update audit record with overall score
+    db.prepare(`
+      UPDATE audits
+      SET overall_score = ?,
+          score_grade = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(scoreResult.overallScore, scoreResult.grade, auditId);
+
+    console.log('');
+    console.log('✅ === PHASE 3 COMPLETE ===');
+    console.log(`   Overall Score: ${scoreResult.overallScore}/100 (Grade ${scoreResult.grade})`);
+    console.log(`   Risk Level: ${riskAssessment.risk_level}`);
+    console.log(`   Risk Range: €${riskAssessment.risk_min} - €${riskAssessment.risk_max}`);
+    console.log(`   Solutions: ${solutions.length} recommendations generated`);
+    console.log('');
+
+  } catch (error) {
+    console.error('❌ Phase 3 analysis failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get policy analysis results
+ * GET /api/audit/:audit_id/policy-analysis
+ */
+router.get('/api/audit/:audit_id/policy-analysis', (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Get policy analyses
+    const privacyAnalysis = getPolicyAnalysis(audit.id, 'privacy');
+    const cookieAnalysis = getPolicyAnalysis(audit.id, 'cookie');
+
+    res.json({
+      audit_id: audit.audit_uid,
+      privacy_policy: privacyAnalysis || { analyzed: false },
+      cookie_policy: cookieAnalysis || { analyzed: false }
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to get policy analysis:', error);
+    res.status(500).json({
+      error: 'Failed to get policy analysis',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Generate and view HTML report
+ * GET /api/audit/:audit_id/report
+ */
+router.get('/api/audit/:audit_id/report', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    console.log(`📊 Generating report for audit ${audit_id}...`);
+
+    // Verify audit exists
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is completed
+    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
+      return res.status(400).json({
+        error: 'Audit not completed',
+        message: 'Report cannot be generated until audit is complete',
+        status: audit.status
+      });
+    }
+
+    // Generate HTML report
+    const html = await generateReport(audit_id);
+
+    // Return HTML
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+
+  } catch (error) {
+    console.error('❌ Failed to generate report:', error);
+    res.status(500).json({
+      error: 'Failed to generate report',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Generate shareable report link (upload to Vercel Blob)
+ * GET /api/audit/:audit_id/share
+ */
+router.get('/api/audit/:audit_id/share', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    console.log(`🔗 Generating shareable link for audit ${audit_id}...`);
+
+    // Verify audit exists
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is completed
+    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
+      return res.status(400).json({
+        error: 'Audit not completed',
+        message: 'Report cannot be shared until audit is complete',
+        status: audit.status
+      });
+    }
+
+    // Generate HTML report
+    const html = await generateReport(audit_id);
+
+    // Upload to Vercel Blob
+    const filename = `report-${audit_id}-${Date.now()}.html`;
+    const blobUrl = await uploadBlob(Buffer.from(html, 'utf8'), filename);
+
+    console.log(`✅ Report uploaded: ${blobUrl}`);
+
+    res.json({
+      audit_id: audit_id,
+      share_url: blobUrl,
+      filename: filename,
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to generate shareable link:', error);
+    res.status(500).json({
+      error: 'Failed to generate shareable link',
+      message: error.message
+    });
+  }
+});
+
+module.exports = router;

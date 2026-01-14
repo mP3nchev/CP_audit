@@ -1,0 +1,172 @@
+{
+  "violations": [
+    {
+      "id": "type_a",
+      "name": "No Reject Button on First Layer",
+      "severity": "critical",
+      "description": "Cookie banner lacks equally prominent reject button alongside accept button",
+      "detection_method": "DOM analysis for buttons with data-action='reject' or similar, compare styling with accept button",
+      "legal_basis": "GDPR Art. 7(4) - Consent must be freely given",
+      "edpb_guidance": "Consent must be as easy to withdraw as to give",
+      "precedents": [
+        {
+          "authority": "CNIL (France)",
+          "company": "Google",
+          "year": 2019,
+          "fine_eur": 50000000,
+          "summary": "No easy way to refuse cookies"
+        },
+        {
+          "authority": "HBDI (Germany)",
+          "company": "H&M",
+          "year": 2020,
+          "fine_eur": 35000000,
+          "summary": "Inadequate consent mechanism"
+        }
+      ],
+      "check_selectors": [
+        "button[data-action='reject']",
+        "button[data-action='deny']",
+        "button:contains('Reject')",
+        "button:contains('Decline')",
+        "button:contains('Deny')",
+        "button[class*='reject']",
+        "button[class*='decline']",
+        "a[data-action='reject']"
+      ]
+    },
+    {
+      "id": "type_b",
+      "name": "Pre-ticked Boxes",
+      "severity": "critical",
+      "description": "Checkboxes for non-essential cookies are pre-selected by default",
+      "detection_method": "Find input[type='checkbox']:checked before user interaction",
+      "legal_basis": "GDPR Art. 4(11) - Consent requires affirmative action",
+      "edpb_guidance": "Pre-ticked boxes do not constitute valid consent",
+      "precedents": [
+        {
+          "authority": "AEPD (Spain)",
+          "year": 2020,
+          "fine_eur": 5000,
+          "summary": "Pre-ticked boxes for marketing cookies"
+        }
+      ],
+      "check_selectors": [
+        "input[type='checkbox']:checked",
+        "input[type='checkbox'][checked]"
+      ]
+    },
+    {
+      "id": "type_c",
+      "name": "Deceptive Link Design",
+      "severity": "high",
+      "description": "Settings/Reject option displayed as small text link while Accept is prominent button",
+      "detection_method": "Compare font-size, color, element type of settings link vs accept button",
+      "legal_basis": "GDPR Art. 7(4) - No undue influence on consent",
+      "edpb_guidance": "All options must be presented with equal prominence",
+      "precedents": [],
+      "styling_checks": {
+        "font_size_ratio_max": 0.7,
+        "element_type_mismatch": true,
+        "visibility_check": true
+      }
+    },
+    {
+      "id": "type_d",
+      "name": "Deceptive Button Colours",
+      "severity": "high",
+      "description": "Accept button uses attractive color (green/blue) while Reject is grey/muted",
+      "detection_method": "Analyze background-color CSS of accept vs reject buttons",
+      "legal_basis": "GDPR Art. 7(4) - Consent must be freely given",
+      "edpb_guidance": "Visual design must not nudge users toward acceptance",
+      "precedents": [],
+      "color_patterns": {
+        "accept_attractive": ["#00ff00", "#00aa00", "#0066ff", "#007bff", "#28a745", "#17a2b8"],
+        "reject_muted": ["#cccccc", "#999999", "#eeeeee", "#f5f5f5", "#6c757d", "#adb5bd"]
+      }
+    },
+    {
+      "id": "type_e",
+      "name": "Deceptive Button Contrast",
+      "severity": "high",
+      "description": "Accept button is larger, bolder, or more prominent than Reject",
+      "detection_method": "Compare button dimensions, font-weight, padding",
+      "legal_basis": "GDPR Art. 7(4) - Consent must be freely given",
+      "edpb_guidance": "Options must be presented equally",
+      "precedents": [],
+      "styling_checks": {
+        "size_ratio_max": 1.3,
+        "font_weight_difference_max": 200,
+        "padding_ratio_max": 1.5
+      }
+    },
+    {
+      "id": "type_h",
+      "name": "Legitimate Interest Claimed for Ads",
+      "severity": "critical",
+      "description": "Banner claims 'legitimate interest' as legal basis for advertising/profiling",
+      "detection_method": "Text search for 'legitimate interest' in banner, check if linked to ad categories",
+      "legal_basis": "GDPR Art. 6(1)(f) - Legitimate interest does not apply to intrusive ads",
+      "edpb_guidance": "Legitimate interest cannot override need for consent in most advertising cases",
+      "precedents": [
+        {
+          "authority": "EDPB",
+          "guidance": "Guidelines 2/2019 on Art. 6(1)(b)",
+          "summary": "Behavioral advertising requires consent, not legitimate interest"
+        }
+      ],
+      "text_patterns": [
+        "legitimate interest",
+        "законен интерес",
+        "berechtigtes interesse",
+        "intérêt légitime"
+      ]
+    },
+    {
+      "id": "type_i",
+      "name": "Misclassified Essential Cookies",
+      "severity": "medium",
+      "description": "Tracking/analytics cookies incorrectly labeled as 'necessary' or 'essential'",
+      "detection_method": "Check if cookies in 'necessary' category match known tracking patterns",
+      "legal_basis": "ePrivacy Directive Art. 5(3) - Only strictly necessary cookies exempt",
+      "edpb_guidance": "Analytical cookies are not strictly necessary",
+      "precedents": [],
+      "essential_patterns_allowed": [
+        "^(PHPSESSID|JSESSIONID)$",
+        "^csrftoken$",
+        "^_session$",
+        "^cookieconsent_"
+      ],
+      "tracking_patterns_forbidden": [
+        "_ga",
+        "_gid",
+        "_fbp",
+        "_hjid",
+        "doubleclick",
+        "__gads"
+      ]
+    },
+    {
+      "id": "type_k",
+      "name": "Difficult Consent Withdrawal",
+      "severity": "high",
+      "description": "No persistent mechanism to withdraw consent after it's given",
+      "detection_method": "Look for hovering icon, footer link, or settings button on subsequent pages",
+      "legal_basis": "GDPR Art. 7(3) - Withdrawal must be as easy as giving consent",
+      "edpb_guidance": "Users must have ongoing ability to change preferences",
+      "precedents": [
+        {
+          "authority": "AEPD (Spain)",
+          "year": 2023,
+          "fine_eur": 5000,
+          "summary": "No option to withdraw consent after initial acceptance"
+        }
+      ],
+      "required_elements": [
+        "Persistent icon/button on all pages",
+        "Footer link to cookie settings",
+        "Header menu with privacy options"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "gdpr-auditor-backend",
+  "version": "1.0.0",
+  "description": "GDPR Privacy & Cookie Compliance Auditor Backend",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "gdpr",
+    "privacy",
+    "cookies",
+    "compliance",
+    "auditor"
+  ],
+  "author": "CraftPolicy",
+  "license": "ISC",
+  "dependencies": {
+    "@vercel/blob": "^0.15.0",
+    "better-sqlite3": "^9.0.0",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "handlebars": "^4.7.8",
+    "mammoth": "^1.6.0",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "puppeteer": "^23.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
