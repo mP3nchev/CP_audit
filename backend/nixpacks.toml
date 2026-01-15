@@ -7,10 +7,13 @@ cmds = [
 ]
 
 [phases.build]
+cmds = [
+  "echo 'Finding Chromium path...'",
+  "which chromium || echo 'Chromium not found in PATH'"
+]
 
 [start]
 cmd = "npm start"
 
 [variables]
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-PUPPETEER_EXECUTABLE_PATH = "/nix/store/*-chromium-*/bin/chromium"

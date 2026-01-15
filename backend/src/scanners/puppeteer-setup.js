@@ -3,12 +3,62 @@ const constants = require('../config/constants');
 const { saveErrorScreenshot } = require('../utils/error-logger');
 
 /**
+ * Find Chromium executable on Railway/Nixpacks
+ * @returns {string|undefined} Path to Chromium or undefined
+ */
+function findChromiumExecutable() {
+  const { execSync } = require('child_process');
+
+  // If running on Railway/Nixpacks (detected by RAILWAY_ENVIRONMENT or nixpacks)
+  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.NIXPACKS_METADATA;
+
+  if (!isRailway) {
+    return undefined; // Use default Puppeteer bundled Chromium
+  }
+
+  console.log('🔍 Detecting Railway environment, searching for Chromium...');
+
+  // Try to find chromium using 'which' command
+  try {
+    const chromiumPath = execSync('which chromium', { encoding: 'utf8' }).trim();
+    if (chromiumPath) {
+      console.log(`✅ Found Chromium at: ${chromiumPath}`);
+      return chromiumPath;
+    }
+  } catch (error) {
+    console.log('⚠️  which chromium failed, trying alternative paths...');
+  }
+
+  // Try common nix store paths
+  const { readdirSync, existsSync } = require('fs');
+  try {
+    const nixStoreContents = readdirSync('/nix/store');
+    const chromiumDir = nixStoreContents.find(dir => dir.includes('chromium-'));
+
+    if (chromiumDir) {
+      const chromiumPath = `/nix/store/${chromiumDir}/bin/chromium`;
+      if (existsSync(chromiumPath)) {
+        console.log(`✅ Found Chromium at: ${chromiumPath}`);
+        return chromiumPath;
+      }
+    }
+  } catch (error) {
+    console.log('⚠️  Could not search /nix/store:', error.message);
+  }
+
+  console.log('⚠️  Could not find Chromium, will try default Puppeteer path');
+  return undefined;
+}
+
+/**
  * Launch Puppeteer browser with optimized settings
  * @returns {Promise<Browser>} Puppeteer browser instance
  */
 async function launchBrowser() {
   try {
-    const browser = await puppeteer.launch({
+    const executablePath = findChromiumExecutable();
+
+    const launchOptions = {
       headless: constants.PUPPETEER_HEADLESS,
       args: [
         '--no-sandbox',
@@ -23,7 +73,19 @@ async function launchBrowser() {
         width: 1920,
         height: 1080
       }
+    };
+
+    // Add executablePath only if found
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    }
+
+    console.log('🚀 Launching browser with options:', {
+      executablePath: executablePath || 'default',
+      headless: launchOptions.headless
     });
+
+    const browser = await puppeteer.launch(launchOptions);
 
     console.log('✅ Puppeteer browser launched');
     return browser;
