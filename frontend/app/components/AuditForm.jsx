@@ -123,7 +123,8 @@ export default function AuditForm({ onAuditComplete }) {
       }
 
       if (statusData.status === 'failed') {
-        throw new Error('Audit failed: ' + (statusData.error || 'Unknown error'));
+        const errorMsg = statusData.error_message || statusData.error || 'Unknown error';
+        throw new Error('Audit failed: ' + errorMsg);
       }
 
       // Update progress message based on status
