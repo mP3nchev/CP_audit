@@ -47,6 +47,7 @@ async function extractCookies(page) {
 function categorizeCookie(cookie) {
   const { name, domain } = cookie;
   const nameLower = name.toLowerCase();
+  const domainLower = domain.toLowerCase();
 
   // Essential cookies
   if (/^(PHPSESSID|JSESSIONID|csrftoken|_session|ASP\.NET_SessionId)$/i.test(name)) {
@@ -58,23 +59,57 @@ function categorizeCookie(cookie) {
     return 'preferences';
   }
 
-  // Analytics cookies
-  if (/_ga|_gid|_gat|_hjid|_fbp|matomo|piwik|clicky/i.test(nameLower)) {
+  // Analytics cookies (comprehensive list)
+  if (/_ga|_gid|_gat|_gac/.test(nameLower) || // Google Analytics
+      /_hjid|_hjSession|_hjIncludedInSample/.test(nameLower) || // Hotjar
+      /_fbp/.test(nameLower) || // Facebook Pixel
+      /clicky|piwik|matomo/.test(nameLower) || // Other analytics
+      /^_clck|_clsk/.test(nameLower) || // Microsoft Clarity
+      /__hstc|__hssc|hubspotutk/.test(nameLower) || // HubSpot Analytics
+      /^s_|mbox|AMCV/.test(name) || // Adobe Analytics
+      /^_ym_|_metrika/.test(nameLower) || // Yandex Metrica
+      /^vuid|player/.test(nameLower) || // Vimeo
+      /^YSC|VISITOR_INFO/.test(name)) { // YouTube Analytics
     return 'analytics';
   }
 
-  // Advertising cookies
-  if (/_gcl|doubleclick|__gads|IDE|test_cookie|fr|tr|ads/i.test(nameLower)) {
+  // Advertising cookies (comprehensive list)
+  if (/_gcl|__gads|IDE|DSID|FLC|AID|TAID|exchange_uid/.test(nameLower) || // Google Ads/DoubleClick
+      domainLower.includes('doubleclick') ||
+      /^fr$|^tr$|_fbc/.test(nameLower) || // Facebook Ads
+      /^li_sugr|bcookie|lidc|UserMatchHistory/.test(nameLower) || // LinkedIn Insight Tag
+      /^_ttp|_tt_enable/.test(nameLower) || // TikTok Pixel
+      /^_scid|_sctr/.test(nameLower) || // Snapchat Pixel
+      /^_pinterest|_pin_unauth/.test(nameLower) || // Pinterest Tag
+      /^_rdt_uuid/.test(nameLower) || // Reddit Pixel
+      /MUID|_uetsid|_uetvid/.test(name) || // Microsoft/Bing Ads
+      /^_fbq|fbssls/.test(nameLower) || // Facebook tracking
+      /^__qca|_dlt|mc/.test(nameLower)) { // Quantcast, Oracle, MediaMath
     return 'advertising';
   }
 
   // Social media cookies
-  if (/facebook|twitter|linkedin|instagram|youtube|pinterest/i.test(domain)) {
+  if (domainLower.includes('facebook') ||
+      domainLower.includes('twitter') ||
+      domainLower.includes('x.com') ||
+      domainLower.includes('linkedin') ||
+      domainLower.includes('instagram') ||
+      domainLower.includes('youtube') ||
+      domainLower.includes('pinterest') ||
+      domainLower.includes('tiktok') ||
+      domainLower.includes('snapchat') ||
+      domainLower.includes('reddit')) {
     return 'social_media';
   }
 
-  // Marketing cookies
-  if (/hubspot|marketo|pardot|eloqua|mailchimp/i.test(nameLower)) {
+  // Marketing/CRM cookies
+  if (/__hstc|__hssc|__hssrc|hubspotutk|hsfirstvisit/.test(nameLower) || // HubSpot
+      /mkto|marketo/.test(nameLower) || // Marketo
+      /pardot|visitor_id/.test(nameLower) || // Pardot (Salesforce)
+      /eloqua|ELOQUA/.test(name) || // Oracle Eloqua
+      /mailchimp|mc_/.test(nameLower) || // Mailchimp
+      /_mkto_trk/.test(nameLower) || // Marketo Tracking
+      /intercom|drift|_gcl_au/.test(nameLower)) { // Chat/Marketing tools
     return 'marketing';
   }
 
@@ -90,43 +125,116 @@ function categorizeCookie(cookie) {
 function identifyPurpose(cookie) {
   const { name, domain } = cookie;
   const nameLower = name.toLowerCase();
+  const domainLower = domain.toLowerCase();
 
   // Google Analytics
-  if (/_ga/.test(nameLower)) {
-    return 'Google Analytics tracking';
+  if (/_ga/.test(nameLower)) return 'Google Analytics - User tracking and behavior analysis';
+  if (/_gid/.test(nameLower)) return 'Google Analytics - Session identification';
+  if (/_gac/.test(nameLower)) return 'Google Analytics - Campaign tracking';
+
+  // Google Ads / DoubleClick
+  if (/_gcl/.test(nameLower)) return 'Google Ads - Conversion tracking';
+  if (/__gads|IDE|DSID/.test(nameLower) || domainLower.includes('doubleclick')) {
+    return 'Google DoubleClick - Ad targeting and measurement';
   }
 
   // Facebook
-  if (/_fbp|fr/.test(nameLower) || domain.includes('facebook')) {
-    return 'Facebook tracking pixel';
+  if (/_fbp/.test(nameLower)) return 'Facebook Pixel - Browser tracking';
+  if (/^fr$/.test(nameLower) || domainLower.includes('facebook')) {
+    return 'Facebook - Advertising and analytics';
   }
 
-  // Google Ads
-  if (/_gcl|__gads|IDE/.test(nameLower) || domain.includes('doubleclick')) {
-    return 'Google Ads tracking';
+  // Microsoft Clarity
+  if (/_clck|_clsk/.test(nameLower)) {
+    return 'Microsoft Clarity - Session recording and heatmaps';
+  }
+
+  // Microsoft/Bing Ads
+  if (/MUID|_uetsid|_uetvid/.test(name)) {
+    return 'Microsoft Advertising - Conversion tracking';
+  }
+
+  // HubSpot
+  if (/__hstc|__hssc|hubspotutk/.test(nameLower)) {
+    return 'HubSpot - Visitor tracking and CRM integration';
   }
 
   // Hotjar
-  if (/_hj/.test(nameLower)) {
-    return 'Hotjar analytics';
+  if (/_hjid|_hjSession/.test(nameLower)) {
+    return 'Hotjar - Session recording and analytics';
   }
 
-  // Session
-  if (/session/i.test(nameLower)) {
-    return 'Session management';
+  // LinkedIn Insight Tag
+  if (/li_sugr|bcookie|lidc|UserMatchHistory/.test(nameLower)) {
+    return 'LinkedIn - Advertising and analytics';
   }
 
-  // CSRF
+  // TikTok Pixel
+  if (/_ttp|_tt_enable/.test(nameLower)) {
+    return 'TikTok Pixel - Advertising and conversion tracking';
+  }
+
+  // Snapchat Pixel
+  if (/_scid|_sctr/.test(nameLower)) {
+    return 'Snapchat Pixel - Advertising analytics';
+  }
+
+  // Pinterest Tag
+  if (/_pinterest|_pin_unauth/.test(nameLower)) {
+    return 'Pinterest Tag - Conversion tracking';
+  }
+
+  // Reddit Pixel
+  if (/_rdt_uuid/.test(nameLower)) {
+    return 'Reddit Pixel - Advertising measurement';
+  }
+
+  // Adobe Analytics
+  if (/^s_|mbox|AMCV/.test(name)) {
+    return 'Adobe Analytics - Visitor tracking and personalization';
+  }
+
+  // Marketo
+  if (/_mkto_trk|marketo/.test(nameLower)) {
+    return 'Marketo - Marketing automation and lead tracking';
+  }
+
+  // YouTube
+  if (/^YSC|VISITOR_INFO/.test(name)) {
+    return 'YouTube - Video analytics and preferences';
+  }
+
+  // Matomo/Piwik
+  if (/matomo|piwik/.test(nameLower)) {
+    return 'Matomo - Privacy-focused analytics';
+  }
+
+  // Yandex Metrica
+  if (/_ym_|_metrika/.test(nameLower)) {
+    return 'Yandex Metrica - Web analytics';
+  }
+
+  // Session management
+  if (/PHPSESSID|JSESSIONID|ASP\.NET_SessionId|session/i.test(name)) {
+    return 'Session management - User authentication and state';
+  }
+
+  // CSRF protection
   if (/csrf/i.test(nameLower)) {
-    return 'Security (CSRF protection)';
+    return 'Security - CSRF attack prevention';
   }
 
-  // Consent
-  if (/consent|gdpr|cookie/i.test(nameLower)) {
-    return 'Cookie consent preferences';
+  // Consent management
+  if (/consent|gdpr|ccpa|cookie/i.test(nameLower)) {
+    return 'Cookie consent - User privacy preferences';
   }
 
-  return 'Unknown purpose';
+  // Intercom/Drift (Chat/Marketing)
+  if (/intercom|drift/.test(nameLower)) {
+    return 'Live chat and customer engagement';
+  }
+
+  return 'Unknown purpose - requires manual review';
 }
 
 /**

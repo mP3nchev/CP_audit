@@ -37,7 +37,28 @@ const {
   uploadScreenshots
 } = require('../integrations/blob-storage');
 
+const {
+  analyzeCookieBanner
+} = require('../analyzers/cookie-banner-checker');
+
+const {
+  runConsentSimulation
+} = require('./consent-simulator');
+
+const {
+  auditConsentMode
+} = require('../analyzers/consent-mode-detector');
+
+const {
+  buildTimeline,
+  enrichCookiesWithTimestamps,
+  detectBannerAppearTime,
+  generateTimelineReport
+} = require('../analyzers/timeline-builder');
+
 const { getDatabase } = require('../database/db');
+
+const constants = require('../config/constants');
 
 /**
  * Scan a website for cookies and tracking
@@ -97,10 +118,18 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     await waitForPageStability(page, 3000);
     console.log(`   ✅ Page stable after ${Date.now() - stepStartTime}ms`);
 
-    // Step 7: Extract cookies
+    // Step 6.5: Detect cookie banner appearance time
+    stepStartTime = Date.now();
+    const bannerAppearTime = await detectBannerAppearTime(page);
+    if (bannerAppearTime) {
+      console.log(`   🍪 Cookie banner detected at ${(bannerAppearTime / 1000).toFixed(2)}s after page load`);
+    }
+
+    // Step 7: Extract cookies with timestamps
     stepStartTime = Date.now();
     console.log('🍪 Step 7: Extracting cookies...');
-    const cookies = await extractCookies(page);
+    let cookies = await extractCookies(page);
+    cookies = await enrichCookiesWithTimestamps(page, cookies);
     const cookieStats = getCookieStats(cookies);
     const trackingCookies = findTrackingCookies(cookies);
 
@@ -130,25 +159,65 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     const trackingAnalysis = analyzeTracking(trackingData, cookies);
     console.log(`   ✅ Tracking analysis completed in ${Date.now() - stepStartTime}ms`);
 
-    // Step 10: Wait for stable view and capture screenshots
+    // Step 10: Analyze cookie banner for NOYB violations
     stepStartTime = Date.now();
-    console.log('📸 Step 10: Capturing screenshots...');
+    console.log('⚖️  Step 10: Analyzing cookie banner for GDPR violations...');
+    const bannerAnalysis = await analyzeCookieBanner(page);
+    console.log(`   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`);
+    console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
+    console.log(`   ⚠️  Critical violations: ${bannerAnalysis.hasCriticalViolations ? 'YES' : 'NO'}`);
+
+    // Step 10.5: Audit Google Consent Mode v2
+    stepStartTime = Date.now();
+    console.log('🎯 Step 10.5: Checking Google Consent Mode v2...');
+    const consentModeAudit = await auditConsentMode(page);
+    console.log(`   ✅ Consent Mode audit completed in ${Date.now() - stepStartTime}ms`);
+    if (consentModeAudit.detected) {
+      console.log(`   📊 Version: ${consentModeAudit.version || 'unknown'}`);
+      console.log(`   ${consentModeAudit.compliant ? '✅' : '⚠️'}  GDPR Compliance: ${consentModeAudit.compliant ? 'YES' : 'NO'}`);
+    } else {
+      console.log(`   ⚠️  Consent Mode not detected`);
+    }
+
+    // Step 11: Wait for stable view and capture screenshots
+    stepStartTime = Date.now();
+    console.log('📸 Step 11: Capturing screenshots...');
     await waitForStableView(page);
     const screenshots = await captureScreenshots(page);
     console.log(`   ✅ Screenshots captured in ${Date.now() - stepStartTime}ms`);
 
-    // Step 11: Upload screenshots to Vercel Blob
+    // Step 12: Upload screenshots to Vercel Blob
     stepStartTime = Date.now();
-    console.log('☁️  Step 11: Uploading screenshots to Vercel Blob...');
+    console.log('☁️  Step 12: Uploading screenshots to Vercel Blob...');
     const screenshotUrls = await uploadScreenshots(screenshots, auditUid);
     console.log(`   ✅ Screenshots uploaded in ${Date.now() - stepStartTime}ms`);
     console.log(`   📎 Full page: ${screenshotUrls.fullPageUrl ? 'Uploaded' : 'Failed'}`);
     console.log(`   📎 Banner: ${screenshotUrls.bannerUrl ? 'Uploaded' : 'Failed'}`);
 
-    // Step 12: Get page metadata
+    // Step 13: Get page metadata
     stepStartTime = Date.now();
     const metadata = await getPageMetadata(page);
     console.log(`   ✅ Metadata extracted in ${Date.now() - stepStartTime}ms`);
+
+    // Step 13.5: Build timeline
+    stepStartTime = Date.now();
+    console.log('⏱️  Step 13.5: Building request timeline...');
+    const pageLoadTime = await page.evaluate(() => {
+      return performance.timing.loadEventEnd - performance.timing.navigationStart;
+    });
+
+    const timeline = buildTimeline({
+      cookies: cookies,
+      networkRequests: networkMonitor.getRequests(),
+      pageLoadTime: pageLoadTime,
+      bannerAppearTime: bannerAppearTime,
+      consentTime: null // We don't track user consent click yet
+    });
+
+    const timelineReport = generateTimelineReport(timeline);
+    console.log(`   ✅ Timeline built in ${Date.now() - stepStartTime}ms`);
+    console.log(`   📊 Events: ${timeline.events.length}, Violations: ${timeline.violations.length}`);
+    console.log(`   ⚠️  Before consent: ${timelineReport.beforeConsent.cookies} cookies, ${timelineReport.beforeConsent.requests} requests`);
 
     // Calculate scan duration
     const scanDuration = Math.round((Date.now() - startTime) / 1000);
@@ -163,6 +232,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       trackingBeforeConsent: trackingAnalysis.trackingBeforeConsent,
       trackingBeforeConsentDetails: trackingAnalysis,
       trackingBeforeConsentCount: trackingBeforeConsentRequests.length + trackingAnalysis.violationCount,
+      bannerViolations: bannerAnalysis.violations,
+      bannerAnalysis: bannerAnalysis,
+      consentModeAudit: consentModeAudit,
+      timeline: timeline,
+      timelineReport: timelineReport,
       screenshots: {
         full: screenshotUrls.fullPageUrl,
         banner: screenshotUrls.bannerUrl
@@ -171,13 +245,42 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       scanDuration: scanDuration
     };
 
-    // Step 13: Save to database
-    console.log('💾 Step 13: Saving results to database...');
+    // Step 14: Save to database
+    console.log('💾 Step 14: Saving results to database...');
     await saveScanResults(auditId, results);
 
-    // Step 14: Close browser
-    console.log('🧹 Step 14: Cleaning up...');
+    // Step 15: Close browser
+    console.log('🧹 Step 15: Cleaning up...');
     await closeBrowser(browser);
+
+    // Step 16: Consent Simulation (Accept vs Reject scenarios)
+    let consentSimulation = null;
+    const enableConsentSim = process.env.ENABLE_CONSENT_SIMULATION !== 'false'; // Enabled by default
+
+    if (enableConsentSim) {
+      stepStartTime = Date.now();
+      console.log('');
+      console.log('🎭 Step 16: Running Accept/Reject consent simulation...');
+      try {
+        consentSimulation = await runConsentSimulation(websiteUrl);
+        console.log(`   ✅ Consent simulation completed in ${Date.now() - stepStartTime}ms`);
+        console.log(`   🖱️  Click imbalance: ${consentSimulation.comparison.clickImbalance} extra clicks to reject`);
+        console.log(`   ⚠️  Violations found: ${consentSimulation.comparison.violations.length}`);
+
+        // Add consent simulation results to main results
+        results.consentSimulation = consentSimulation;
+      } catch (error) {
+        console.error(`   ⚠️  Consent simulation failed: ${error.message}`);
+        // Don't fail the entire scan if simulation fails
+        results.consentSimulation = {
+          error: error.message,
+          success: false
+        };
+      }
+    } else {
+      console.log('');
+      console.log('⏭️  Step 16: Consent simulation skipped (ENABLE_CONSENT_SIMULATION=false)');
+    }
 
     console.log('');
     console.log('═══════════════════════════════════════════════════════');
@@ -185,6 +288,9 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log(`   Cookies: ${cookies.length}`);
     console.log(`   Tracking before consent: ${results.trackingBeforeConsent ? 'YES ⚠️' : 'NO ✅'}`);
     console.log(`   Screenshots uploaded: ${screenshotUrls.fullPageUrl ? 'YES' : 'NO'}`);
+    if (consentSimulation && consentSimulation.success !== false) {
+      console.log(`   Consent violations: ${consentSimulation.comparison.violations.length}`);
+    }
     console.log('═══════════════════════════════════════════════════════');
     console.log('');
 
@@ -221,10 +327,13 @@ async function saveScanResults(auditId, results) {
         cookies_json,
         network_requests_json,
         tracking_before_consent,
+        banner_violations_json,
+        consent_mode_v2_status,
+        timeline_json,
         screenshot_full_url,
         screenshot_banner_url,
         scan_duration_seconds
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -232,6 +341,9 @@ async function saveScanResults(auditId, results) {
       JSON.stringify(results.cookies),
       JSON.stringify(results.networkRequests),
       results.trackingBeforeConsent ? 1 : 0,
+      JSON.stringify(results.bannerViolations || []),
+      JSON.stringify(results.consentModeAudit || {}),
+      JSON.stringify(results.timelineReport || {}),
       results.screenshots.full || null,
       results.screenshots.banner || null,
       results.scanDuration
