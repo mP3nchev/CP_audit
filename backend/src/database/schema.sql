@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS scan_results (
     screenshot_banner_url TEXT,
     consent_mode_v2_status TEXT,
     banner_violations_json TEXT,
+    timeline_json TEXT,
     scan_duration_seconds INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
