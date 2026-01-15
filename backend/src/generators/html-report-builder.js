@@ -77,6 +77,12 @@ async function gatherAuditData(auditUid) {
   const bannerViolations = scanResults ? JSON.parse(scanResults.banner_violations_json || '[]') : [];
   const consentModeStatus = scanResults?.consent_mode_v2_status ?
     JSON.parse(scanResults.consent_mode_v2_status) : null;
+  const complianceScore = scanResults?.compliance_score_json ?
+    JSON.parse(scanResults.compliance_score_json) : null;
+  const requestCategorization = scanResults?.request_categorization_json ?
+    JSON.parse(scanResults.request_categorization_json) : null;
+  const timelineData = scanResults?.timeline_json ?
+    JSON.parse(scanResults.timeline_json) : null;
 
   return {
     audit,
@@ -85,6 +91,9 @@ async function gatherAuditData(auditUid) {
     networkRequests,
     bannerViolations,
     consentModeStatus,
+    complianceScore,
+    requestCategorization,
+    timelineData,
     privacyAnalysis,
     cookieComparison: cookieComparison ? {
       declared: JSON.parse(cookieComparison.declared_cookies_json || '[]'),
@@ -96,6 +105,119 @@ async function gatherAuditData(auditUid) {
       violations_json: JSON.parse(riskAssessment.violations_json || '{}')
     } : null
   };
+}
+
+/**
+ * Aggregate critical violations from all sources
+ * @param {Object} data - Raw audit data
+ * @returns {Array} Critical violations list
+ */
+function aggregateCriticalViolations(data) {
+  const criticalViolations = [];
+
+  // 1. Critical banner violations (NOYB 8-point checklist)
+  const criticalBannerViolations = (data.bannerViolations || []).filter(v => v.severity === 'critical');
+  criticalBannerViolations.forEach(v => {
+    criticalViolations.push({
+      source: 'Cookie Banner',
+      type: v.id || 'Unknown',
+      title: v.description || 'Banner Violation',
+      description: v.details || v.description,
+      severity: 'critical',
+      article: v.article || 'GDPR Art. 7',
+      dpa_reference: v.dpa_reference || null,
+      icon: '🍪'
+    });
+  });
+
+  // 2. Tracking before consent
+  if (data.scanResults?.tracking_before_consent) {
+    const timelineViolations = data.timelineData?.violations || [];
+    const trackingCount = timelineViolations.length;
+
+    criticalViolations.push({
+      source: 'Technical Implementation',
+      type: 'tracking_before_consent',
+      title: 'Tracking Before Consent',
+      description: `${trackingCount} tracking requests/cookies detected before user consent was obtained. This violates ePrivacy Directive Article 5(3) and GDPR Article 7.`,
+      severity: 'critical',
+      article: 'ePrivacy Dir. 5(3), GDPR Art. 7',
+      dpa_reference: 'Multiple DPA decisions (France, Belgium, Austria)',
+      icon: '📡'
+    });
+  }
+
+  // 3. Google Consent Mode v2 issues
+  if (data.consentModeStatus) {
+    if (!data.consentModeStatus.detected && data.consentModeStatus.ga4Present) {
+      criticalViolations.push({
+        source: 'Google Consent Mode',
+        type: 'consent_mode_missing',
+        title: 'Google Consent Mode v2 Not Implemented',
+        description: 'Google Analytics 4 detected but Consent Mode v2 is not implemented. This is required for GDPR compliance when using Google services in the EEA.',
+        severity: 'high',
+        article: 'GDPR Art. 7, ePrivacy Dir. 5(3)',
+        dpa_reference: 'Google Analytics rulings (Austria, France, Italy)',
+        icon: '🎯'
+      });
+    } else if (data.consentModeStatus.detected && !data.consentModeStatus.compliant) {
+      const issues = data.consentModeStatus.issues || [];
+      criticalViolations.push({
+        source: 'Google Consent Mode',
+        type: 'consent_mode_misconfigured',
+        title: 'Google Consent Mode v2 Misconfigured',
+        description: `Consent Mode v2 is implemented but not GDPR-compliant: ${issues.join(', ')}`,
+        severity: 'critical',
+        article: 'GDPR Art. 7',
+        dpa_reference: null,
+        icon: '⚠️'
+      });
+    }
+  }
+
+  // 4. Consent simulation violations (Accept/Reject symmetry)
+  if (data.complianceScore?.components?.cookieBanner?.details) {
+    const details = data.complianceScore.components.cookieBanner.details;
+    const clickImbalanceMatch = details.match(/(\d+) click imbalance/);
+    if (clickImbalanceMatch && parseInt(clickImbalanceMatch[1]) > 2) {
+      criticalViolations.push({
+        source: 'Consent Banner UX',
+        type: 'reject_harder_than_accept',
+        title: 'Rejecting Consent is Harder Than Accepting',
+        description: `It takes ${clickImbalanceMatch[1]} more clicks to reject cookies than to accept them. GDPR requires withdrawing consent to be as easy as giving it.`,
+        severity: 'high',
+        article: 'GDPR Art. 7(3)',
+        dpa_reference: 'CNIL (France) - Planet49 case guidance',
+        icon: '🖱️'
+      });
+    }
+  }
+
+  // 5. Score caps applied (indicating critical structural issues)
+  if (data.complianceScore?.capsApplied && data.complianceScore.capsApplied.length > 0) {
+    data.complianceScore.capsApplied.forEach(cap => {
+      if (cap.includes('Multiple critical violations')) {
+        criticalViolations.push({
+          source: 'Overall Compliance',
+          type: 'multiple_critical_violations',
+          title: 'Multiple Critical GDPR Violations',
+          description: 'Your website has multiple critical GDPR violations that compound the compliance risk. Immediate action is required.',
+          severity: 'critical',
+          article: 'GDPR Multiple Articles',
+          dpa_reference: null,
+          icon: '🚨'
+        });
+      }
+    });
+  }
+
+  // Sort by severity: critical first, then high
+  criticalViolations.sort((a, b) => {
+    const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    return severityOrder[a.severity] - severityOrder[b.severity];
+  });
+
+  return criticalViolations;
 }
 
 /**
@@ -111,11 +233,14 @@ function transformDataForTemplate(data) {
     bannerViolations,
     privacyAnalysis,
     cookieComparison,
-    riskAssessment
+    riskAssessment,
+    complianceScore
   } = data;
 
-  // 1. Executive Summary
-  const overallScore = audit.overall_score || 0;
+  // 1. Executive Summary - Aggregate ALL critical violations
+  const overallScore = complianceScore?.overallScore || audit.overall_score || 0;
+  const scoreGrade = complianceScore?.grade || audit.score_grade || 'F';
+  const allCriticalViolations = aggregateCriticalViolations(data);
   const criticalViolations = bannerViolations.filter(v => v.severity === 'critical');
   const undeclaredCookies = cookieComparison?.undeclared || [];
   const passedCriteria = privacyAnalysis?.criteria?.filter(c => c.score >= c.weight) || [];
@@ -221,16 +346,18 @@ function transformDataForTemplate(data) {
 
     // Executive Summary
     overall_score: overallScore,
+    score_grade: scoreGrade,
     risk_level: getRiskLevelClass(riskAssessment?.risk_level),
     risk_level_text: riskAssessment?.risk_level || 'Unknown',
-    critical_count: criticalViolations.length,
+    critical_count: allCriticalViolations.length,
+    all_critical_violations: allCriticalViolations,
     undeclared_count: undeclaredCookies.length,
     passed_count: passedCriteria.length,
-    critical_violations_title: criticalViolations.length > 0 ?
-      `${criticalViolations.length} Critical Violations Detected` :
+    critical_violations_title: allCriticalViolations.length > 0 ?
+      `${allCriticalViolations.length} Critical Violations Detected` :
       'No Critical Violations',
-    critical_violations_description: criticalViolations.length > 0 ?
-      `Your website has ${criticalViolations.length} critical GDPR violations requiring immediate attention.` :
+    critical_violations_description: allCriticalViolations.length > 0 ?
+      `Your website has ${allCriticalViolations.length} critical GDPR violations requiring immediate attention.` :
       'Great! No critical violations detected.',
     undeclared_cookies_title: undeclaredCookies.length > 0 ?
       `${undeclaredCookies.length} Undeclared Cookies Found` :
@@ -272,6 +399,53 @@ function transformDataForTemplate(data) {
 
     // Risk Assessment
     risk_breakdown: riskBreakdown,
+
+    // Compliance Score Breakdown (from Problem 7)
+    compliance_components: complianceScore ? [
+      {
+        name: 'Privacy Policy',
+        score: complianceScore.components.privacyPolicy.score,
+        weight: Math.round(complianceScore.weights.privacyPolicy * 100),
+        contribution: complianceScore.components.privacyPolicy.contribution.toFixed(1),
+        details: complianceScore.components.privacyPolicy.details
+      },
+      {
+        name: 'Cookie Banner',
+        score: complianceScore.components.cookieBanner.score,
+        weight: Math.round(complianceScore.weights.cookieBanner * 100),
+        contribution: complianceScore.components.cookieBanner.contribution.toFixed(1),
+        details: complianceScore.components.cookieBanner.details
+      },
+      {
+        name: 'Technical Implementation',
+        score: complianceScore.components.technical.score,
+        weight: Math.round(complianceScore.weights.technical * 100),
+        contribution: complianceScore.components.technical.contribution.toFixed(1),
+        details: complianceScore.components.technical.details
+      },
+      {
+        name: 'Cookie Policy Accuracy',
+        score: complianceScore.components.cookiePolicy.score,
+        weight: Math.round(complianceScore.weights.cookiePolicy * 100),
+        contribution: complianceScore.components.cookiePolicy.contribution.toFixed(1),
+        details: complianceScore.components.cookiePolicy.details
+      }
+    ] : [],
+    score_caps_applied: complianceScore?.capsApplied || [],
+
+    // Tracking Vendor Breakdown (from Problem 5)
+    tracking_vendors: data.requestCategorization?.vendorBreakdown ?
+      Object.entries(data.requestCategorization.vendorBreakdown)
+        .map(([vendor, stats]) => ({
+          vendor,
+          tracking: stats.tracking,
+          resources: stats.resources,
+          total: stats.total
+        }))
+        .sort((a, b) => b.tracking - a.tracking)
+        .slice(0, 10) : [],
+    definite_tracking_count: data.requestCategorization?.categoryA?.count || 0,
+    suspicious_tracking_count: data.requestCategorization?.categoryB?.count || 0,
 
     // Recommendations
     recommendations: recommendations

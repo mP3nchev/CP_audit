@@ -110,7 +110,7 @@ export default function AuditForm({ onAuditComplete }) {
   };
 
   const pollAuditStatus = async (auditId, apiUrl) => {
-    const maxAttempts = 300; // 5 minutes max (1 second intervals)
+    const maxAttempts = 600; // 10 minutes max (1 second intervals) - increased for consent simulation
     let attempts = 0;
 
     while (attempts < maxAttempts) {
@@ -127,8 +127,11 @@ export default function AuditForm({ onAuditComplete }) {
         throw new Error('Audit failed: ' + errorMsg);
       }
 
-      // Update progress message based on status
-      if (statusData.status === 'scanning') {
+      // Update progress message based on status and progress data
+      if (statusData.progress) {
+        const { currentStep, totalSteps, message, percentage } = statusData.progress;
+        setProgress(`[${currentStep}/${totalSteps}] ${message} (${percentage}%)`);
+      } else if (statusData.status === 'scanning') {
         setProgress('Scanning website and detecting cookies...');
       } else if (statusData.status === 'analyzing') {
         setProgress('Analyzing privacy policy with AI...');

@@ -162,6 +162,15 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
       updated_at: audit.updated_at
     };
 
+    // Add progress information if available
+    if (audit.progress_json) {
+      try {
+        response.progress = JSON.parse(audit.progress_json);
+      } catch (error) {
+        console.warn('Failed to parse progress JSON:', error);
+      }
+    }
+
     if (audit.status === constants.AUDIT_STATUS.COMPLETED) {
       response.completed_at = audit.completed_at;
       response.report_url = `/api/audit/${audit.audit_uid}/report`;

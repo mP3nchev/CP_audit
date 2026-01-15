@@ -121,6 +121,7 @@ function calculatePrivacyPolicyScore(results) {
  */
 function calculateCookieBannerScore(results) {
   const bannerAnalysis = results.bannerAnalysis;
+  const consentSim = results.consentSimulation;
 
   if (!bannerAnalysis) {
     return {
@@ -139,11 +140,27 @@ function calculateCookieBannerScore(results) {
   // Adjust passed checks (each critical violation counts as -2)
   passedChecks = Math.max(0, passedChecks - criticalPenalty);
 
-  const score = Math.round((passedChecks / totalChecks) * 100);
+  let baseScore = Math.round((passedChecks / totalChecks) * 100);
+
+  // Apply Accept/Reject symmetry penalty from consent simulation (Problem 3)
+  if (consentSim && consentSim.comparison && consentSim.success !== false) {
+    const clickImbalance = consentSim.comparison.clickImbalance || 0;
+    const symmetryViolations = consentSim.comparison.violations?.length || 0;
+
+    // Deduct up to 15 points for click imbalance (1 point per extra click, max 10)
+    const clickPenalty = Math.min(clickImbalance, 10);
+
+    // Deduct up to 5 points for symmetry violations
+    const symmetryPenalty = Math.min(symmetryViolations * 2, 5);
+
+    baseScore = Math.max(0, baseScore - clickPenalty - symmetryPenalty);
+  }
+
+  const score = baseScore;
 
   return {
     score,
-    details: `${bannerAnalysis.passedCount}/${totalChecks} noyb checks passed${criticalViolations.length > 0 ? ` (${criticalViolations.length} critical)` : ''}`
+    details: `${bannerAnalysis.passedCount}/${totalChecks} noyb checks passed${criticalViolations.length > 0 ? ` (${criticalViolations.length} critical)` : ''}${consentSim && consentSim.comparison ? `, ${consentSim.comparison.clickImbalance} click imbalance` : ''}`
   };
 }
 
