@@ -41,7 +41,13 @@ const {
   analyzeCookieBanner
 } = require('../analyzers/cookie-banner-checker');
 
+const {
+  runConsentSimulation
+} = require('./consent-simulator');
+
 const { getDatabase } = require('../database/db');
+
+const constants = require('../config/constants');
 
 /**
  * Scan a website for cookies and tracking
@@ -193,12 +199,44 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log('🧹 Step 15: Cleaning up...');
     await closeBrowser(browser);
 
+    // Step 16: Consent Simulation (Accept vs Reject scenarios)
+    let consentSimulation = null;
+    const enableConsentSim = process.env.ENABLE_CONSENT_SIMULATION !== 'false'; // Enabled by default
+
+    if (enableConsentSim) {
+      stepStartTime = Date.now();
+      console.log('');
+      console.log('🎭 Step 16: Running Accept/Reject consent simulation...');
+      try {
+        consentSimulation = await runConsentSimulation(websiteUrl);
+        console.log(`   ✅ Consent simulation completed in ${Date.now() - stepStartTime}ms`);
+        console.log(`   🖱️  Click imbalance: ${consentSimulation.comparison.clickImbalance} extra clicks to reject`);
+        console.log(`   ⚠️  Violations found: ${consentSimulation.comparison.violations.length}`);
+
+        // Add consent simulation results to main results
+        results.consentSimulation = consentSimulation;
+      } catch (error) {
+        console.error(`   ⚠️  Consent simulation failed: ${error.message}`);
+        // Don't fail the entire scan if simulation fails
+        results.consentSimulation = {
+          error: error.message,
+          success: false
+        };
+      }
+    } else {
+      console.log('');
+      console.log('⏭️  Step 16: Consent simulation skipped (ENABLE_CONSENT_SIMULATION=false)');
+    }
+
     console.log('');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`✅ Scan completed in ${scanDuration}s`);
     console.log(`   Cookies: ${cookies.length}`);
     console.log(`   Tracking before consent: ${results.trackingBeforeConsent ? 'YES ⚠️' : 'NO ✅'}`);
     console.log(`   Screenshots uploaded: ${screenshotUrls.fullPageUrl ? 'YES' : 'NO'}`);
+    if (consentSimulation && consentSimulation.success !== false) {
+      console.log(`   Consent violations: ${consentSimulation.comparison.violations.length}`);
+    }
     console.log('═══════════════════════════════════════════════════════');
     console.log('');
 
