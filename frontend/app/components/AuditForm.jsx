@@ -110,7 +110,7 @@ export default function AuditForm({ onAuditComplete }) {
   };
 
   const pollAuditStatus = async (auditId, apiUrl) => {
-    const maxAttempts = 300; // 5 minutes max (1 second intervals)
+    const maxAttempts = 600; // 10 minutes max (1 second intervals) - increased for consent simulation
     let attempts = 0;
 
     while (attempts < maxAttempts) {

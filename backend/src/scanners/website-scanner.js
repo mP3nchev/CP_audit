@@ -56,6 +56,15 @@ const {
   generateTimelineReport
 } = require('../analyzers/timeline-builder');
 
+const {
+  categorizeRequests,
+  getTrackingSummary
+} = require('../analyzers/network-request-categorizer');
+
+const {
+  calculateOverallScore
+} = require('../analyzers/compliance-score-calculator');
+
 const { getDatabase } = require('../database/db');
 
 const constants = require('../config/constants');
@@ -219,6 +228,19 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log(`   📊 Events: ${timeline.events.length}, Violations: ${timeline.violations.length}`);
     console.log(`   ⚠️  Before consent: ${timelineReport.beforeConsent.cookies} cookies, ${timelineReport.beforeConsent.requests} requests`);
 
+    // Step 13.6: Categorize network requests (Problem 5)
+    stepStartTime = Date.now();
+    console.log('🔍 Step 13.6: Categorizing network requests...');
+    const requestCategorization = categorizeRequests(networkMonitor.getRequests());
+    const trackingSummary = getTrackingSummary(requestCategorization);
+    console.log(`   ✅ Categorization completed in ${Date.now() - stepStartTime}ms`);
+    console.log(`   📊 Definite tracking: ${requestCategorization.categoryA.count}`);
+    console.log(`   📊 Suspicious: ${requestCategorization.categoryB.count}`);
+    console.log(`   📊 Benign: ${requestCategorization.categoryC.count}`);
+    if (Object.keys(requestCategorization.vendorBreakdown).length > 0) {
+      console.log(`   📊 Top vendors: ${Object.keys(requestCategorization.vendorBreakdown).slice(0, 3).join(', ')}`);
+    }
+
     // Calculate scan duration
     const scanDuration = Math.round((Date.now() - startTime) / 1000);
 
@@ -237,6 +259,8 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       consentModeAudit: consentModeAudit,
       timeline: timeline,
       timelineReport: timelineReport,
+      requestCategorization: requestCategorization,
+      trackingSummary: trackingSummary,
       screenshots: {
         full: screenshotUrls.fullPageUrl,
         banner: screenshotUrls.bannerUrl
@@ -282,11 +306,29 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log('⏭️  Step 16: Consent simulation skipped (ENABLE_CONSENT_SIMULATION=false)');
     }
 
+    // Step 17: Calculate overall compliance score (Problem 7)
+    stepStartTime = Date.now();
+    console.log('');
+    console.log('📊 Step 17: Calculating overall compliance score...');
+    const complianceScore = calculateOverallScore(results);
+    results.complianceScore = complianceScore;
+    console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
+    console.log(`   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
+    console.log(`   📋 Components:`);
+    console.log(`      - Privacy Policy: ${complianceScore.components.privacyPolicy.score}/100`);
+    console.log(`      - Cookie Banner: ${complianceScore.components.cookieBanner.score}/100`);
+    console.log(`      - Technical: ${complianceScore.components.technical.score}/100`);
+    console.log(`      - Cookie Policy: ${complianceScore.components.cookiePolicy.score}/100`);
+    if (complianceScore.capsApplied.length > 0) {
+      console.log(`   ⚠️  Score caps applied: ${complianceScore.capsApplied.join(', ')}`);
+    }
+
     console.log('');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`✅ Scan completed in ${scanDuration}s`);
     console.log(`   Cookies: ${cookies.length}`);
     console.log(`   Tracking before consent: ${results.trackingBeforeConsent ? 'YES ⚠️' : 'NO ✅'}`);
+    console.log(`   Compliance Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
     console.log(`   Screenshots uploaded: ${screenshotUrls.fullPageUrl ? 'YES' : 'NO'}`);
     if (consentSimulation && consentSimulation.success !== false) {
       console.log(`   Consent violations: ${consentSimulation.comparison.violations.length}`);
@@ -321,22 +363,27 @@ async function saveScanResults(auditId, results) {
   const db = getDatabase();
 
   try {
-    const stmt = db.prepare(`
-      INSERT INTO scan_results (
-        audit_id,
-        cookies_json,
-        network_requests_json,
-        tracking_before_consent,
-        banner_violations_json,
-        consent_mode_v2_status,
-        timeline_json,
-        screenshot_full_url,
-        screenshot_banner_url,
-        scan_duration_seconds
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    // Check if new columns exist
+    const tableInfo = db.prepare("PRAGMA table_info(scan_results)").all();
+    const columnNames = tableInfo.map(col => col.name);
+    const hasComplianceScore = columnNames.includes('compliance_score_json');
+    const hasRequestCategorization = columnNames.includes('request_categorization_json');
 
-    stmt.run(
+    // Build dynamic INSERT statement based on available columns
+    let insertColumns = `
+      audit_id,
+      cookies_json,
+      network_requests_json,
+      tracking_before_consent,
+      banner_violations_json,
+      consent_mode_v2_status,
+      timeline_json,
+      screenshot_full_url,
+      screenshot_banner_url,
+      scan_duration_seconds
+    `;
+    let insertPlaceholders = '?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+    const insertValues = [
       auditId,
       JSON.stringify(results.cookies),
       JSON.stringify(results.networkRequests),
@@ -347,11 +394,52 @@ async function saveScanResults(auditId, results) {
       results.screenshots.full || null,
       results.screenshots.banner || null,
       results.scanDuration
-    );
+    ];
+
+    if (hasComplianceScore) {
+      insertColumns += ',\n      compliance_score_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.complianceScore || {}));
+    }
+
+    if (hasRequestCategorization) {
+      insertColumns += ',\n      request_categorization_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.trackingSummary || {}));
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO scan_results (
+        ${insertColumns}
+      ) VALUES (${insertPlaceholders})
+    `);
+
+    stmt.run(...insertValues);
+
+    // Update audits table with overall score
+    if (results.complianceScore) {
+      try {
+        const updateStmt = db.prepare(`
+          UPDATE audits
+          SET overall_score = ?,
+              score_grade = ?
+          WHERE id = ?
+        `);
+
+        updateStmt.run(
+          results.complianceScore.overallScore,
+          results.complianceScore.grade,
+          auditId
+        );
+      } catch (scoreUpdateError) {
+        console.warn('⚠️  Could not update overall_score in audits table (columns may not exist yet)');
+      }
+    }
 
     console.log('✅ Scan results saved to database');
   } catch (error) {
     console.error('❌ Failed to save scan results:', error.message);
+    console.error('   Full error:', error);
     throw error;
   }
 }
