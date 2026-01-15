@@ -70,6 +70,35 @@ const { getDatabase } = require('../database/db');
 const constants = require('../config/constants');
 
 /**
+ * Update scan progress in database
+ * @param {number} auditId - Audit ID
+ * @param {number} currentStep - Current step number
+ * @param {number} totalSteps - Total number of steps
+ * @param {string} message - Progress message
+ */
+function updateProgress(auditId, currentStep, totalSteps, message) {
+  try {
+    const db = getDatabase();
+    const progress = {
+      currentStep,
+      totalSteps,
+      message,
+      percentage: Math.round((currentStep / totalSteps) * 100),
+      timestamp: Date.now()
+    };
+
+    db.prepare(`
+      UPDATE audits
+      SET progress_json = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(JSON.stringify(progress), auditId);
+  } catch (error) {
+    console.warn('⚠️  Failed to update progress:', error.message);
+  }
+}
+
+/**
  * Scan a website for cookies and tracking
  * @param {string} websiteUrl - URL to scan
  * @param {number} auditId - Database audit ID
@@ -105,6 +134,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 3: Setup network monitoring
     stepStartTime = Date.now();
     console.log('🌐 Step 3: Setting up network monitoring...');
+    updateProgress(auditId, 3, 17, 'Setting up network monitoring...');
     const networkMonitor = setupNetworkMonitoring(page);
     console.log(`   ✅ Network monitoring setup in ${Date.now() - stepStartTime}ms`);
 
@@ -117,6 +147,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 5: Navigate to URL
     stepStartTime = Date.now();
     console.log('🌐 Step 5: Navigating to URL...');
+    updateProgress(auditId, 5, 17, `Loading website: ${websiteUrl}`);
     await navigateToUrl(page, websiteUrl);
     networkMonitor.markPageLoaded();
     console.log(`   ✅ Navigation completed in ${Date.now() - stepStartTime}ms`);
@@ -137,6 +168,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 7: Extract cookies with timestamps
     stepStartTime = Date.now();
     console.log('🍪 Step 7: Extracting cookies...');
+    updateProgress(auditId, 7, 17, 'Extracting and analyzing cookies...');
     let cookies = await extractCookies(page);
     cookies = await enrichCookiesWithTimestamps(page, cookies);
     const cookieStats = getCookieStats(cookies);
@@ -171,6 +203,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 10: Analyze cookie banner for NOYB violations
     stepStartTime = Date.now();
     console.log('⚖️  Step 10: Analyzing cookie banner for GDPR violations...');
+    updateProgress(auditId, 10, 17, 'Analyzing cookie banner compliance (NOYB checklist)...');
     const bannerAnalysis = await analyzeCookieBanner(page);
     console.log(`   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`);
     console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
@@ -205,6 +238,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
     // Step 13: Get page metadata
     stepStartTime = Date.now();
+    updateProgress(auditId, 13, 17, 'Building request timeline and capturing screenshots...');
     const metadata = await getPageMetadata(page);
     console.log(`   ✅ Metadata extracted in ${Date.now() - stepStartTime}ms`);
 
@@ -285,6 +319,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       stepStartTime = Date.now();
       console.log('');
       console.log('🎭 Step 16: Running Accept/Reject consent simulation...');
+      updateProgress(auditId, 16, 17, 'Running consent simulation (Accept vs Reject)...');
       try {
         consentSimulation = await runConsentSimulation(websiteUrl);
         console.log(`   ✅ Consent simulation completed in ${Date.now() - stepStartTime}ms`);
@@ -310,6 +345,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     stepStartTime = Date.now();
     console.log('');
     console.log('📊 Step 17: Calculating overall compliance score...');
+    updateProgress(auditId, 17, 17, 'Calculating compliance score and finalizing report...');
     const complianceScore = calculateOverallScore(results);
     results.complianceScore = complianceScore;
     console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
