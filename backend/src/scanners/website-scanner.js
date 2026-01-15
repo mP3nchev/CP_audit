@@ -37,6 +37,10 @@ const {
   uploadScreenshots
 } = require('../integrations/blob-storage');
 
+const {
+  analyzeCookieBanner
+} = require('../analyzers/cookie-banner-checker');
+
 const { getDatabase } = require('../database/db');
 
 /**
@@ -130,22 +134,30 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     const trackingAnalysis = analyzeTracking(trackingData, cookies);
     console.log(`   ✅ Tracking analysis completed in ${Date.now() - stepStartTime}ms`);
 
-    // Step 10: Wait for stable view and capture screenshots
+    // Step 10: Analyze cookie banner for NOYB violations
     stepStartTime = Date.now();
-    console.log('📸 Step 10: Capturing screenshots...');
+    console.log('⚖️  Step 10: Analyzing cookie banner for GDPR violations...');
+    const bannerAnalysis = await analyzeCookieBanner(page);
+    console.log(`   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`);
+    console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
+    console.log(`   ⚠️  Critical violations: ${bannerAnalysis.hasCriticalViolations ? 'YES' : 'NO'}`);
+
+    // Step 11: Wait for stable view and capture screenshots
+    stepStartTime = Date.now();
+    console.log('📸 Step 11: Capturing screenshots...');
     await waitForStableView(page);
     const screenshots = await captureScreenshots(page);
     console.log(`   ✅ Screenshots captured in ${Date.now() - stepStartTime}ms`);
 
-    // Step 11: Upload screenshots to Vercel Blob
+    // Step 12: Upload screenshots to Vercel Blob
     stepStartTime = Date.now();
-    console.log('☁️  Step 11: Uploading screenshots to Vercel Blob...');
+    console.log('☁️  Step 12: Uploading screenshots to Vercel Blob...');
     const screenshotUrls = await uploadScreenshots(screenshots, auditUid);
     console.log(`   ✅ Screenshots uploaded in ${Date.now() - stepStartTime}ms`);
     console.log(`   📎 Full page: ${screenshotUrls.fullPageUrl ? 'Uploaded' : 'Failed'}`);
     console.log(`   📎 Banner: ${screenshotUrls.bannerUrl ? 'Uploaded' : 'Failed'}`);
 
-    // Step 12: Get page metadata
+    // Step 13: Get page metadata
     stepStartTime = Date.now();
     const metadata = await getPageMetadata(page);
     console.log(`   ✅ Metadata extracted in ${Date.now() - stepStartTime}ms`);
@@ -163,6 +175,8 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       trackingBeforeConsent: trackingAnalysis.trackingBeforeConsent,
       trackingBeforeConsentDetails: trackingAnalysis,
       trackingBeforeConsentCount: trackingBeforeConsentRequests.length + trackingAnalysis.violationCount,
+      bannerViolations: bannerAnalysis.violations,
+      bannerAnalysis: bannerAnalysis,
       screenshots: {
         full: screenshotUrls.fullPageUrl,
         banner: screenshotUrls.bannerUrl
@@ -171,12 +185,12 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       scanDuration: scanDuration
     };
 
-    // Step 13: Save to database
-    console.log('💾 Step 13: Saving results to database...');
+    // Step 14: Save to database
+    console.log('💾 Step 14: Saving results to database...');
     await saveScanResults(auditId, results);
 
-    // Step 14: Close browser
-    console.log('🧹 Step 14: Cleaning up...');
+    // Step 15: Close browser
+    console.log('🧹 Step 15: Cleaning up...');
     await closeBrowser(browser);
 
     console.log('');
@@ -221,10 +235,11 @@ async function saveScanResults(auditId, results) {
         cookies_json,
         network_requests_json,
         tracking_before_consent,
+        banner_violations_json,
         screenshot_full_url,
         screenshot_banner_url,
         scan_duration_seconds
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -232,6 +247,7 @@ async function saveScanResults(auditId, results) {
       JSON.stringify(results.cookies),
       JSON.stringify(results.networkRequests),
       results.trackingBeforeConsent ? 1 : 0,
+      JSON.stringify(results.bannerViolations || []),
       results.screenshots.full || null,
       results.screenshots.banner || null,
       results.scanDuration
