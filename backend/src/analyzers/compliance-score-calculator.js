@@ -11,14 +11,6 @@
 function calculateOverallScore(auditResults) {
   console.log('📊 Calculating overall compliance score...');
 
-  // Component weights (must total 100%)
-  const weights = {
-    privacyPolicy: 0.35,      // 35%
-    cookieBanner: 0.30,       // 30%
-    technical: 0.20,          // 20%
-    cookiePolicy: 0.15        // 15%
-  };
-
   // Calculate each component
   const components = {
     privacyPolicy: calculatePrivacyPolicyScore(auditResults),
@@ -27,12 +19,57 @@ function calculateOverallScore(auditResults) {
     cookiePolicy: calculateCookiePolicyScore(auditResults)
   };
 
+  // Determine available components (score > 0 or explicitly analyzed)
+  const hasPrivacyPolicy = auditResults.policyAnalysis && auditResults.policyAnalysis.total_score !== undefined;
+  const hasCookiePolicy = auditResults.cookieComparison !== undefined && auditResults.cookieComparison !== null;
+
+  // Dynamic weights based on available data
+  let weights = {
+    privacyPolicy: 0.35,      // 35%
+    cookieBanner: 0.30,       // 30%
+    technical: 0.20,          // 20%
+    cookiePolicy: 0.15        // 15%
+  };
+
+  // If Privacy Policy not available, redistribute weight
+  if (!hasPrivacyPolicy) {
+    weights = {
+      privacyPolicy: 0,
+      cookieBanner: 0.45,      // +15%
+      technical: 0.35,         // +15%
+      cookiePolicy: 0.20       // +5%
+    };
+    components.privacyPolicy = null;
+  }
+
+  // If Cookie Policy not available, redistribute weight
+  if (!hasCookiePolicy) {
+    if (!hasPrivacyPolicy) {
+      // Both missing
+      weights = {
+        privacyPolicy: 0,
+        cookieBanner: 0.55,    // +10%
+        technical: 0.45,       // +10%
+        cookiePolicy: 0
+      };
+    } else {
+      // Only Cookie Policy missing
+      weights = {
+        privacyPolicy: 0.40,   // +5%
+        cookieBanner: 0.40,    // +10%
+        technical: 0.20,
+        cookiePolicy: 0
+      };
+    }
+    components.cookiePolicy = null;
+  }
+
   // Calculate weighted contributions
   const contributions = {
-    privacyPolicy: components.privacyPolicy.score * weights.privacyPolicy,
+    privacyPolicy: components.privacyPolicy ? components.privacyPolicy.score * weights.privacyPolicy : 0,
     cookieBanner: components.cookieBanner.score * weights.cookieBanner,
     technical: components.technical.score * weights.technical,
-    cookiePolicy: components.cookiePolicy.score * weights.cookiePolicy
+    cookiePolicy: components.cookiePolicy ? components.cookiePolicy.score * weights.cookiePolicy : 0
   };
 
   // Sum contributions

@@ -401,36 +401,36 @@ function transformDataForTemplate(data) {
     risk_breakdown: riskBreakdown,
 
     // Compliance Score Breakdown (from Problem 7)
-    compliance_components: complianceScore ? [
-      {
+    compliance_components: complianceScore && complianceScore.components ? [
+      complianceScore.components.privacyPolicy ? {
         name: 'Privacy Policy',
         score: complianceScore.components.privacyPolicy.score,
         weight: Math.round(complianceScore.weights.privacyPolicy * 100),
         contribution: complianceScore.components.privacyPolicy.contribution.toFixed(1),
         details: complianceScore.components.privacyPolicy.details
-      },
-      {
+      } : null,
+      complianceScore.components.cookieBanner ? {
         name: 'Cookie Banner',
         score: complianceScore.components.cookieBanner.score,
         weight: Math.round(complianceScore.weights.cookieBanner * 100),
         contribution: complianceScore.components.cookieBanner.contribution.toFixed(1),
         details: complianceScore.components.cookieBanner.details
-      },
-      {
+      } : null,
+      complianceScore.components.technical ? {
         name: 'Technical Implementation',
         score: complianceScore.components.technical.score,
         weight: Math.round(complianceScore.weights.technical * 100),
         contribution: complianceScore.components.technical.contribution.toFixed(1),
         details: complianceScore.components.technical.details
-      },
-      {
+      } : null,
+      complianceScore.components.cookiePolicy ? {
         name: 'Cookie Policy Accuracy',
         score: complianceScore.components.cookiePolicy.score,
         weight: Math.round(complianceScore.weights.cookiePolicy * 100),
         contribution: complianceScore.components.cookiePolicy.contribution.toFixed(1),
         details: complianceScore.components.cookiePolicy.details
-      }
-    ] : [],
+      } : null
+    ].filter(component => component !== null) : [],
     score_caps_applied: complianceScore?.capsApplied || [],
 
     // Tracking Vendor Breakdown (from Problem 5)
