@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { initDatabase, closeDatabase } = require('./database/db');
+const { initDatabase, getDatabase, closeDatabase } = require('./database/db');
 const { migrate } = require('./database/migrate-add-scoring');
 const healthRoutes = require('./routes/health.routes');
 const auditRoutes = require('./routes/audit.routes');
@@ -45,10 +45,10 @@ try {
   process.exit(1);
 }
 
-// Run database migrations
+// Run database migrations using the existing connection
 try {
-  console.log('🔄 Running database migrations...');
-  migrate();
+  const db = getDatabase();
+  migrate(db);
 } catch (error) {
   console.error('⚠️  Migration warning:', error.message);
   console.log('   Continuing with server startup...');

@@ -9,11 +9,23 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-function migrate() {
-  const dbPath = process.env.DATABASE_URL || path.join(__dirname, '../../audits.db');
-  console.log(`📊 Migrating database at: ${dbPath}`);
+/**
+ * Run database migrations
+ * @param {Database} dbConnection - Optional existing database connection
+ */
+function migrate(dbConnection = null) {
+  console.log('📊 Running database migrations...');
 
-  const db = new Database(dbPath);
+  // Use provided connection or create new one
+  let db = dbConnection;
+  let shouldCloseDb = false;
+
+  if (!db) {
+    const dbPath = process.env.DATABASE_URL || path.join(__dirname, '../../audits.db');
+    console.log(`   Opening database at: ${dbPath}`);
+    db = new Database(dbPath);
+    shouldCloseDb = true;
+  }
 
   try {
     // Check if columns already exist
@@ -46,14 +58,17 @@ function migrate() {
       console.log('  ⏭️  Column already exists: request_categorization_json');
     }
 
-    console.log('');
-    console.log(`✅ Migration complete! ${migrationsApplied} changes applied.`);
+    console.log(`✅ Migration complete! ${migrationsApplied} changes applied.\n`);
 
   } catch (error) {
     console.error('❌ Migration failed:', error.message);
-    process.exit(1);
+    console.error('   Stack:', error.stack);
+    throw error; // Re-throw instead of process.exit(1)
   } finally {
-    db.close();
+    // Only close if we opened it
+    if (shouldCloseDb && db) {
+      db.close();
+    }
   }
 }
 
