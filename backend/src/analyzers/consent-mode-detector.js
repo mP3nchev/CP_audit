@@ -152,12 +152,68 @@ async function detectConsentMode(page) {
         results.ads_conversion_id = adsConfig[1];
       }
 
+      // Check 9: Detect Consent Mode implementation method (Advanced vs Basic)
+      if (results.detected) {
+        // Advanced mode: sends anonymized pings, Basic mode: blocks all tags
+        // Detection: Check for url_passthrough parameter (Advanced mode feature)
+        if (results.defaultConsent.url_passthrough === true) {
+          results.mode = 'advanced';
+          results.mode_description = 'Advanced - Sends anonymized pings when consent denied';
+        } else {
+          // Check if ads_data_redaction is set (Basic mode indicator)
+          if (results.defaultConsent.ads_data_redaction === true) {
+            results.mode = 'basic';
+            results.mode_description = 'Basic - Blocks all tags until consent granted';
+          } else {
+            results.mode = 'unknown';
+            results.mode_description = 'Cannot determine mode - check gtag configuration';
+          }
+        }
+      }
+
+      // Check 10: Alternative CMP integrations (Cookiebot, OneTrust, Usercentrics)
+      results.cmp_integrations = [];
+
+      // Cookiebot integration detection
+      if (typeof window.Cookiebot !== 'undefined') {
+        results.cmp_integrations.push({
+          name: 'Cookiebot',
+          detected: true,
+          consent_mode_integration: typeof window.Cookiebot.consent !== 'undefined'
+        });
+      }
+
+      // OneTrust integration detection
+      if (typeof window.OneTrust !== 'undefined' || typeof window.OptanonWrapper === 'function') {
+        results.cmp_integrations.push({
+          name: 'OneTrust',
+          detected: true,
+          consent_mode_integration: dataLayer.some(item =>
+            JSON.stringify(item).includes('OneTrust') && JSON.stringify(item).includes('consent')
+          )
+        });
+      }
+
+      // Usercentrics integration detection
+      if (typeof window.UC_UI !== 'undefined' || document.querySelector('[data-usercentrics]')) {
+        results.cmp_integrations.push({
+          name: 'Usercentrics',
+          detected: true,
+          consent_mode_integration: dataLayer.some(item =>
+            JSON.stringify(item).includes('Usercentrics')
+          )
+        });
+      }
+
       return results;
     });
 
     // Log results
     if (analysis.detected) {
       console.log(`   ✅ Google Consent Mode detected (${analysis.version})`);
+      if (analysis.mode) {
+        console.log(`   🔧 Implementation mode: ${analysis.mode.toUpperCase()} - ${analysis.mode_description}`);
+      }
       console.log(`   📊 Consent states:`);
       console.log(`      - ad_storage: ${analysis.consentStates.ad_storage}`);
       console.log(`      - ad_user_data: ${analysis.consentStates.ad_user_data}`);
@@ -175,6 +231,15 @@ async function detectConsentMode(page) {
       } else {
         console.log(`   ⚠️  No consent update commands found - user consent may not be recorded`);
       }
+
+      // Log CMP integrations
+      if (analysis.cmp_integrations && analysis.cmp_integrations.length > 0) {
+        console.log(`   🔌 CMP Integrations detected:`);
+        analysis.cmp_integrations.forEach(cmp => {
+          const integration = cmp.consent_mode_integration ? '✅ integrated' : '⚠️ not integrated';
+          console.log(`      - ${cmp.name}: ${integration}`);
+        });
+      }
     } else {
       console.log(`   ❌ Google Consent Mode not detected`);
       if (analysis.issues.length > 0) {
@@ -185,11 +250,14 @@ async function detectConsentMode(page) {
     return {
       detected: analysis.detected,
       version: analysis.version,
+      mode: analysis.mode,
+      modeDescription: analysis.mode_description,
       compliant: analysis.compliant,
       defaultStates: analysis.consentStates,
       hasUpdates: analysis.hasConsentUpdates,
       ga4Present: analysis.ga4_present,
       googleAdsPresent: analysis.google_ads_present,
+      cmpIntegrations: analysis.cmp_integrations || [],
       issues: analysis.issues,
       raw: analysis
     };

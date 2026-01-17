@@ -11,8 +11,8 @@ function initDatabase() {
   try {
     const dbPath = path.resolve(__dirname, '../../audits.db');
 
-    // Create database connection
-    db = new Database(dbPath, { verbose: console.log });
+    // Create database connection (verbose logging disabled for performance)
+    db = new Database(dbPath);
 
     console.log('✅ Database connection established');
 

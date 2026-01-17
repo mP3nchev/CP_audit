@@ -27,9 +27,6 @@
       "check_selectors": [
         "button[data-action='reject']",
         "button[data-action='deny']",
-        "button:contains('Reject')",
-        "button:contains('Decline')",
-        "button:contains('Deny')",
         "button[class*='reject']",
         "button[class*='decline']",
         "a[data-action='reject']"

@@ -114,7 +114,7 @@ export default function AuditForm({ onAuditComplete }) {
   };
 
   const pollAuditStatus = async (auditId, apiUrl) => {
-    const maxAttempts = 600; // 10 minutes max (1 second intervals) - increased for consent simulation
+    const maxAttempts = 200; // 10 minutes max (3 second intervals) - reduced polling frequency
     let attempts = 0;
 
     while (attempts < maxAttempts) {
@@ -143,7 +143,7 @@ export default function AuditForm({ onAuditComplete }) {
         setProgress('Generating compliance report...');
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 3000));
       attempts++;
     }
 
