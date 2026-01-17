@@ -1,6 +1,29 @@
 const noybViolations = require('../config/noyb-violations.json');
 
 /**
+ * Multi-language keyword sets for cookie banner detection
+ */
+const BUTTON_KEYWORDS = {
+  accept: ['accept', 'agree', 'allow', 'ok', 'yes', 'akzeptieren', 'zustimmen', 'accepter', 'aceptar', 'accetto', 'aceitar', 'приемам', 'acceptuj', 'souhlasím'],
+  reject: ['reject', 'decline', 'deny', 'refuse', 'ablehnen', 'refuser', 'rechazar', 'rifiuto', 'rejeitar', 'отказвам', 'odrzuć', 'odmítnout'],
+  settings: ['settings', 'customize', 'preferences', 'manage', 'options', 'einstellungen', 'anpassen', 'préférences', 'configuración', 'impostazioni', 'configurações', 'настройки', 'ustawienia', 'nastavení'],
+  cookieSettings: ['cookie settings', 'privacy settings', 'manage cookies', 'cookie preferences', 'cookie-einstellungen', 'cookies verwalten', 'gestion des cookies', 'configuración de cookies', 'gestione cookie', 'configurações de cookies', 'настройки за бисквитки', 'zarządzaj cookie']
+};
+
+/**
+ * Hybrid element finder - CSS selectors + text matching fallback
+ * @param {Array<Element>} elements - DOM elements to search
+ * @param {Array<string>} keywords - Keywords to match
+ * @returns {Element|null} Found element
+ */
+function findElementByTextHybrid(elements, keywords) {
+  return elements.find(el => {
+    const text = el.textContent.toLowerCase().trim();
+    return keywords.some(keyword => text.includes(keyword.toLowerCase()));
+  });
+}
+
+/**
  * Analyze cookie banner for noyb 8-point checklist violations
  * @param {Page} page - Puppeteer page
  * @returns {Promise<Object>} Violations detected
@@ -91,45 +114,45 @@ async function checkViolation(page, violation) {
  */
 async function checkNoRejectButton(page, violation) {
   try {
-    const result = await page.evaluate((selectors) => {
-      // Find accept button
-      const acceptSelectors = [
-        "button:contains('Accept')",
-        "button:contains('Agree')",
-        "button[data-action='accept']",
-        "button[class*='accept']"
-      ];
+    const result = await page.evaluate((keywords) => {
+      // Hybrid approach: Try CSS selectors first, then text matching
+      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
 
+      // Find accept button using multiple strategies
       let acceptButton = null;
-      for (const sel of acceptSelectors) {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        acceptButton = buttons.find(b =>
-          b.textContent.toLowerCase().includes('accept') ||
-          b.textContent.toLowerCase().includes('agree') ||
-          b.getAttribute('data-action') === 'accept'
-        );
-        if (acceptButton) break;
+
+      // Strategy 1: CSS attribute/class selectors
+      acceptButton = buttons.find(b =>
+        b.getAttribute('data-action') === 'accept' ||
+        b.getAttribute('id')?.includes('accept') ||
+        b.className?.includes('accept')
+      );
+
+      // Strategy 2: Text content matching (multi-language)
+      if (!acceptButton) {
+        acceptButton = buttons.find(b => {
+          const text = b.textContent.toLowerCase().trim();
+          return keywords.accept.some(keyword => text.includes(keyword.toLowerCase()));
+        });
       }
 
-      // Find reject button
+      // Find reject button using multiple strategies
       let rejectButton = null;
-      for (const sel of selectors) {
-        const element = document.querySelector(sel);
-        if (element) {
-          rejectButton = element;
-          break;
-        }
-      }
 
-      // Alternative: look for any button with reject-related text
+      // Strategy 1: CSS attribute/class selectors (only valid selectors from noyb config)
+      rejectButton = buttons.find(b =>
+        b.getAttribute('data-action') === 'reject' ||
+        b.getAttribute('data-action') === 'deny' ||
+        b.getAttribute('id')?.includes('reject') ||
+        b.className?.includes('reject') ||
+        b.className?.includes('decline')
+      );
+
+      // Strategy 2: Text content matching (multi-language)
       if (!rejectButton) {
-        const buttons = Array.from(document.querySelectorAll('button, a'));
         rejectButton = buttons.find(b => {
-          const text = b.textContent.toLowerCase();
-          return text.includes('reject') ||
-                 text.includes('decline') ||
-                 text.includes('deny') ||
-                 text.includes('refuse');
+          const text = b.textContent.toLowerCase().trim();
+          return keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
         });
       }
 
@@ -139,7 +162,7 @@ async function checkNoRejectButton(page, violation) {
         acceptText: acceptButton?.textContent.trim(),
         rejectText: rejectButton?.textContent.trim()
       };
-    }, violation.check_selectors);
+    }, BUTTON_KEYWORDS);
 
     // Violation detected if accept button exists but reject button doesn't
     const detected = result.hasAcceptButton && !result.hasRejectButton;
@@ -213,22 +236,19 @@ async function checkPreTickedBoxes(page, violation) {
  */
 async function checkDeceptiveLinkDesign(page, violation) {
   try {
-    const result = await page.evaluate(() => {
-      // Find accept button
-      const buttons = Array.from(document.querySelectorAll('button, a'));
+    const result = await page.evaluate((keywords) => {
+      // Find accept button using multi-language text matching
+      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
       const acceptButton = buttons.find(b => {
-        const text = b.textContent.toLowerCase();
-        return text.includes('accept') || text.includes('agree');
+        const text = b.textContent.toLowerCase().trim();
+        return keywords.accept.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
-      // Find settings/customize link
+      // Find settings/customize link using multi-language text matching
       const settingsLink = buttons.find(b => {
-        const text = b.textContent.toLowerCase();
+        const text = b.textContent.toLowerCase().trim();
         const tagName = b.tagName.toLowerCase();
-        return (text.includes('settings') ||
-                text.includes('customize') ||
-                text.includes('preferences') ||
-                text.includes('manage')) &&
+        return keywords.settings.some(keyword => text.includes(keyword.toLowerCase())) &&
                tagName === 'a'; // It's a link, not a button
       });
 
@@ -251,7 +271,7 @@ async function checkDeceptiveLinkDesign(page, violation) {
         acceptFontSize: acceptFontSize,
         settingsFontSize: settingsFontSize
       };
-    });
+    }, BUTTON_KEYWORDS);
 
     // Violation if settings is a link while accept is a button AND font size ratio < 0.7
     const detected = result.mismatch &&
@@ -279,17 +299,17 @@ async function checkDeceptiveLinkDesign(page, violation) {
  */
 async function checkDeceptiveButtonColors(page, violation) {
   try {
-    const result = await page.evaluate((colorPatterns) => {
-      const buttons = Array.from(document.querySelectorAll('button, a'));
+    const result = await page.evaluate((data) => {
+      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
 
       const acceptButton = buttons.find(b => {
-        const text = b.textContent.toLowerCase();
-        return text.includes('accept') || text.includes('agree');
+        const text = b.textContent.toLowerCase().trim();
+        return data.keywords.accept.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
       const rejectButton = buttons.find(b => {
-        const text = b.textContent.toLowerCase();
-        return text.includes('reject') || text.includes('decline');
+        const text = b.textContent.toLowerCase().trim();
+        return data.keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
       if (!acceptButton || !rejectButton) {
@@ -311,7 +331,7 @@ async function checkDeceptiveButtonColors(page, violation) {
         acceptColor: rgbToHex(acceptBg),
         rejectColor: rgbToHex(rejectBg)
       };
-    }, violation.color_patterns);
+    }, { keywords: BUTTON_KEYWORDS, colorPatterns: violation.color_patterns });
 
     if (!result.hasButtons) {
       return { detected: false, evidence: null };
@@ -347,17 +367,17 @@ async function checkDeceptiveButtonColors(page, violation) {
  */
 async function checkDeceptiveButtonContrast(page, violation) {
   try {
-    const result = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, a'));
+    const result = await page.evaluate((keywords) => {
+      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
 
       const acceptButton = buttons.find(b => {
-        const text = b.textContent.toLowerCase();
-        return text.includes('accept') || text.includes('agree');
+        const text = b.textContent.toLowerCase().trim();
+        return keywords.accept.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
       const rejectButton = buttons.find(b => {
-        const text = b.textContent.toLowerCase();
-        return text.includes('reject') || text.includes('decline');
+        const text = b.textContent.toLowerCase().trim();
+        return keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
       if (!acceptButton || !rejectButton) {
@@ -392,7 +412,7 @@ async function checkDeceptiveButtonContrast(page, violation) {
         acceptSize: acceptArea,
         rejectSize: rejectArea
       };
-    });
+    }, BUTTON_KEYWORDS);
 
     if (!result.hasButtons) {
       return { detected: false, evidence: null };
@@ -520,14 +540,12 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
  */
 async function checkDifficultConsentWithdrawal(page, violation) {
   try {
-    const result = await page.evaluate(() => {
-      // Look for persistent consent management elements
+    const result = await page.evaluate((keywords) => {
+      // Look for persistent consent management elements (only valid CSS selectors)
       const selectors = [
         // Footer links
         'footer a[href*="cookie"]',
         'footer a[href*="privacy"]',
-        'footer a:contains("Cookie Settings")',
-        'footer a:contains("Privacy Settings")',
         // Floating buttons/icons
         '.cookie-settings-btn',
         '#cookie-settings',
@@ -540,24 +558,26 @@ async function checkDifficultConsentWithdrawal(page, violation) {
 
       let foundElements = [];
       for (const selector of selectors) {
-        const elements = document.querySelectorAll(selector);
-        if (elements.length > 0) {
-          foundElements.push({
-            selector,
-            count: elements.length,
-            text: elements[0].textContent.trim()
-          });
+        try {
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            foundElements.push({
+              selector,
+              count: elements.length,
+              text: elements[0].textContent.trim()
+            });
+          }
+        } catch (e) {
+          // Skip invalid selectors
+          continue;
         }
       }
 
-      // Alternative: look for any link/button with cookie/privacy settings text
-      const allLinks = Array.from(document.querySelectorAll('a, button'));
+      // Enhanced text-based search with multi-language support
+      const allLinks = Array.from(document.querySelectorAll('a, button, div[role="button"]'));
       const settingsLinks = allLinks.filter(el => {
-        const text = el.textContent.toLowerCase();
-        return text.includes('cookie settings') ||
-               text.includes('privacy settings') ||
-               text.includes('manage cookies') ||
-               text.includes('cookie preferences');
+        const text = el.textContent.toLowerCase().trim();
+        return keywords.cookieSettings.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
       return {
@@ -565,7 +585,7 @@ async function checkDifficultConsentWithdrawal(page, violation) {
         foundElements,
         settingsLinksCount: settingsLinks.length
       };
-    });
+    }, BUTTON_KEYWORDS);
 
     const detected = !result.hasWithdrawalMechanism;
 

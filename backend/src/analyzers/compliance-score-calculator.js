@@ -88,10 +88,14 @@ function calculateOverallScore(auditResults) {
   const grade = determineGrade(overallScore);
 
   console.log(`  ✅ Overall Compliance Score: ${overallScore}/100 (Grade: ${grade})`);
-  console.log(`     - Privacy Policy: ${components.privacyPolicy.score}/100 (contributes ${contributions.privacyPolicy.toFixed(1)} points)`);
+  if (components.privacyPolicy) {
+    console.log(`     - Privacy Policy: ${components.privacyPolicy.score}/100 (contributes ${contributions.privacyPolicy.toFixed(1)} points)`);
+  }
   console.log(`     - Cookie Banner: ${components.cookieBanner.score}/100 (contributes ${contributions.cookieBanner.toFixed(1)} points)`);
   console.log(`     - Technical: ${components.technical.score}/100 (contributes ${contributions.technical.toFixed(1)} points)`);
-  console.log(`     - Cookie Policy: ${components.cookiePolicy.score}/100 (contributes ${contributions.cookiePolicy.toFixed(1)} points)`);
+  if (components.cookiePolicy) {
+    console.log(`     - Cookie Policy: ${components.cookiePolicy.score}/100 (contributes ${contributions.cookiePolicy.toFixed(1)} points)`);
+  }
 
   if (capsApplied.length > 0) {
     console.log(`     ⚠️  Critical caps applied: ${capsApplied.join(', ')}`);
@@ -101,11 +105,11 @@ function calculateOverallScore(auditResults) {
     overallScore,
     grade,
     components: {
-      privacyPolicy: {
+      privacyPolicy: components.privacyPolicy ? {
         score: components.privacyPolicy.score,
         contribution: contributions.privacyPolicy,
         details: components.privacyPolicy.details
-      },
+      } : null,
       cookieBanner: {
         score: components.cookieBanner.score,
         contribution: contributions.cookieBanner,
@@ -116,11 +120,11 @@ function calculateOverallScore(auditResults) {
         contribution: contributions.technical,
         details: components.technical.details
       },
-      cookiePolicy: {
+      cookiePolicy: components.cookiePolicy ? {
         score: components.cookiePolicy.score,
         contribution: contributions.cookiePolicy,
         details: components.cookiePolicy.details
-      }
+      } : null
     },
     capsApplied,
     weights
@@ -390,10 +394,14 @@ function generateScoreSummary(scoreResult) {
   let summary = `Your website received an overall compliance score of ${scoreResult.overallScore}/100 (Grade ${scoreResult.grade}: ${gradeInfo.name}).\n\n`;
 
   summary += 'Component Breakdown:\n';
-  summary += `- Privacy Policy: ${scoreResult.components.privacyPolicy.score}/100\n`;
+  if (scoreResult.components.privacyPolicy) {
+    summary += `- Privacy Policy: ${scoreResult.components.privacyPolicy.score}/100\n`;
+  }
   summary += `- Cookie Banner: ${scoreResult.components.cookieBanner.score}/100\n`;
   summary += `- Technical Implementation: ${scoreResult.components.technical.score}/100\n`;
-  summary += `- Cookie Policy Accuracy: ${scoreResult.components.cookiePolicy.score}/100\n`;
+  if (scoreResult.components.cookiePolicy) {
+    summary += `- Cookie Policy Accuracy: ${scoreResult.components.cookiePolicy.score}/100\n`;
+  }
 
   if (scoreResult.capsApplied.length > 0) {
     summary += `\n⚠️ Critical Violations: ${scoreResult.capsApplied.join(', ')}\n`;
