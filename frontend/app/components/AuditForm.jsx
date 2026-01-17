@@ -35,7 +35,11 @@ export default function AuditForm({ onAuditComplete }) {
       setIsSubmitting(true);
       setProgress('Starting audit scan...');
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      // Normalize API URL - ensure it starts with protocol
+      let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
+        apiUrl = 'https://' + apiUrl;
+      }
       console.log('API URL:', apiUrl);
       console.log('Sending request to:', `${apiUrl}/api/audit/start`);
 

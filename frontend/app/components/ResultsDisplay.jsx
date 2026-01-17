@@ -5,7 +5,13 @@ import StatusBadge from './StatusBadge';
 
 export default function ResultsDisplay({ auditId }) {
   const [copied, setCopied] = useState(false);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+  // Normalize API URL - ensure it starts with protocol
+  let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
+    apiUrl = 'https://' + apiUrl;
+  }
+
   const reportUrl = `${apiUrl}/api/audit/${auditId}/report`;
   const shareUrl = `${apiUrl}/api/audit/${auditId}/share`;
 
