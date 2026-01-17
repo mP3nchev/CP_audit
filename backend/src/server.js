@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { initDatabase, closeDatabase } = require('./database/db');
+const { migrate } = require('./database/migrate-add-scoring');
 const healthRoutes = require('./routes/health.routes');
 const auditRoutes = require('./routes/audit.routes');
 const constants = require('./config/constants');
@@ -42,6 +43,15 @@ try {
 } catch (error) {
   console.error('❌ Failed to initialize database:', error);
   process.exit(1);
+}
+
+// Run database migrations
+try {
+  console.log('🔄 Running database migrations...');
+  migrate();
+} catch (error) {
+  console.error('⚠️  Migration warning:', error.message);
+  console.log('   Continuing with server startup...');
 }
 
 // Routes
