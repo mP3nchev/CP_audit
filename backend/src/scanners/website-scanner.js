@@ -213,12 +213,20 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     networkMonitor.markPageLoaded();
     console.log(`   ✅ Navigation completed in ${Date.now() - stepStartTime}ms`);
 
-    // Step 5.5: IMMEDIATE cookie snapshot (baseline) - BEFORE banner detection
+    // Step 5.5: IMMEDIATE cookie snapshot (NO delay) - captures already loaded cookies
     stepStartTime = Date.now();
     console.log('🍪 Step 5.5: Taking immediate cookie snapshot (baseline)...');
-    const baselineCookies = await extractCookies(page);
+    const baselineCookies = await extractCookies(page, { skipDelay: true }); // NO delay!
     const baselineTime = await page.evaluate(() => performance.now());
     console.log(`   📸 Baseline snapshot: ${baselineCookies.length} cookies at ${(baselineTime / 1000).toFixed(2)}s`);
+
+    // Step 5.7: INTERMEDIATE snapshot AFTER 5s delay - captures async-loaded cookies (_ga, _gcl_au)
+    stepStartTime = Date.now();
+    console.log('🍪 Step 5.7: Waiting 5s and taking intermediate snapshot (async cookies)...');
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s for _ga, _gcl_au to load
+    const intermediateCookies = await extractCookies(page, { skipDelay: true }); // Immediate after wait
+    const intermediateTime = await page.evaluate(() => performance.now());
+    console.log(`   📸 Intermediate snapshot: ${intermediateCookies.length} cookies at ${(intermediateTime / 1000).toFixed(2)}s`);
 
     // Step 6: Wait for page stability
     stepStartTime = Date.now();
@@ -233,22 +241,40 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   🍪 Cookie banner detected at ${(bannerAppearTime / 1000).toFixed(2)}s after page load`);
     }
 
-    // Step 7: Extract cookies with timestamps and compare with baseline
+    // Step 7: Extract final cookies (with 3s delay for any remaining async cookies)
     stepStartTime = Date.now();
-    console.log('🍪 Step 7: Extracting final cookies and comparing with baseline...');
+    console.log('🍪 Step 7: Extracting final cookies and comparing with snapshots...');
     updateProgress(auditId, 7, 17, 'Extracting and analyzing cookies...', startTime);
-    let cookies = await extractCookies(page);
+    let cookies = await extractCookies(page); // WITH delay (default 3s)
     const finalTime = await page.evaluate(() => performance.now());
 
-    // Mark cookies as "before banner" or "after banner" based on baseline comparison
+    // THREE-TIER timestamp assignment:
+    // 1. If in baseline → detectedAt = baselineTime (~1.5s)
+    // 2. If in intermediate but not baseline → detectedAt = intermediateTime (~6.5s) ← _ga here!
+    // 3. If only in final → detectedAt = finalTime (~15s)
     const baselineCookieNames = new Set(baselineCookies.map(c => c.name));
+    const intermediateCookieNames = new Set(intermediateCookies.map(c => c.name));
+
     cookies = cookies.map(cookie => {
-      const wasInBaseline = baselineCookieNames.has(cookie.name);
+      let detectedAt, detectionStage;
+
+      if (baselineCookieNames.has(cookie.name)) {
+        detectedAt = baselineTime;
+        detectionStage = 'baseline';
+      } else if (intermediateCookieNames.has(cookie.name)) {
+        detectedAt = intermediateTime; // ← _ga gets THIS timestamp!
+        detectionStage = 'intermediate';
+      } else {
+        detectedAt = finalTime;
+        detectionStage = 'final';
+      }
+
       return {
         ...cookie,
-        detectedAt: wasInBaseline ? baselineTime : finalTime,
+        detectedAt: detectedAt,
         detectedAtAbsolute: Date.now(),
-        loadedBeforeBanner: wasInBaseline && bannerAppearTime && baselineTime < bannerAppearTime
+        detectionStage: detectionStage,
+        loadedBeforeBanner: bannerAppearTime && detectedAt < bannerAppearTime
       };
     });
 

@@ -524,8 +524,9 @@ async function runRejectScenario(websiteUrl) {
     console.log('🚫 === REJECT SCENARIO ===');
     console.log(`   Testing: ${websiteUrl}`);
 
-    // Launch browser
-    browser = await launchBrowser();
+    // Launch browser with EXTENDED protocolTimeout for CookieScript/CMP sites
+    // Default 10s is too short - CDP protocol timeout-ва преди navigation да завърши
+    browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
     // Extract cookies BEFORE navigation
@@ -658,8 +659,8 @@ async function runAcceptScenario(websiteUrl) {
     console.log('✅ === ACCEPT SCENARIO ===');
     console.log(`   Testing: ${websiteUrl}`);
 
-    // Launch NEW browser (separate context)
-    browser = await launchBrowser();
+    // Launch NEW browser (separate context) with EXTENDED protocolTimeout
+    browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
     // Navigate to site (with extended timeout for CookieScript/CMP-heavy sites)
