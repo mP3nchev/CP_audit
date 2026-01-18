@@ -21,6 +21,145 @@ const {
 } = require('./cookie-extractor');
 
 /**
+ * Wait for consent UI to be ready (STATE-BASED, not lifecycle-based)
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time in ms
+ * @returns {Promise<boolean>} True if consent UI is ready
+ */
+async function waitForConsentUIReady(page, timeout = 30000) {
+  const startTime = Date.now();
+
+  console.log(`   🎯 Waiting for consent UI state (max ${timeout}ms)...`);
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      // STATE CHECK: Is consent UI rendered and interactive?
+      const uiState = await page.evaluate(() => {
+        // CMP-specific markers
+        const cmpMarkers = [
+          '#cookiescript_injected',           // CookieScript loaded
+          '#onetrust-banner-sdk',             // OneTrust banner
+          '#CybotCookiebotDialog',            // Cookiebot dialog
+          '[data-testid="uc-privacy-banner"]' // Usercentrics
+        ];
+
+        for (const marker of cmpMarkers) {
+          const element = document.querySelector(marker);
+          if (element) {
+            const style = window.getComputedStyle(element);
+            if (style.display !== 'none') {
+              return { ready: true, cmp: marker, reason: 'CMP UI detected' };
+            }
+          }
+        }
+
+        // Generic consent UI detection
+        const consentElements = document.querySelectorAll(
+          '[id*="cookie"], [class*="cookie"], [id*="consent"], [class*="consent"], [role="dialog"]'
+        );
+
+        for (const el of consentElements) {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+
+          if (
+            rect.width > 200 &&
+            rect.height > 100 &&
+            style.display !== 'none' &&
+            style.visibility !== 'hidden'
+          ) {
+            // Check if it has buttons
+            const buttons = el.querySelectorAll('button, a, [role="button"]');
+            if (buttons.length >= 1) {
+              return { ready: true, cmp: 'generic', reason: 'Consent UI with buttons detected' };
+            }
+          }
+        }
+
+        return { ready: false, reason: 'No consent UI found' };
+      });
+
+      if (uiState.ready) {
+        console.log(`   ✅ Consent UI ready: ${uiState.reason} (${uiState.cmp})`);
+        return true;
+      }
+
+      // Poll every 500ms
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (error) {
+      console.log(`   ⚠️  UI state check failed: ${error.message}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  console.log(`   ⚠️  Consent UI not ready after ${timeout}ms`);
+  return false;
+}
+
+/**
+ * Wait for consent state transition (STATE-BASED)
+ * @param {Page} page - Puppeteer page
+ * @param {string} expectedTransition - 'accept' or 'reject'
+ * @param {number} timeout - Max wait time
+ * @returns {Promise<boolean>} True if transition completed
+ */
+async function waitForConsentTransition(page, expectedTransition, timeout = 15000) {
+  const startTime = Date.now();
+
+  console.log(`   🎯 Waiting for consent transition: ${expectedTransition}...`);
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      const transitionState = await page.evaluate(() => {
+        // Check if consent storage has been set
+        const consentKeys = [
+          'CookieScriptConsent',
+          'OptanonConsent',
+          'CookieConsent',
+          'cookieConsent'
+        ];
+
+        for (const key of consentKeys) {
+          const lsValue = localStorage.getItem(key);
+          const cookieValue = document.cookie.split(';').find(c => c.trim().startsWith(key));
+
+          if (lsValue || cookieValue) {
+            return { transitioned: true, reason: `Consent stored: ${key}` };
+          }
+        }
+
+        // Check if banner disappeared
+        const bannerVisible = Array.from(
+          document.querySelectorAll('[id*="cookie"], [class*="cookie"]')
+        ).some(el => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && rect.height > 100;
+        });
+
+        if (!bannerVisible) {
+          return { transitioned: true, reason: 'Banner disappeared' };
+        }
+
+        return { transitioned: false, reason: 'No transition detected' };
+      });
+
+      if (transitionState.transitioned) {
+        console.log(`   ✅ Consent transition completed: ${transitionState.reason}`);
+        return true;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (error) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  console.log(`   ⚠️  Consent transition not detected after ${timeout}ms`);
+  return false;
+}
+
+/**
  * Find cookie banner buttons (supports CookieScript, OneTrust, Cookiebot, Usercentrics)
  * @param {Page} page - Puppeteer page
  * @returns {Promise<Object>} Banner buttons found
@@ -529,17 +668,25 @@ async function runRejectScenario(websiteUrl) {
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
-    // Extract cookies BEFORE navigation
-    const cookiesBeforeLoad = await page.cookies();
+    // STATE-BASED NAVIGATION: Use minimal 'load' event, then wait for APPLICATION STATE
+    console.log(`   📡 Navigating with 'load' event (minimal baseline)...`);
+    await navigateToUrl(page, websiteUrl, 'reject-scenario', {
+      waitUntil: 'load',
+      timeout: 15000
+    });
+    console.log(`   ✅ Page load event completed`);
 
-    // Navigate to site (with extended timeout for CookieScript/CMP-heavy sites)
-    await navigateToUrl(page, websiteUrl, 'reject-scenario', { timeout: 30000 });
-    await waitForPageStability(page, 2000);
+    // STATE CHECK: Wait for consent UI to be ready (NOT lifecycle events!)
+    const uiReady = await waitForConsentUIReady(page, 30000);
+    if (!uiReady) {
+      throw new Error('Consent UI never reached ready state');
+    }
 
-    // Extract cookies BEFORE any interaction
-    const cookiesBeforeConsent = await extractAllCookies(page);
+    // Extract cookies BEFORE any interaction (NO delay - immediate state snapshot)
+    const cookiesBeforeConsent = await extractCookies(page, { skipDelay: true });
+    console.log(`   📸 Baseline cookies: ${cookiesBeforeConsent.length}`);
 
-    // Find banner buttons
+    // Find banner buttons (UI is ready, buttons must exist)
     const buttons = await findBannerButtons(page);
 
     let clickPath = [];
@@ -598,12 +745,16 @@ async function runRejectScenario(websiteUrl) {
       console.log(`   ❌ No Reject or Settings button found`);
     }
 
-    // Wait for consent to be processed + additional time for cookies to be removed/set
-    // CRITICAL: Google Analytics and other trackers need time to process rejection
-    await new Promise(resolve => setTimeout(resolve, 4000));
+    // STATE CHECK: Wait for consent transition to complete
+    await waitForConsentTransition(page, 'reject', 15000);
 
-    // Extract cookies AFTER rejecting
-    const cookiesAfterReject = await extractAllCookies(page);
+    // TRACKING RUNTIME PROPAGATION: Wait for tracking logic to process rejection
+    // This is NOT a procedural delay - it's waiting for runtime state propagation
+    console.log(`   ⏱️  Waiting 3s for tracking runtime propagation...`);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Extract cookies AFTER consent state transition
+    const cookiesAfterReject = await extractCookies(page, { delay: 3000 }); // WITH delay for async cookies
 
     // Close browser
     await closeBrowser(browser);
@@ -663,14 +814,25 @@ async function runAcceptScenario(websiteUrl) {
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
-    // Navigate to site (with extended timeout for CookieScript/CMP-heavy sites)
-    await navigateToUrl(page, websiteUrl, 'accept-scenario', { timeout: 30000 });
-    await waitForPageStability(page, 2000);
+    // STATE-BASED NAVIGATION: Use minimal 'load' event, then wait for APPLICATION STATE
+    console.log(`   📡 Navigating with 'load' event (minimal baseline)...`);
+    await navigateToUrl(page, websiteUrl, 'accept-scenario', {
+      waitUntil: 'load',
+      timeout: 15000
+    });
+    console.log(`   ✅ Page load event completed`);
 
-    // Extract cookies BEFORE any interaction
-    const cookiesBeforeConsent = await extractAllCookies(page);
+    // STATE CHECK: Wait for consent UI to be ready
+    const uiReady = await waitForConsentUIReady(page, 30000);
+    if (!uiReady) {
+      throw new Error('Consent UI never reached ready state');
+    }
 
-    // Find banner buttons
+    // Extract cookies BEFORE any interaction (immediate snapshot)
+    const cookiesBeforeConsent = await extractCookies(page, { skipDelay: true });
+    console.log(`   📸 Baseline cookies: ${cookiesBeforeConsent.length}`);
+
+    // Find banner buttons (UI is ready, buttons must exist)
     const buttons = await findBannerButtons(page);
 
     let clickPath = [];
@@ -686,13 +848,17 @@ async function runAcceptScenario(websiteUrl) {
       console.log(`   ❌ No Accept button found`);
     }
 
-    // Wait for consent to be processed and cookies to load
-    // CRITICAL: Google Analytics (_ga, _gcl_au), Facebook (_fbp), and other trackers
-    // load async and need 4-5 seconds to fully set all cookies
+    // STATE CHECK: Wait for consent transition to complete
+    await waitForConsentTransition(page, 'accept', 15000);
+
+    // TRACKING RUNTIME PROPAGATION: Wait for tracking logic to initialize and load cookies
+    // Google Analytics, Facebook Pixel, etc. initialize AFTER consent is granted
+    // This is NOT a procedural delay - it's waiting for runtime initialization
+    console.log(`   ⏱️  Waiting 5s for tracking runtime initialization...`);
     await new Promise(resolve => setTimeout(resolve, 5000));
 
-    // Extract cookies AFTER accepting
-    const cookiesAfterAccept = await extractAllCookies(page);
+    // Extract cookies AFTER tracking runtimes have initialized
+    const cookiesAfterAccept = await extractCookies(page, { delay: 3000 }); // WITH delay for async cookies
 
     // Close browser
     await closeBrowser(browser);
