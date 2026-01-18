@@ -9,14 +9,19 @@
  * 2. CDP Network.getAllCookies() (HTTP + JS + all contexts)
  *
  * @param {Page} page - Puppeteer page
+ * @param {Object} options - Options { skipDelay: boolean, delay: number }
  * @returns {Promise<Array>} Array of cookie objects
  */
-async function extractCookies(page) {
+async function extractCookies(page, options = {}) {
   try {
     // Wait for async cookie setting - Google Analytics (_ga, _gcl_au), Facebook (_fbp, _IDE),
     // Cloudflare (_cfuvid) and other tracking cookies load with delay after page interaction
-    // CRITICAL: 3 seconds ensures we catch all async-set cookies
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // BASELINE snapshot: skipDelay = true (immediate snapshot)
+    // FINAL snapshot: skipDelay = false (wait 3s for async cookies)
+    const delayMs = options.skipDelay ? 0 : (options.delay || 3000);
+    if (delayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
 
     // Method 1: CDP Network.getAllCookies() - most comprehensive
     const client = await page.target().createCDPSession();

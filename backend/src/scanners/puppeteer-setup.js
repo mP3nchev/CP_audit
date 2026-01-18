@@ -52,15 +52,16 @@ function findChromiumExecutable() {
 
 /**
  * Launch Puppeteer browser with optimized settings
+ * @param {Object} customOptions - Custom launch options (protocolTimeout, etc.)
  * @returns {Promise<Browser>} Puppeteer browser instance
  */
-async function launchBrowser() {
+async function launchBrowser(customOptions = {}) {
   try {
     const executablePath = findChromiumExecutable();
 
     const launchOptions = {
       headless: constants.PUPPETEER_HEADLESS,
-      protocolTimeout: 10000, // 10s instead of 180s - prevents frozen browser CDP deadlocks
+      protocolTimeout: customOptions.protocolTimeout || 10000, // Default 10s, override for consent simulation
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -73,7 +74,8 @@ async function launchBrowser() {
       defaultViewport: {
         width: 1920,
         height: 1080
-      }
+      },
+      ...customOptions
     };
 
     // Add executablePath only if found
@@ -83,7 +85,8 @@ async function launchBrowser() {
 
     console.log('🚀 Launching browser with options:', {
       executablePath: executablePath || 'default',
-      headless: launchOptions.headless
+      headless: launchOptions.headless,
+      protocolTimeout: launchOptions.protocolTimeout
     });
 
     const browser = await puppeteer.launch(launchOptions);
