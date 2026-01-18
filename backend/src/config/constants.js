@@ -26,6 +26,10 @@ module.exports = {
   PUPPETEER_TIMEOUT_MS: parseInt(process.env.PUPPETEER_TIMEOUT_MS) || 120000,
   PUPPETEER_HEADLESS: process.env.PUPPETEER_HEADLESS === 'true',
 
+  // Screenshots (feature flag)
+  ENABLE_SCREENSHOTS: process.env.ENABLE_SCREENSHOTS === 'true',
+  SCREENSHOT_TIMEOUT_MS: parseInt(process.env.SCREENSHOT_TIMEOUT_MS) || 20000,
+
   // File Upload
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   ALLOWED_FILE_TYPES: ['.pdf', '.docx', '.html', '.htm'],
