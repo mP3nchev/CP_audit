@@ -13,8 +13,10 @@
  */
 async function extractCookies(page) {
   try {
-    // Wait for potential async cookie setting (tracking scripts load with delay)
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Wait for async cookie setting - Google Analytics (_ga, _gcl_au), Facebook (_fbp, _IDE),
+    // Cloudflare (_cfuvid) and other tracking cookies load with delay after page interaction
+    // CRITICAL: 3 seconds ensures we catch all async-set cookies
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Method 1: CDP Network.getAllCookies() - most comprehensive
     const client = await page.target().createCDPSession();

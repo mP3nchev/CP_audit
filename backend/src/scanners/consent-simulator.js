@@ -21,77 +21,194 @@ const {
 } = require('./cookie-extractor');
 
 /**
- * Find cookie banner buttons
+ * Find cookie banner buttons (supports CookieScript, OneTrust, Cookiebot, Usercentrics)
  * @param {Page} page - Puppeteer page
  * @returns {Promise<Object>} Banner buttons found
  */
 async function findBannerButtons(page) {
   return await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button, a'));
+    // Helper: Generate selector for element
+    function getSelector(element) {
+      if (!element) return null;
+      if (element.id) return `#${element.id}`;
+      if (element.className && typeof element.className === 'string') {
+        const classes = element.className.split(' ').filter(c => c.trim());
+        if (classes.length > 0) return `.${classes[0]}`;
+      }
+      return element.tagName.toLowerCase();
+    }
 
-    // Find Accept button
-    const acceptButton = buttons.find(b => {
-      const text = b.textContent.toLowerCase();
-      return text.includes('accept all') ||
-             text.includes('accept') ||
-             text.includes('agree') ||
-             text.includes('allow all') ||
-             b.getAttribute('data-action')?.includes('accept');
-    });
+    // Helper: Check if element is visible
+    function isVisible(element) {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    }
 
-    // Find Reject button
-    const rejectButton = buttons.find(b => {
-      const text = b.textContent.toLowerCase();
-      return text.includes('reject all') ||
-             text.includes('reject') ||
-             text.includes('decline') ||
-             text.includes('deny') ||
-             b.getAttribute('data-action')?.includes('reject');
-    });
+    // CMP-SPECIFIC SELECTORS (priority order)
+    const cmpSelectors = {
+      // CookieScript
+      cookieScript: {
+        accept: '#cookiescript_accept',
+        reject: '#cookiescript_reject',
+        settings: '#cookiescript_manage'
+      },
+      // OneTrust
+      oneTrust: {
+        accept: '#onetrust-accept-btn-handler',
+        reject: '#onetrust-reject-all-handler',
+        settings: '#onetrust-pc-btn-handler'
+      },
+      // Cookiebot
+      cookiebot: {
+        accept: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+        reject: '#CybotCookiebotDialogBodyButtonDecline',
+        settings: '#CybotCookiebotDialogBodyLevelButtonLevelOptinCustom'
+      },
+      // Usercentrics
+      usercentrics: {
+        accept: '[data-testid="uc-accept-all-button"]',
+        reject: '[data-testid="uc-deny-all-button"]',
+        settings: '[data-testid="uc-more-button"]'
+      },
+      // Complianz
+      complianz: {
+        accept: '.cmplz-accept',
+        reject: '.cmplz-deny',
+        settings: '.cmplz-manage-consent'
+      }
+    };
 
-    // Find Settings button
-    const settingsButton = buttons.find(b => {
-      const text = b.textContent.toLowerCase();
-      return text.includes('settings') ||
-             text.includes('customize') ||
-             text.includes('manage') ||
-             text.includes('preferences');
-    });
+    let acceptButton = null;
+    let rejectButton = null;
+    let settingsButton = null;
+
+    // TRY CMP-SPECIFIC SELECTORS FIRST
+    for (const [cmpName, selectors] of Object.entries(cmpSelectors)) {
+      const accept = document.querySelector(selectors.accept);
+      const reject = document.querySelector(selectors.reject);
+      const settings = document.querySelector(selectors.settings);
+
+      if (accept && isVisible(accept)) {
+        console.log(`[findBannerButtons] Detected ${cmpName} platform`);
+        acceptButton = accept;
+        rejectButton = reject && isVisible(reject) ? reject : null;
+        settingsButton = settings && isVisible(settings) ? settings : null;
+        break; // Found CMP, stop searching
+      }
+    }
+
+    // FALLBACK: Generic text-based search
+    if (!acceptButton) {
+      const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
+
+      // Find Accept button
+      acceptButton = allButtons.find(b => {
+        if (!isVisible(b)) return false;
+        const text = b.textContent.toLowerCase();
+        const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
+        const dataAction = (b.getAttribute('data-action') || '').toLowerCase();
+
+        return text.includes('accept all') ||
+               text.includes('allow all') ||
+               text.includes('agree') ||
+               (text.includes('accept') && !text.includes('reject')) ||
+               ariaLabel.includes('accept') ||
+               dataAction.includes('accept');
+      });
+
+      // Find Reject button
+      rejectButton = allButtons.find(b => {
+        if (!isVisible(b)) return false;
+        const text = b.textContent.toLowerCase();
+        const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
+        const dataAction = (b.getAttribute('data-action') || '').toLowerCase();
+
+        return text.includes('reject all') ||
+               text.includes('deny all') ||
+               text.includes('decline all') ||
+               (text.includes('reject') && !text.includes('accept')) ||
+               ariaLabel.includes('reject') ||
+               dataAction.includes('reject');
+      });
+
+      // Find Settings button
+      settingsButton = allButtons.find(b => {
+        if (!isVisible(b)) return false;
+        const text = b.textContent.toLowerCase();
+        const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
+
+        return text.includes('settings') ||
+               text.includes('customize') ||
+               text.includes('manage') ||
+               text.includes('preferences') ||
+               text.includes('options') ||
+               ariaLabel.includes('settings');
+      });
+    }
 
     return {
       acceptButton: acceptButton ? {
         text: acceptButton.textContent.trim(),
-        selector: acceptButton.id ? `#${acceptButton.id}` :
-                 acceptButton.className ? `.${acceptButton.classList[0]}` : 'button',
-        visible: true
+        selector: getSelector(acceptButton),
+        visible: true,
+        element: acceptButton
       } : null,
       rejectButton: rejectButton ? {
         text: rejectButton.textContent.trim(),
-        selector: rejectButton.id ? `#${rejectButton.id}` :
-                 rejectButton.className ? `.${rejectButton.classList[0]}` : 'button',
-        visible: true
+        selector: getSelector(rejectButton),
+        visible: true,
+        element: rejectButton
       } : null,
       settingsButton: settingsButton ? {
         text: settingsButton.textContent.trim(),
-        selector: settingsButton.id ? `#${settingsButton.id}` :
-                 settingsButton.className ? `.${settingsButton.classList[0]}` : 'button',
-        visible: true
+        selector: getSelector(settingsButton),
+        visible: true,
+        element: settingsButton
       } : null
     };
   });
 }
 
 /**
- * Extract cookies from multiple sources
- * Checks: page.cookies(), localStorage, sessionStorage, network Set-Cookie headers
+ * Extract cookies from multiple sources (USES CDP Network.getAllCookies for accuracy)
+ * Checks: CDP Network.getAllCookies(), document.cookie, localStorage, sessionStorage
  * @param {Page} page - Puppeteer page
- * @returns {Promise<Object>} All cookies from all sources
+ * @returns {Promise<Array>} All cookies from all sources
  */
 async function extractAllCookies(page) {
-  // 1. Standard cookies via CDP
-  const cdpCookies = await page.cookies();
+  // WAIT 3 SECONDS for async cookies to load (GA, Facebook Pixel, etc.)
+  await new Promise(resolve => setTimeout(resolve, 3000));
 
-  // 2. Cookies from all frames (including iframes)
+  // 1. CDP Network.getAllCookies() - MOST COMPREHENSIVE (includes HttpOnly, Secure, all domains)
+  let cdpCookies = [];
+  try {
+    const client = await page.target().createCDPSession();
+    const { cookies } = await client.send('Network.getAllCookies');
+    cdpCookies = cookies.map(c => ({ ...c, source: 'cdp' }));
+    await client.detach();
+  } catch (error) {
+    console.warn(`⚠️  CDP getAllCookies failed: ${error.message}`);
+  }
+
+  // 2. document.cookie - catches JS-only cookies that CDP might miss
+  const documentCookies = await page.evaluate(() => {
+    const cookieStr = document.cookie;
+    if (!cookieStr) return [];
+
+    return cookieStr.split(';').map(c => {
+      const [name, ...valueParts] = c.trim().split('=');
+      return {
+        name: name.trim(),
+        value: valueParts.join('=').trim(),
+        domain: window.location.hostname,
+        path: '/',
+        source: 'document.cookie'
+      };
+    });
+  });
+
+  // 3. Cookies from all frames (including iframes)
   const frames = page.frames();
   let frameCookies = [];
   for (const frame of frames) {
@@ -100,7 +217,11 @@ async function extractAllCookies(page) {
       if (cookies) {
         const parsed = cookies.split(';').map(c => {
           const [name, ...valueParts] = c.trim().split('=');
-          return { name, value: valueParts.join('='), source: 'frame' };
+          return {
+            name: name.trim(),
+            value: valueParts.join('=').trim(),
+            source: 'iframe'
+          };
         });
         frameCookies.push(...parsed);
       }
@@ -109,7 +230,7 @@ async function extractAllCookies(page) {
     }
   }
 
-  // 3. Storage API cookies
+  // 4. Storage API (localStorage, sessionStorage)
   const storageCookies = await page.evaluate(() => {
     const storage = {
       localStorage: [],
@@ -141,16 +262,20 @@ async function extractAllCookies(page) {
     return storage;
   });
 
-  // 4. Wait additional time for delayed cookies
-  await page.waitForTimeout(3000);
-  const delayedCookies = await page.cookies();
-
-  // Combine and deduplicate
+  // COMBINE AND DEDUPLICATE (CDP is authoritative source)
   const allCookiesMap = new Map();
 
-  // Add CDP cookies
-  cdpCookies.forEach(c => allCookiesMap.set(c.name, { ...c, source: 'http' }));
-  delayedCookies.forEach(c => allCookiesMap.set(c.name, { ...c, source: 'http' }));
+  // CDP cookies are most reliable - add them first
+  cdpCookies.forEach(c => {
+    allCookiesMap.set(c.name, c);
+  });
+
+  // Add document.cookie items if not already in CDP
+  documentCookies.forEach(c => {
+    if (!allCookiesMap.has(c.name)) {
+      allCookiesMap.set(c.name, c);
+    }
+  });
 
   // Add frame cookies (if not already present)
   frameCookies.forEach(c => {
@@ -314,37 +439,73 @@ async function waitForConsentStateChange(page, timeout = 15000) {
 }
 
 /**
- * Click button and wait for consent state change
+ * Click button and wait for consent state change (supports CMP-specific selectors)
  * @param {Page} page - Puppeteer page
- * @param {string} text - Button text to find
+ * @param {Object|string} buttonInfo - Button object from findBannerButtons() or text string
  * @returns {Promise<boolean>} Success
  */
-async function clickButton(page, text) {
+async function clickButton(page, buttonInfo) {
   try {
-    const clicked = await page.evaluate((buttonText) => {
-      const buttons = Array.from(document.querySelectorAll('button, a'));
-      const target = buttons.find(b =>
-        b.textContent.toLowerCase().includes(buttonText.toLowerCase())
-      );
-      if (target) {
-        target.click();
-        return true;
-      }
-      return false;
-    }, text);
+    // If buttonInfo is a string, search by text (legacy mode)
+    const buttonText = typeof buttonInfo === 'string' ? buttonInfo : buttonInfo.text;
+    const buttonSelector = typeof buttonInfo === 'object' ? buttonInfo.selector : null;
 
-    if (!clicked) {
-      console.log(`⚠️  Button "${text}" not found`);
-      return false;
+    // TRY 1: Use selector if available (more reliable)
+    if (buttonSelector) {
+      try {
+        await page.click(buttonSelector);
+        console.log(`   ✅ Clicked button via selector: ${buttonSelector}`);
+      } catch (selectorError) {
+        console.log(`   ⚠️  Selector click failed, trying evaluate method...`);
+
+        // TRY 2: Fallback to evaluate click
+        const clicked = await page.evaluate((selector) => {
+          const button = document.querySelector(selector);
+          if (button) {
+            button.click();
+            return true;
+          }
+          return false;
+        }, buttonSelector);
+
+        if (!clicked) {
+          throw new Error(`Selector ${buttonSelector} not found`);
+        }
+      }
+    } else {
+      // TRY 3: Text-based search (last resort)
+      const clicked = await page.evaluate((text) => {
+        const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
+        const target = allButtons.find(b => {
+          const buttonText = b.textContent.toLowerCase();
+          return buttonText.includes(text.toLowerCase());
+        });
+
+        if (target) {
+          target.click();
+          return true;
+        }
+        return false;
+      }, buttonText);
+
+      if (!clicked) {
+        console.log(`⚠️  Button "${buttonText}" not found`);
+        return false;
+      }
+
+      console.log(`   ✅ Clicked button via text: "${buttonText}"`);
     }
 
     // Wait for consent state change using race condition strategy
     const trigger = await waitForConsentStateChange(page, 15000);
     console.log(`   ✅ Consent state changed via: ${trigger}`);
 
+    // Additional wait for cookies to be set/removed
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
     return true;
   } catch (error) {
-    console.error(`Failed to click button "${text}":`, error.message);
+    console.error(`   ❌ Failed to click button:`, error.message);
     return false;
   }
 }
@@ -387,23 +548,23 @@ async function runRejectScenario(websiteUrl) {
     if (buttons.rejectButton) {
       // Direct reject button exists
       console.log(`   ✅ Found "Reject" button: "${buttons.rejectButton.text}"`);
-      await clickButton(page, buttons.rejectButton.text);
+      await clickButton(page, buttons.rejectButton);
       clickPath.push('Click Reject All');
       clickCount = 1;
     } else if (buttons.settingsButton) {
       // Must go through settings
       console.log(`   ⚠️  No direct Reject - using Settings`);
-      await clickButton(page, buttons.settingsButton.text);
+      await clickButton(page, buttons.settingsButton);
       clickPath.push('Click Settings');
       clickCount++;
 
       // Wait for settings panel to load
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Try to find "Reject All" in settings
       const settingsButtons = await findBannerButtons(page);
       if (settingsButtons.rejectButton) {
-        await clickButton(page, settingsButtons.rejectButton.text);
+        await clickButton(page, settingsButtons.rejectButton);
         clickPath.push('Click Reject All in settings');
         clickCount++;
       } else {
@@ -436,8 +597,9 @@ async function runRejectScenario(websiteUrl) {
       console.log(`   ❌ No Reject or Settings button found`);
     }
 
-    // Wait for consent to be processed (additional time for delayed cookies)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Wait for consent to be processed + additional time for cookies to be removed/set
+    // CRITICAL: Google Analytics and other trackers need time to process rejection
+    await new Promise(resolve => setTimeout(resolve, 4000));
 
     // Extract cookies AFTER rejecting
     const cookiesAfterReject = await extractAllCookies(page);
@@ -516,15 +678,17 @@ async function runAcceptScenario(websiteUrl) {
     // Try to accept
     if (buttons.acceptButton) {
       console.log(`   ✅ Found "Accept" button: "${buttons.acceptButton.text}"`);
-      await clickButton(page, buttons.acceptButton.text);
+      await clickButton(page, buttons.acceptButton);
       clickPath.push('Click Accept All');
       clickCount = 1;
     } else {
       console.log(`   ❌ No Accept button found`);
     }
 
-    // Wait for consent to be processed and cookies to load (extra time for tracking scripts)
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Wait for consent to be processed and cookies to load
+    // CRITICAL: Google Analytics (_ga, _gcl_au), Facebook (_fbp), and other trackers
+    // load async and need 4-5 seconds to fully set all cookies
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     // Extract cookies AFTER accepting
     const cookiesAfterAccept = await extractAllCookies(page);
