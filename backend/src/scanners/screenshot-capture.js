@@ -231,25 +231,16 @@ async function captureScreenshots(page) {
 
 /**
  * Wait for page to be stable before screenshot
+ * LIGHTWEIGHT: Simple timeout, NO heavyweight DOM operations
  * @param {Page} page - Puppeteer page
  */
 async function waitForStableView(page) {
   try {
-    // Wait for images to load
-    await page.evaluate(() => {
-      return Promise.all(
-        Array.from(document.images)
-          .filter(img => !img.complete)
-          .map(img => new Promise(resolve => {
-            img.onload = img.onerror = resolve;
-          }))
-      );
-    });
-
-    // Wait for animations and dynamic content to settle using native setTimeout
+    // Simple wait for animations and dynamic content to settle
+    // NO page.evaluate() - prevents protocolTimeout deadlock
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    console.log('✅ Page stable for screenshot');
+    console.log('✅ Page stable for screenshot (lightweight check)');
   } catch (error) {
     console.log('⚠️  Page stability check incomplete:', error.message);
   }

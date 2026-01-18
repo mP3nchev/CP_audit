@@ -64,11 +64,11 @@ function calculateOverallScore(auditResults) {
     components.cookiePolicy = null;
   }
 
-  // Calculate weighted contributions
+  // Calculate weighted contributions (with null-safety for all components)
   const contributions = {
     privacyPolicy: components.privacyPolicy ? components.privacyPolicy.score * weights.privacyPolicy : 0,
-    cookieBanner: components.cookieBanner.score * weights.cookieBanner,
-    technical: components.technical.score * weights.technical,
+    cookieBanner: components.cookieBanner ? components.cookieBanner.score * weights.cookieBanner : 0,
+    technical: components.technical ? components.technical.score * weights.technical : 0,
     cookiePolicy: components.cookiePolicy ? components.cookiePolicy.score * weights.cookiePolicy : 0
   };
 
