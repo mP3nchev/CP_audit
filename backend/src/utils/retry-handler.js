@@ -71,8 +71,9 @@ async function retryPageNavigation(page, url, options = {}) {
     async () => {
       return await page.goto(url, {
         waitUntil: 'networkidle2',
-        timeout: 120000,
-        ...options
+        ...options,
+        // Default timeout only if not provided
+        timeout: options.timeout !== undefined ? options.timeout : 120000
       });
     },
     {
@@ -91,11 +92,18 @@ async function retryPageNavigation(page, url, options = {}) {
 async function retryScreenshot(page, options = {}) {
   return retryWithBackoff(
     async () => {
-      return await page.screenshot({
-        fullPage: true,
+      // Build screenshot options with proper precedence
+      const screenshotOptions = {
         type: 'png',
         ...options
-      });
+      };
+
+      // Only set fullPage if clip is not provided and fullPage is not explicitly set
+      if (!screenshotOptions.clip && screenshotOptions.fullPage === undefined) {
+        screenshotOptions.fullPage = true;
+      }
+
+      return await page.screenshot(screenshotOptions);
     },
     {
       maxRetries: 2,
