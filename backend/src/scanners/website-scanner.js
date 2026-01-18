@@ -351,6 +351,46 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Calculate scan duration
     const scanDuration = Math.round((Date.now() - startTime) / 1000);
 
+    // Prepare detailed tracking before consent data for frontend
+    const trackingBeforeConsentDetailed = {
+      networkRequests: trackingBeforeConsentRequests.map(req => ({
+        type: 'network',
+        name: req.domain || new URL(req.url).hostname,
+        url: req.url,
+        method: req.method,
+        resourceType: req.resourceType,
+        timestamp: req.timestamp,
+        category: 'tracking'
+      })),
+      cookies: trackingAnalysis.identifiedTrackers
+        .filter(t => t.type === 'cookie')
+        .map(t => ({
+          type: 'cookie',
+          name: t.name,
+          value: t.value?.substring(0, 20) + '...',
+          timestamp: t.timestamp,
+          category: 'tracking'
+        })),
+      localStorage: trackingAnalysis.identifiedTrackers
+        .filter(t => t.type === 'localStorage')
+        .map(t => ({
+          type: 'localStorage',
+          name: t.name,
+          value: t.value?.substring(0, 20) + '...',
+          timestamp: t.timestamp,
+          category: 'tracking'
+        })),
+      indexedDB: trackingAnalysis.identifiedTrackers
+        .filter(t => t.type === 'indexedDB')
+        .map(t => ({
+          type: 'indexedDB',
+          name: t.name,
+          timestamp: t.timestamp,
+          category: 'tracking'
+        })),
+      total: trackingBeforeConsentRequests.length + trackingAnalysis.violationCount
+    };
+
     // Prepare results
     const results = {
       cookies: cookies,
@@ -360,6 +400,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       trackingRequests: trackingRequests,
       trackingBeforeConsent: trackingAnalysis.trackingBeforeConsent,
       trackingBeforeConsentDetails: trackingAnalysis,
+      trackingBeforeConsentDetailed: trackingBeforeConsentDetailed,
       trackingBeforeConsentCount: trackingBeforeConsentRequests.length + trackingAnalysis.violationCount,
       bannerViolations: bannerAnalysis.violations,
       bannerAnalysis: bannerAnalysis,

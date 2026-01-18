@@ -247,13 +247,55 @@ function transformDataForTemplate(data) {
 
   // 2. Scan Results
   const trackingBeforeConsent = data.scanResults?.tracking_before_consent ? 'YES' : 'NO';
-  const preConsentRequests = networkRequests.filter(r => r.beforeConsent);
+  const preConsentRequests = networkRequests.filter(r => r.beforeConsent && r.isTracking);
+  const preConsentCookies = cookies.filter(c =>
+    c.detectedAt && c.detectedAt < (data.timelineData?.zones?.find(z => z.name === 'Cookie Banner Appeared')?.start || Infinity)
+  );
 
-  // Timeline data for chart
+  // Prepare detailed tracking before consent list
+  const trackingBeforeConsentDetails = preConsentRequests.map(req => {
+    try {
+      const url = new URL(req.url);
+      return {
+        type: 'Network Request',
+        name: url.hostname,
+        url: req.url.length > 80 ? req.url.substring(0, 80) + '...' : req.url,
+        timestamp: `${(req.timestamp).toFixed(2)}s`,
+        category: req.resourceType || 'unknown'
+      };
+    } catch (e) {
+      return {
+        type: 'Network Request',
+        name: 'Unknown',
+        url: req.url.substring(0, 80),
+        timestamp: `${(req.timestamp).toFixed(2)}s`,
+        category: req.resourceType || 'unknown'
+      };
+    }
+  });
+
+  // Add cookies detected before consent
+  data.timelineData?.violations?.filter(v => v.type === 'cookie').forEach(violation => {
+    trackingBeforeConsentDetails.push({
+      type: 'Cookie',
+      name: violation.name,
+      url: violation.domain || 'N/A',
+      timestamp: `${(violation.timestamp / 1000).toFixed(2)}s`,
+      category: violation.category || 'tracking'
+    });
+  });
+
+  const trackingBeforeConsentCount = trackingBeforeConsentDetails.length;
+
+  // Timeline data for chart - use timeline events from database
+  const timelineEvents = data.timelineData?.events || [];
   const timelineData = {
-    labels: networkRequests.slice(0, 20).map((r, i) => `R${i + 1}`),
-    beforeConsent: networkRequests.slice(0, 20).map(r => r.beforeConsent ? r.timestamp * 1000 : 0),
-    afterConsent: networkRequests.slice(0, 20).map(r => !r.beforeConsent ? r.timestamp * 1000 : 0)
+    labels: timelineEvents.slice(0, 30).map((e, i) => {
+      if (e.type === 'milestone') return e.name.substring(0, 10);
+      return `${e.type === 'cookie' ? '🍪' : '📡'}${i}`;
+    }),
+    beforeConsent: timelineEvents.slice(0, 30).map(e => e.beforeConsent ? e.timestamp : 0),
+    afterConsent: timelineEvents.slice(0, 30).map(e => !e.beforeConsent && e.type !== 'milestone' ? e.timestamp : 0)
   };
 
   // 3. Privacy Policy Analysis - Group by tier
@@ -374,6 +416,8 @@ function transformDataForTemplate(data) {
     cookies_detected: cookies.length,
     cookies_declared: cookieComparison?.declared.length || 0,
     tracking_before_consent: trackingBeforeConsent,
+    tracking_before_consent_count: trackingBeforeConsentCount,
+    tracking_before_consent_items: trackingBeforeConsentDetails,
     fine_min: formatNumber(riskAssessment?.total_risk_min || 0),
     fine_max: formatNumber(riskAssessment?.total_risk_max || 0),
     timeline_data_json: JSON.stringify(timelineData),
