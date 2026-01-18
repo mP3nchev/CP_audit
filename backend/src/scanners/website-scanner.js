@@ -213,6 +213,13 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     networkMonitor.markPageLoaded();
     console.log(`   ✅ Navigation completed in ${Date.now() - stepStartTime}ms`);
 
+    // Step 5.5: IMMEDIATE cookie snapshot (baseline) - BEFORE banner detection
+    stepStartTime = Date.now();
+    console.log('🍪 Step 5.5: Taking immediate cookie snapshot (baseline)...');
+    const baselineCookies = await extractCookies(page);
+    const baselineTime = await page.evaluate(() => performance.now());
+    console.log(`   📸 Baseline snapshot: ${baselineCookies.length} cookies at ${(baselineTime / 1000).toFixed(2)}s`);
+
     // Step 6: Wait for page stability
     stepStartTime = Date.now();
     console.log('⏳ Step 6: Waiting for page stability...');
@@ -226,20 +233,44 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   🍪 Cookie banner detected at ${(bannerAppearTime / 1000).toFixed(2)}s after page load`);
     }
 
-    // Step 7: Extract cookies with timestamps
+    // Step 7: Extract cookies with timestamps and compare with baseline
     stepStartTime = Date.now();
-    console.log('🍪 Step 7: Extracting cookies...');
+    console.log('🍪 Step 7: Extracting final cookies and comparing with baseline...');
     updateProgress(auditId, 7, 17, 'Extracting and analyzing cookies...', startTime);
     let cookies = await extractCookies(page);
-    cookies = await enrichCookiesWithTimestamps(page, cookies);
+    const finalTime = await page.evaluate(() => performance.now());
+
+    // Mark cookies as "before banner" or "after banner" based on baseline comparison
+    const baselineCookieNames = new Set(baselineCookies.map(c => c.name));
+    cookies = cookies.map(cookie => {
+      const wasInBaseline = baselineCookieNames.has(cookie.name);
+      return {
+        ...cookie,
+        detectedAt: wasInBaseline ? baselineTime : finalTime,
+        detectedAtAbsolute: Date.now(),
+        loadedBeforeBanner: wasInBaseline && bannerAppearTime && baselineTime < bannerAppearTime
+      };
+    });
+
     const cookieStats = getCookieStats(cookies);
     const trackingCookies = findTrackingCookies(cookies);
+
+    // Count cookies loaded before banner
+    const cookiesBeforeBanner = cookies.filter(c => c.loadedBeforeBanner);
+    const trackingBeforeBanner = trackingCookies.filter(c => c.loadedBeforeBanner);
 
     console.log(`   Found ${cookies.length} cookies:`);
     console.log(`   - Essential: ${cookieStats.byCategory.essential || 0}`);
     console.log(`   - Analytics: ${cookieStats.byCategory.analytics || 0}`);
     console.log(`   - Advertising: ${cookieStats.byCategory.advertising || 0}`);
     console.log(`   - Tracking cookies: ${trackingCookies.length}`);
+    console.log(`   - Cookies before banner: ${cookiesBeforeBanner.length}`);
+    console.log(`   - TRACKING before banner: ${trackingBeforeBanner.length} ⚠️`);
+    if (trackingBeforeBanner.length > 0) {
+      trackingBeforeBanner.forEach(c => {
+        console.log(`      ⚠️  ${c.name} (${c.category})`);
+      });
+    }
     console.log(`   ✅ Cookie extraction completed in ${Date.now() - stepStartTime}ms`);
 
     // Step 8: Get network requests

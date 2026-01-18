@@ -133,40 +133,72 @@ async function createPage(browser) {
  * @returns {Promise<Response>} Navigation response
  */
 async function navigateToUrl(page, url, auditId = 'unknown', options = {}) {
+  const defaultTimeout = options.timeout || 30000;
+  let response = null;
+
+  console.log(`🌐 Navigating to: ${url}`);
+
+  // STRATEGY 1: Try networkidle2 (optimal - waits for network to be quiet)
   try {
-    console.log(`🌐 Navigating to: ${url}`);
-
-    const response = await page.goto(url, {
+    console.log(`   📡 Strategy 1: Trying networkidle2 (${defaultTimeout}ms timeout)...`);
+    response = await page.goto(url, {
       waitUntil: 'networkidle2',
-      timeout: 15000,  // Default 15s for fast failure
-      ...options  // Allow caller to override
+      timeout: defaultTimeout,
+      ...options
     });
-
-    if (!response) {
-      throw new Error('No response received from page');
-    }
-
-    const status = response.status();
-    console.log(`✅ Page loaded with status: ${status}`);
-
-    if (status >= 400) {
-      throw new Error(`HTTP ${status} error`);
-    }
-
-    return response;
+    console.log(`   ✅ Navigation succeeded with networkidle2`);
   } catch (error) {
-    console.error(`❌ Navigation failed: ${error.message}`);
+    console.log(`   ⚠️  networkidle2 failed: ${error.message}`);
 
-    // Capture screenshot for debugging
+    // STRATEGY 2: Fallback to domcontentloaded (faster, less reliable)
     try {
-      const screenshot = await page.screenshot({ fullPage: false });
-      await saveErrorScreenshot(screenshot, auditId, 'navigation-failure');
-    } catch (screenshotError) {
-      console.error('Failed to capture error screenshot:', screenshotError);
-    }
+      console.log(`   📡 Strategy 2: Falling back to domcontentloaded...`);
+      response = await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 20000,
+        ...options
+      });
+      console.log(`   ✅ Navigation succeeded with domcontentloaded`);
+    } catch (error2) {
+      console.log(`   ⚠️  domcontentloaded failed: ${error2.message}`);
 
-    throw error;
+      // STRATEGY 3: Final fallback to 'load' (baseline)
+      try {
+        console.log(`   📡 Strategy 3: Final fallback to load event...`);
+        response = await page.goto(url, {
+          waitUntil: 'load',
+          timeout: 15000,
+          ...options
+        });
+        console.log(`   ✅ Navigation succeeded with load event`);
+      } catch (error3) {
+        console.error(`   ❌ All navigation strategies failed!`);
+
+        // Capture screenshot for debugging
+        try {
+          const screenshot = await page.screenshot({ fullPage: false });
+          await saveErrorScreenshot(screenshot, auditId, 'navigation-failure');
+        } catch (screenshotError) {
+          console.error('Failed to capture error screenshot:', screenshotError);
+        }
+
+        throw error3;
+      }
+    }
   }
+
+  if (!response) {
+    throw new Error('No response received from page');
+  }
+
+  const status = response.status();
+  console.log(`✅ Page loaded with status: ${status}`);
+
+  if (status >= 400) {
+    throw new Error(`HTTP ${status} error`);
+  }
+
+  return response;
 }
 
 /**
