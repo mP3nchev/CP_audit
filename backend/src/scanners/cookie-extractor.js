@@ -4,12 +4,65 @@
 
 /**
  * Extract all cookies from the page
+ * Uses COMBINATION of:
+ * 1. document.cookie (JavaScript-set cookies like CookieScriptConsent)
+ * 2. CDP Network.getAllCookies() (HTTP + JS + all contexts)
+ *
  * @param {Page} page - Puppeteer page
  * @returns {Promise<Array>} Array of cookie objects
  */
 async function extractCookies(page) {
   try {
-    const cookies = await page.cookies();
+    // Wait for potential async cookie setting (tracking scripts load with delay)
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Method 1: CDP Network.getAllCookies() - most comprehensive
+    const client = await page.target().createCDPSession();
+    const { cookies: cdpCookies } = await client.send('Network.getAllCookies');
+    await client.detach();
+
+    // Method 2: document.cookie - catch any JS-only cookies CDP might miss
+    const documentCookies = await page.evaluate(() => {
+      const cookieString = document.cookie;
+      if (!cookieString) return [];
+
+      return cookieString.split(';').map(cookie => {
+        const [name, ...valueParts] = cookie.trim().split('=');
+        return {
+          name: name.trim(),
+          value: valueParts.join('=').trim(),
+          source: 'document.cookie'
+        };
+      });
+    });
+
+    // Merge and deduplicate (CDP is authoritative, document.cookie is backup)
+    const cookieMap = new Map();
+
+    // Add CDP cookies first (authoritative)
+    cdpCookies.forEach(cookie => {
+      cookieMap.set(cookie.name, cookie);
+    });
+
+    // Add document.cookie entries if not already present
+    documentCookies.forEach(docCookie => {
+      if (!cookieMap.has(docCookie.name)) {
+        // Construct CDP-like cookie object from document.cookie
+        cookieMap.set(docCookie.name, {
+          name: docCookie.name,
+          value: docCookie.value,
+          domain: new URL(page.url()).hostname,
+          path: '/',
+          expires: -1, // unknown from document.cookie
+          httpOnly: false, // accessible from JS
+          secure: false, // unknown
+          sameSite: 'None',
+          source: 'document.cookie'
+        });
+      }
+    });
+
+    const cookies = Array.from(cookieMap.values());
 
     const enrichedCookies = cookies.map(cookie => {
       return {
@@ -27,11 +80,12 @@ async function extractCookies(page) {
         sameSite: cookie.sameSite || 'None',
         type: cookie.domain.startsWith('.') ? 'third-party' : 'first-party',
         category: categorizeCookie(cookie),
-        purpose: identifyPurpose(cookie)
+        purpose: identifyPurpose(cookie),
+        source: cookie.source || 'CDP'
       };
     });
 
-    console.log(`✅ Extracted ${enrichedCookies.length} cookies`);
+    console.log(`✅ Extracted ${enrichedCookies.length} cookies (CDP: ${cdpCookies.length}, document.cookie: ${documentCookies.length})`);
     return enrichedCookies;
   } catch (error) {
     console.error('❌ Cookie extraction failed:', error.message);

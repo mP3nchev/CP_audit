@@ -60,6 +60,7 @@ async function launchBrowser() {
 
     const launchOptions = {
       headless: constants.PUPPETEER_HEADLESS,
+      protocolTimeout: 10000, // 10s instead of 180s - prevents frozen browser CDP deadlocks
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',

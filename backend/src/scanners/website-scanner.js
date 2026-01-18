@@ -282,20 +282,32 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   ⚠️  Consent Mode not detected`);
     }
 
-    // Step 11: Wait for stable view and capture screenshots
-    stepStartTime = Date.now();
-    console.log('📸 Step 11: Capturing screenshots...');
-    await waitForStableView(page);
-    const screenshots = await captureScreenshots(page);
-    console.log(`   ✅ Screenshots captured in ${Date.now() - stepStartTime}ms`);
+    // Step 11 & 12: Screenshots (HARD DISABLED - temporary)
+    // CRITICAL: Do NOT execute screenshot code to prevent 2.5min blocking
+    let screenshotUrls = {};
+    console.log('⏭️  Step 11-12: Screenshots DISABLED (temporary) - skipping to maintain fast audit loop');
 
-    // Step 12: Upload screenshots to Vercel Blob
-    stepStartTime = Date.now();
-    console.log('☁️  Step 12: Uploading screenshots to Vercel Blob...');
-    const screenshotUrls = await uploadScreenshots(screenshots, auditUid);
-    console.log(`   ✅ Screenshots uploaded in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📎 Full page: ${screenshotUrls.fullPageUrl ? 'Uploaded' : 'Failed'}`);
-    console.log(`   📎 Banner: ${screenshotUrls.bannerUrl ? 'Uploaded' : 'Failed'}`);
+    // FUTURE: When screenshots are re-enabled, uncomment below with proper safeguards:
+    // - protocolTimeout must be lowered (done: 10s)
+    // - Promise.race must use AbortController for real cancellation
+    // - Sequential selector loops must be replaced with Promise.race(selectors)
+    // - Image loading checks must be removed from waitForStableView
+    /*
+    if (constants.ENABLE_SCREENSHOTS) {
+      stepStartTime = Date.now();
+      console.log('📸 Step 11: Capturing screenshots...');
+      await waitForStableView(page);
+      const screenshots = await captureScreenshots(page);
+      console.log(`   ✅ Screenshots captured in ${Date.now() - stepStartTime}ms`);
+
+      stepStartTime = Date.now();
+      console.log('☁️  Step 12: Uploading screenshots to Vercel Blob...');
+      screenshotUrls = await uploadScreenshots(screenshots, auditUid);
+      console.log(`   ✅ Screenshots uploaded in ${Date.now() - stepStartTime}ms`);
+      console.log(`   📎 Full page: ${screenshotUrls.fullPageUrl ? 'Uploaded' : 'Failed'}`);
+      console.log(`   📎 Banner: ${screenshotUrls.bannerUrl ? 'Uploaded' : 'Failed'}`);
+    }
+    */
 
     // Step 13: Get page metadata
     stepStartTime = Date.now();
@@ -412,10 +424,10 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
     console.log(`   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
     console.log(`   📋 Components:`);
-    console.log(`      - Privacy Policy: ${complianceScore.components.privacyPolicy.score}/100`);
-    console.log(`      - Cookie Banner: ${complianceScore.components.cookieBanner.score}/100`);
-    console.log(`      - Technical: ${complianceScore.components.technical.score}/100`);
-    console.log(`      - Cookie Policy: ${complianceScore.components.cookiePolicy.score}/100`);
+    console.log(`      - Privacy Policy: ${complianceScore.components.privacyPolicy?.score ?? 0}/100`);
+    console.log(`      - Cookie Banner: ${complianceScore.components.cookieBanner?.score ?? 0}/100`);
+    console.log(`      - Technical: ${complianceScore.components.technical?.score ?? 0}/100`);
+    console.log(`      - Cookie Policy: ${complianceScore.components.cookiePolicy?.score ?? 0}/100`);
     if (complianceScore.capsApplied.length > 0) {
       console.log(`   ⚠️  Score caps applied: ${complianceScore.capsApplied.join(', ')}`);
     }
