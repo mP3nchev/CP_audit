@@ -668,18 +668,25 @@ async function runRejectScenario(websiteUrl) {
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
-    // STATE-BASED NAVIGATION: Use minimal 'load' event, then wait for APPLICATION STATE
-    console.log(`   📡 Navigating with 'load' event (minimal baseline)...`);
-    await navigateToUrl(page, websiteUrl, 'reject-scenario', {
-      waitUntil: 'load',
-      timeout: 15000
-    });
-    console.log(`   ✅ Page load event completed`);
+    // NAVIGATION is BEST-EFFORT, NOT a prerequisite!
+    // Even if navigation fails/timeout-s, consent UI may still be available
+    console.log(`   📡 Attempting navigation (best-effort, NOT blocking)...`);
+    try {
+      await navigateToUrl(page, websiteUrl, 'reject-scenario', {
+        waitUntil: 'load',
+        timeout: 15000
+      });
+      console.log(`   ✅ Navigation completed successfully`);
+    } catch (navError) {
+      console.log(`   ⚠️  Navigation failed: ${navError.message}`);
+      console.log(`   ➡️  Continuing anyway - consent UI may still be available...`);
+      // DO NOT throw - navigation failure is diagnostic, NOT stopping condition!
+    }
 
-    // STATE CHECK: Wait for consent UI to be ready (NOT lifecycle events!)
+    // STATE CHECK: Wait for consent UI to be ready (REGARDLESS of navigation outcome!)
     const uiReady = await waitForConsentUIReady(page, 30000);
     if (!uiReady) {
-      throw new Error('Consent UI never reached ready state');
+      throw new Error('Consent UI never reached ready state - application not functional');
     }
 
     // Extract cookies BEFORE any interaction (NO delay - immediate state snapshot)
@@ -814,18 +821,25 @@ async function runAcceptScenario(websiteUrl) {
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
-    // STATE-BASED NAVIGATION: Use minimal 'load' event, then wait for APPLICATION STATE
-    console.log(`   📡 Navigating with 'load' event (minimal baseline)...`);
-    await navigateToUrl(page, websiteUrl, 'accept-scenario', {
-      waitUntil: 'load',
-      timeout: 15000
-    });
-    console.log(`   ✅ Page load event completed`);
+    // NAVIGATION is BEST-EFFORT, NOT a prerequisite!
+    // Even if navigation fails/timeout-s, consent UI may still be available
+    console.log(`   📡 Attempting navigation (best-effort, NOT blocking)...`);
+    try {
+      await navigateToUrl(page, websiteUrl, 'accept-scenario', {
+        waitUntil: 'load',
+        timeout: 15000
+      });
+      console.log(`   ✅ Navigation completed successfully`);
+    } catch (navError) {
+      console.log(`   ⚠️  Navigation failed: ${navError.message}`);
+      console.log(`   ➡️  Continuing anyway - consent UI may still be available...`);
+      // DO NOT throw - navigation failure is diagnostic, NOT stopping condition!
+    }
 
-    // STATE CHECK: Wait for consent UI to be ready
+    // STATE CHECK: Wait for consent UI to be ready (REGARDLESS of navigation outcome!)
     const uiReady = await waitForConsentUIReady(page, 30000);
     if (!uiReady) {
-      throw new Error('Consent UI never reached ready state');
+      throw new Error('Consent UI never reached ready state - application not functional');
     }
 
     // Extract cookies BEFORE any interaction (immediate snapshot)
