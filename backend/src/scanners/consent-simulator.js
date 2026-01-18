@@ -171,14 +171,157 @@ async function extractAllCookies(page) {
 }
 
 /**
- * Click button and handle possible navigation/overlay changes
+ * Wait for consent state change using race condition strategy
+ * Listens for multiple signals: DOM changes, cookie changes, localStorage, navigation
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time in milliseconds (default: 15000)
+ * @returns {Promise<string>} What triggered completion
+ */
+async function waitForConsentStateChange(page, timeout = 15000) {
+  try {
+    const result = await Promise.race([
+      // Strategy 1: DOM mutation observer on consent elements
+      page.evaluate(() => {
+        return new Promise((resolve) => {
+          const observer = new MutationObserver((mutations) => {
+            // Check if banner disappeared or consent state changed
+            const banner = document.querySelector('[id*="cookie"], [class*="cookie"], [id*="consent"], [class*="consent"]');
+            if (!banner || window.getComputedStyle(banner).display === 'none') {
+              observer.disconnect();
+              resolve('DOM_MUTATION');
+            }
+          });
+
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class']
+          });
+
+          // Auto-disconnect after 30s to prevent memory leaks
+          setTimeout(() => {
+            observer.disconnect();
+            resolve('DOM_TIMEOUT');
+          }, 30000);
+        });
+      }),
+
+      // Strategy 2: Cookie change detection
+      page.evaluate(() => {
+        return new Promise((resolve) => {
+          const initialCookies = document.cookie;
+          const interval = setInterval(() => {
+            if (document.cookie !== initialCookies) {
+              clearInterval(interval);
+              resolve('COOKIE_CHANGE');
+            }
+          }, 100);
+
+          setTimeout(() => {
+            clearInterval(interval);
+            resolve('COOKIE_TIMEOUT');
+          }, 30000);
+        });
+      }),
+
+      // Strategy 3: LocalStorage/SessionStorage change (for CMP platforms like OneTrust, Cookiebot)
+      page.evaluate(() => {
+        return new Promise((resolve) => {
+          const checkStorage = () => {
+            // Check common CMP storage keys
+            const consentKeys = ['OptanonConsent', 'CookieConsent', 'cookieConsent', 'userConsent', 'consent'];
+            for (const key of consentKeys) {
+              if (localStorage.getItem(key) || sessionStorage.getItem(key)) {
+                resolve('STORAGE_CHANGE');
+                return true;
+              }
+            }
+            return false;
+          };
+
+          if (checkStorage()) return;
+
+          // Listen for storage events
+          window.addEventListener('storage', () => {
+            if (checkStorage()) return;
+          });
+
+          // Poll for storage changes (some CMPs don't fire storage events)
+          const interval = setInterval(() => {
+            if (checkStorage()) clearInterval(interval);
+          }, 200);
+
+          setTimeout(() => {
+            clearInterval(interval);
+            resolve('STORAGE_TIMEOUT');
+          }, 30000);
+        });
+      }),
+
+      // Strategy 4: postMessage events (modern CMP platforms)
+      page.evaluate(() => {
+        return new Promise((resolve) => {
+          const handler = (event) => {
+            const data = event.data;
+            if (data && typeof data === 'object') {
+              // Check for consent-related messages
+              const dataStr = JSON.stringify(data).toLowerCase();
+              if (dataStr.includes('consent') || dataStr.includes('cookie')) {
+                window.removeEventListener('message', handler);
+                resolve('POST_MESSAGE');
+              }
+            }
+          };
+
+          window.addEventListener('message', handler);
+
+          setTimeout(() => {
+            window.removeEventListener('message', handler);
+            resolve('MESSAGE_TIMEOUT');
+          }, 30000);
+        });
+      }),
+
+      // Strategy 5: Custom events (some CMPs dispatch custom events)
+      page.evaluate(() => {
+        return new Promise((resolve) => {
+          const eventNames = ['consent', 'cookieConsent', 'consentUpdate', 'OneTrustGroupsUpdated'];
+          const handler = () => resolve('CUSTOM_EVENT');
+
+          eventNames.forEach(name => {
+            window.addEventListener(name, handler, { once: true });
+          });
+
+          setTimeout(() => {
+            eventNames.forEach(name => {
+              window.removeEventListener(name, handler);
+            });
+            resolve('EVENT_TIMEOUT');
+          }, 30000);
+        });
+      }),
+
+      // Strategy 6: Timeout (safety net)
+      new Promise((resolve) => setTimeout(() => resolve('HARD_TIMEOUT'), timeout))
+    ]);
+
+    return result;
+  } catch (error) {
+    console.log(`⚠️  Consent state change detection failed: ${error.message}`);
+    return 'ERROR';
+  }
+}
+
+/**
+ * Click button and wait for consent state change
  * @param {Page} page - Puppeteer page
  * @param {string} text - Button text to find
  * @returns {Promise<boolean>} Success
  */
 async function clickButton(page, text) {
   try {
-    await page.evaluate((buttonText) => {
+    const clicked = await page.evaluate((buttonText) => {
       const buttons = Array.from(document.querySelectorAll('button, a'));
       const target = buttons.find(b =>
         b.textContent.toLowerCase().includes(buttonText.toLowerCase())
@@ -190,8 +333,15 @@ async function clickButton(page, text) {
       return false;
     }, text);
 
-    // Wait for any animations/changes
-    await page.waitForTimeout(1000);
+    if (!clicked) {
+      console.log(`⚠️  Button "${text}" not found`);
+      return false;
+    }
+
+    // Wait for consent state change using race condition strategy
+    const trigger = await waitForConsentStateChange(page, 15000);
+    console.log(`   ✅ Consent state changed via: ${trigger}`);
+
     return true;
   } catch (error) {
     console.error(`Failed to click button "${text}":`, error.message);
@@ -247,8 +397,8 @@ async function runRejectScenario(websiteUrl) {
       clickPath.push('Click Settings');
       clickCount++;
 
-      // Wait for settings panel
-      await page.waitForTimeout(1000);
+      // Wait for settings panel to load
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Try to find "Reject All" in settings
       const settingsButtons = await findBannerButtons(page);
@@ -286,8 +436,8 @@ async function runRejectScenario(websiteUrl) {
       console.log(`   ❌ No Reject or Settings button found`);
     }
 
-    // Wait for consent to be processed
-    await page.waitForTimeout(2000);
+    // Wait for consent to be processed (additional time for delayed cookies)
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Extract cookies AFTER rejecting
     const cookiesAfterReject = await extractAllCookies(page);
@@ -373,8 +523,8 @@ async function runAcceptScenario(websiteUrl) {
       console.log(`   ❌ No Accept button found`);
     }
 
-    // Wait for consent to be processed and cookies to load
-    await page.waitForTimeout(3000);
+    // Wait for consent to be processed and cookies to load (extra time for tracking scripts)
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Extract cookies AFTER accepting
     const cookiesAfterAccept = await extractAllCookies(page);

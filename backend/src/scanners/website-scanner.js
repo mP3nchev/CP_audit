@@ -70,21 +70,82 @@ const { getDatabase } = require('../database/db');
 const constants = require('../config/constants');
 
 /**
- * Update scan progress in database
+ * State machine for audit pipeline
+ * Maps progress to explicit states for frontend polling
+ */
+const AUDIT_STATES = {
+  INIT: 'INIT',
+  SCANNING: 'SCANNING',
+  SCREENSHOTS: 'SCREENSHOTS',
+  UPLOADING: 'UPLOADING',
+  SIMULATION: 'SIMULATION',
+  SCORING: 'SCORING',
+  DONE: 'DONE',
+  FAILED: 'FAILED'
+};
+
+/**
+ * Map step number to state
+ * @param {number} step - Current step
+ * @returns {string} State name
+ */
+function mapStepToState(step) {
+  if (step <= 1) return AUDIT_STATES.INIT;
+  if (step <= 10) return AUDIT_STATES.SCANNING;
+  if (step <= 11) return AUDIT_STATES.SCREENSHOTS;
+  if (step <= 12) return AUDIT_STATES.UPLOADING;
+  if (step <= 16) return AUDIT_STATES.SIMULATION;
+  if (step <= 17) return AUDIT_STATES.SCORING;
+  return AUDIT_STATES.DONE;
+}
+
+/**
+ * Estimate remaining time based on current step
+ * @param {number} step - Current step
+ * @param {number} totalSteps - Total steps
+ * @param {number} elapsedSeconds - Time elapsed since start
+ * @returns {number|null} Estimated seconds remaining
+ */
+function estimateRemainingTime(step, totalSteps, elapsedSeconds) {
+  if (step === 0) return null;
+
+  // Average time per step
+  const avgTimePerStep = elapsedSeconds / step;
+
+  // Steps remaining
+  const stepsRemaining = totalSteps - step;
+
+  // Estimated time (with buffer for heavier operations)
+  const estimated = Math.round(avgTimePerStep * stepsRemaining * 1.2);
+
+  return estimated > 0 ? estimated : null;
+}
+
+/**
+ * Update scan progress and state in database
  * @param {number} auditId - Audit ID
  * @param {number} currentStep - Current step number
  * @param {number} totalSteps - Total number of steps
  * @param {string} message - Progress message
+ * @param {number} startTime - Scan start time (Date.now())
  */
-function updateProgress(auditId, currentStep, totalSteps, message) {
+function updateProgress(auditId, currentStep, totalSteps, message, startTime = Date.now()) {
   try {
     const db = getDatabase();
+    const now = Date.now();
+    const elapsedSeconds = Math.round((now - startTime) / 1000);
+
     const progress = {
       currentStep,
       totalSteps,
       message,
       percentage: Math.round((currentStep / totalSteps) * 100),
-      timestamp: Date.now()
+      state: mapStepToState(currentStep),
+      estimatedTimeRemaining: estimateRemainingTime(currentStep, totalSteps, elapsedSeconds),
+      timestamp: now,
+      metadata: {
+        currentOperation: message
+      }
     };
 
     db.prepare(`
@@ -134,7 +195,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 3: Setup network monitoring
     stepStartTime = Date.now();
     console.log('🌐 Step 3: Setting up network monitoring...');
-    updateProgress(auditId, 3, 17, 'Setting up network monitoring...');
+    updateProgress(auditId, 3, 17, 'Setting up network monitoring...', startTime);
     const networkMonitor = setupNetworkMonitoring(page);
     console.log(`   ✅ Network monitoring setup in ${Date.now() - stepStartTime}ms`);
 
@@ -147,7 +208,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 5: Navigate to URL
     stepStartTime = Date.now();
     console.log('🌐 Step 5: Navigating to URL...');
-    updateProgress(auditId, 5, 17, `Loading website: ${websiteUrl}`);
+    updateProgress(auditId, 5, 17, `Loading website: ${websiteUrl}`, startTime);
     await navigateToUrl(page, websiteUrl);
     networkMonitor.markPageLoaded();
     console.log(`   ✅ Navigation completed in ${Date.now() - stepStartTime}ms`);
@@ -168,7 +229,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 7: Extract cookies with timestamps
     stepStartTime = Date.now();
     console.log('🍪 Step 7: Extracting cookies...');
-    updateProgress(auditId, 7, 17, 'Extracting and analyzing cookies...');
+    updateProgress(auditId, 7, 17, 'Extracting and analyzing cookies...', startTime);
     let cookies = await extractCookies(page);
     cookies = await enrichCookiesWithTimestamps(page, cookies);
     const cookieStats = getCookieStats(cookies);
@@ -203,7 +264,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 10: Analyze cookie banner for NOYB violations
     stepStartTime = Date.now();
     console.log('⚖️  Step 10: Analyzing cookie banner for GDPR violations...');
-    updateProgress(auditId, 10, 17, 'Analyzing cookie banner compliance (NOYB checklist)...');
+    updateProgress(auditId, 10, 17, 'Analyzing cookie banner compliance (NOYB checklist)...', startTime);
     const bannerAnalysis = await analyzeCookieBanner(page);
     console.log(`   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`);
     console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
@@ -238,7 +299,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
     // Step 13: Get page metadata
     stepStartTime = Date.now();
-    updateProgress(auditId, 13, 17, 'Building request timeline and capturing screenshots...');
+    updateProgress(auditId, 13, 17, 'Building request timeline and capturing screenshots...', startTime);
     const metadata = await getPageMetadata(page);
     console.log(`   ✅ Metadata extracted in ${Date.now() - stepStartTime}ms`);
 
@@ -319,7 +380,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       stepStartTime = Date.now();
       console.log('');
       console.log('🎭 Step 16: Running Accept/Reject consent simulation...');
-      updateProgress(auditId, 16, 17, 'Running consent simulation (Accept vs Reject)...');
+      updateProgress(auditId, 16, 17, 'Running consent simulation (Accept vs Reject)...', startTime);
       try {
         consentSimulation = await runConsentSimulation(websiteUrl);
         console.log(`   ✅ Consent simulation completed in ${Date.now() - stepStartTime}ms`);
@@ -345,7 +406,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     stepStartTime = Date.now();
     console.log('');
     console.log('📊 Step 17: Calculating overall compliance score...');
-    updateProgress(auditId, 17, 17, 'Calculating compliance score and finalizing report...');
+    updateProgress(auditId, 17, 17, 'Calculating compliance score and finalizing report...', startTime);
     const complianceScore = calculateOverallScore(results);
     results.complianceScore = complianceScore;
     console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
