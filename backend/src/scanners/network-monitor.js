@@ -23,23 +23,25 @@ function setupNetworkMonitoring(page) {
   page.on('request', request => {
     const timestamp = (Date.now() - startTime) / 1000; // Convert to seconds
 
+    // Check if it's a tracking request
+    const isTracking = isTrackingRequest(request.url(), request.resourceType());
+
     const requestData = {
       url: request.url(),
       method: request.method(),
       resourceType: request.resourceType(),
       timestamp: timestamp,
       beforeConsent: firstUserInteraction === null || timestamp < firstUserInteraction,
-      headers: request.headers()
+      headers: request.headers(),
+      isTracking: isTracking,
+      domain: isTracking ? new URL(request.url()).hostname : undefined
     };
 
     networkRequests.push(requestData);
 
-    // Check if it's a tracking request
-    if (isTrackingRequest(request.url(), request.resourceType())) {
-      trackingRequests.push({
-        ...requestData,
-        domain: new URL(request.url()).hostname
-      });
+    // Add to tracking requests array if it's a tracking request
+    if (isTracking) {
+      trackingRequests.push(requestData);
     }
 
     // Continue the request (required when interception is enabled)
