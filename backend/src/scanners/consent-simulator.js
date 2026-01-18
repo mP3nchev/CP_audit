@@ -531,8 +531,8 @@ async function runRejectScenario(websiteUrl) {
     // Extract cookies BEFORE navigation
     const cookiesBeforeLoad = await page.cookies();
 
-    // Navigate to site
-    await navigateToUrl(page, websiteUrl);
+    // Navigate to site (with extended timeout for CookieScript/CMP-heavy sites)
+    await navigateToUrl(page, websiteUrl, 'reject-scenario', { timeout: 30000 });
     await waitForPageStability(page, 2000);
 
     // Extract cookies BEFORE any interaction
@@ -662,8 +662,8 @@ async function runAcceptScenario(websiteUrl) {
     browser = await launchBrowser();
     const page = await createPage(browser);
 
-    // Navigate to site
-    await navigateToUrl(page, websiteUrl);
+    // Navigate to site (with extended timeout for CookieScript/CMP-heavy sites)
+    await navigateToUrl(page, websiteUrl, 'accept-scenario', { timeout: 30000 });
     await waitForPageStability(page, 2000);
 
     // Extract cookies BEFORE any interaction
