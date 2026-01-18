@@ -1,4 +1,5 @@
 const { retryScreenshot } = require('../utils/retry-handler');
+const constants = require('../config/constants');
 
 /**
  * Calculate dynamic height cap based on available memory
@@ -182,23 +183,49 @@ async function captureCookieBanner(page) {
 
 /**
  * Capture both screenshots (full page + cookie banner)
+ * NON-BLOCKING: Returns null on failure instead of throwing
+ * Feature-flagged: Skips if ENABLE_SCREENSHOTS=false
+ * Hard timeout: 20s max (configurable via SCREENSHOT_TIMEOUT_MS)
  * @param {Page} page - Puppeteer page
- * @returns {Promise<Object>} Object with both screenshots
+ * @returns {Promise<Object|null>} Object with both screenshots, or null if disabled/failed
  */
 async function captureScreenshots(page) {
-  const screenshots = {};
+  // Feature flag check
+  if (!constants.ENABLE_SCREENSHOTS) {
+    console.log('⏭️  Screenshots disabled (ENABLE_SCREENSHOTS=false), skipping...');
+    return null;
+  }
 
   try {
-    // Capture full page (required)
-    screenshots.full = await captureFullPage(page);
+    console.log(`📸 Screenshots enabled with ${constants.SCREENSHOT_TIMEOUT_MS}ms timeout`);
 
-    // Capture cookie banner (optional)
-    screenshots.banner = await captureCookieBanner(page);
+    // Hard timeout wrapper - prevents screenshots from blocking audit
+    const screenshotPromise = (async () => {
+      const screenshots = {};
 
+      // Capture full page (required)
+      screenshots.full = await captureFullPage(page);
+
+      // Capture cookie banner (optional)
+      screenshots.banner = await captureCookieBanner(page);
+
+      return screenshots;
+    })();
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Screenshot timeout after ${constants.SCREENSHOT_TIMEOUT_MS}ms`)), constants.SCREENSHOT_TIMEOUT_MS)
+    );
+
+    // Race between screenshot capture and timeout
+    const screenshots = await Promise.race([screenshotPromise, timeoutPromise]);
+
+    console.log('✅ Screenshots captured successfully');
     return screenshots;
   } catch (error) {
-    console.error('❌ Screenshot capture failed:', error.message);
-    throw error;
+    // NON-BLOCKING: Log error but don't fail the audit
+    console.error(`⚠️  Screenshot capture failed (non-blocking): ${error.message}`);
+    console.log('⏭️  Continuing audit without screenshots...');
+    return null;
   }
 }
 

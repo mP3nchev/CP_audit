@@ -43,6 +43,12 @@ async function uploadScreenshot(buffer, filename) {
 async function uploadScreenshots(screenshots, auditUid) {
   const results = {};
 
+  // Handle disabled/failed screenshots gracefully
+  if (!screenshots) {
+    console.log('⏭️  No screenshots to upload (disabled or failed)');
+    return results;
+  }
+
   try {
     // Upload full page screenshot
     if (screenshots.full) {

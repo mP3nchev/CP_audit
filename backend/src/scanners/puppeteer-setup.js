@@ -113,8 +113,8 @@ async function createPage(browser) {
     'Accept-Language': 'en-US,en;q=0.9'
   });
 
-  // Set timeout
-  page.setDefaultNavigationTimeout(constants.PUPPETEER_TIMEOUT_MS);
+  // Set shorter timeout for faster failure detection (15s instead of 120s)
+  page.setDefaultNavigationTimeout(15000);
 
   // Enable request interception (needed for network monitoring)
   await page.setRequestInterception(true);
@@ -128,15 +128,17 @@ async function createPage(browser) {
  * @param {Page} page - Puppeteer page
  * @param {string} url - URL to navigate to
  * @param {string} auditId - Optional audit ID for error screenshots
+ * @param {Object} options - Navigation options (timeout, waitUntil, etc.)
  * @returns {Promise<Response>} Navigation response
  */
-async function navigateToUrl(page, url, auditId = 'unknown') {
+async function navigateToUrl(page, url, auditId = 'unknown', options = {}) {
   try {
     console.log(`🌐 Navigating to: ${url}`);
 
     const response = await page.goto(url, {
       waitUntil: 'networkidle2',
-      timeout: constants.PUPPETEER_TIMEOUT_MS
+      timeout: 15000,  // Default 15s for fast failure
+      ...options  // Allow caller to override
     });
 
     if (!response) {
@@ -178,8 +180,8 @@ async function waitForPageStability(page, waitTime = 3000) {
       console.log('⚠️  Network not idle after 10s, continuing anyway');
     });
 
-    // Additional wait for dynamic content
-    await page.waitForTimeout(waitTime);
+    // Additional wait for dynamic content (using modern setTimeout instead of deprecated waitForTimeout)
+    await new Promise(resolve => setTimeout(resolve, waitTime));
 
     console.log(`✅ Page stable after ${waitTime}ms wait`);
   } catch (error) {
