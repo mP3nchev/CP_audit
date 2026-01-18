@@ -114,40 +114,89 @@ export default function AuditForm({ onAuditComplete }) {
   };
 
   const pollAuditStatus = async (auditId, apiUrl) => {
-    const maxAttempts = 200; // 10 minutes max (3 second intervals) - reduced polling frequency
+    const HARD_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes hard timeout
+    const STALL_TIMEOUT_MS = 90 * 1000;   // 90 seconds stall detection
+    const MAX_BACKOFF_MS = 5000;           // Cap backoff at 5 seconds
+
+    const startTime = Date.now();
     let attempts = 0;
+    let currentBackoff = 1000; // Start with 1 second
 
-    while (attempts < maxAttempts) {
-      const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
-      const statusData = await statusResponse.json();
+    // Stall detection state
+    let lastState = null;
+    let lastProgress = null;
+    let lastChangeTime = Date.now();
 
-      if (statusData.status === 'completed') {
-        setProgress('Audit completed! Loading results...');
-        return { auditId, status: 'completed' };
+    while (true) {
+      // Termination condition 3: Hard timeout (5 minutes safety net)
+      if (Date.now() - startTime > HARD_TIMEOUT_MS) {
+        throw new Error('Audit timeout after 5 minutes - please try again');
       }
 
-      if (statusData.status === 'failed') {
-        const errorMsg = statusData.error_message || statusData.error || 'Unknown error';
-        throw new Error('Audit failed: ' + errorMsg);
+      try {
+        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const statusData = await statusResponse.json();
+
+        // Termination condition 1a: State is DONE
+        if (statusData.state === 'DONE' || statusData.status === 'completed') {
+          setProgress('Audit completed! Loading results...');
+          return { auditId, status: 'completed' };
+        }
+
+        // Termination condition 1b: State is FAILED
+        if (statusData.state === 'FAILED' || statusData.status === 'failed') {
+          const errorMsg = statusData.error_message || statusData.error || 'Unknown error';
+          throw new Error('Audit failed: ' + errorMsg);
+        }
+
+        // Termination condition 2: Stall detection
+        // Check if state OR progress has changed
+        const stateChanged = statusData.state !== lastState;
+        const progressChanged = statusData.progress !== lastProgress;
+
+        if (stateChanged || progressChanged) {
+          // Progress detected, reset stall timer
+          lastState = statusData.state;
+          lastProgress = statusData.progress;
+          lastChangeTime = Date.now();
+        } else {
+          // No progress, check for stall
+          const stallDuration = Date.now() - lastChangeTime;
+          if (stallDuration > STALL_TIMEOUT_MS) {
+            throw new Error(`Audit appears stalled (no progress for ${Math.round(stallDuration / 1000)}s) - backend may be stuck`);
+          }
+        }
+
+        // Update progress message
+        if (statusData.metadata && statusData.metadata.currentOperation) {
+          const eta = statusData.estimatedTimeRemaining
+            ? ` (~${statusData.estimatedTimeRemaining}s remaining)`
+            : '';
+          setProgress(`[${statusData.progress}%] ${statusData.metadata.currentOperation}${eta}`);
+        } else if (statusData.state) {
+          const stateMessages = {
+            'INIT': 'Initializing audit...',
+            'SCANNING': 'Scanning website and detecting cookies...',
+            'SCREENSHOTS': 'Capturing screenshots...',
+            'UPLOADING': 'Uploading screenshots...',
+            'SIMULATION': 'Running consent simulation...',
+            'SCORING': 'Calculating compliance score...'
+          };
+          setProgress(stateMessages[statusData.state] || `Processing (${statusData.state})...`);
+        }
+
+      } catch (error) {
+        // Network errors - don't count as stall, just retry
+        console.warn('Polling error:', error.message);
       }
 
-      // Update progress message based on status and progress data
-      if (statusData.progress) {
-        const { currentStep, totalSteps, message, percentage } = statusData.progress;
-        setProgress(`[${currentStep}/${totalSteps}] ${message} (${percentage}%)`);
-      } else if (statusData.status === 'scanning') {
-        setProgress('Scanning website and detecting cookies...');
-      } else if (statusData.status === 'analyzing') {
-        setProgress('Analyzing privacy policy with AI...');
-      } else if (statusData.status === 'generating') {
-        setProgress('Generating compliance report...');
-      }
+      // Exponential backoff: 1s → 2s → 3s → 5s (cap at 5s)
+      await new Promise(resolve => setTimeout(resolve, currentBackoff));
 
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Increase backoff exponentially, but cap at MAX_BACKOFF_MS
+      currentBackoff = Math.min(currentBackoff + 1000, MAX_BACKOFF_MS);
       attempts++;
     }
-
-    throw new Error('Audit timeout - please try again');
   };
 
   return (

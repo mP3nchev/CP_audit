@@ -154,22 +154,40 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
       });
     }
 
-    const response = {
-      audit_id: audit.audit_uid,
-      website_url: audit.website_url,
-      status: audit.status,
-      created_at: audit.created_at,
-      updated_at: audit.updated_at
-    };
-
-    // Add progress information if available
+    // Parse progress JSON to extract state machine info
+    let progressData = null;
     if (audit.progress_json) {
       try {
-        response.progress = JSON.parse(audit.progress_json);
+        progressData = JSON.parse(audit.progress_json);
       } catch (error) {
         console.warn('Failed to parse progress JSON:', error);
       }
     }
+
+    // Map audit status to state
+    let state = 'INIT';
+    if (audit.status === constants.AUDIT_STATUS.COMPLETED) {
+      state = 'DONE';
+    } else if (audit.status === constants.AUDIT_STATUS.FAILED) {
+      state = 'FAILED';
+    } else if (progressData && progressData.state) {
+      state = progressData.state;
+    } else if (audit.status === constants.AUDIT_STATUS.PROCESSING) {
+      state = 'SCANNING';  // Fallback
+    }
+
+    // Build enhanced response with state machine
+    const response = {
+      audit_id: audit.audit_uid,
+      website_url: audit.website_url,
+      status: audit.status,
+      state: state,  // REQUIRED for polling logic
+      progress: progressData ? progressData.percentage : 0,  // REQUIRED (0-100)
+      estimatedTimeRemaining: progressData?.estimatedTimeRemaining || null,  // OPTIONAL
+      metadata: progressData?.metadata || null,  // OPTIONAL
+      created_at: audit.created_at,
+      updated_at: audit.updated_at
+    };
 
     if (audit.status === constants.AUDIT_STATUS.COMPLETED) {
       response.completed_at = audit.completed_at;
