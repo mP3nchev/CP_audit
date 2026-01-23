@@ -164,149 +164,295 @@ async function waitForConsentTransition(page, expectedTransition, timeout = 1500
  * @param {Page} page - Puppeteer page
  * @returns {Promise<Object>} Banner buttons found
  */
-async function findBannerButtons(page) {
-  return await page.evaluate(() => {
-    // Helper: Generate selector for element
-    function getSelector(element) {
-      if (!element) return null;
-      if (element.id) return `#${element.id}`;
-      if (element.className && typeof element.className === 'string') {
-        const classes = element.className.split(' ').filter(c => c.trim());
-        if (classes.length > 0) return `.${classes[0]}`;
-      }
-      return element.tagName.toLowerCase();
+/**
+ * Check if element is INTERACTABLE (not just visible)
+ * @param {Page} page - Puppeteer page
+ * @param {string} selector - CSS selector
+ * @returns {Promise<Object>} {interactable: boolean, reason: string, boundingBox: object}
+ */
+async function isInteractable(page, selector) {
+  return await page.evaluate((sel) => {
+    const element = document.querySelector(sel);
+    if (!element) return { interactable: false, reason: 'Element not found' };
+
+    // Check 1: offsetParent (null = element or ancestor has display:none)
+    if (!element.offsetParent && element.tagName !== 'BODY') {
+      return { interactable: false, reason: 'offsetParent is null (display:none on element or ancestor)' };
     }
 
-    // Helper: Check if element is visible
-    function isVisible(element) {
-      if (!element) return false;
-      const style = window.getComputedStyle(element);
-      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    const style = window.getComputedStyle(element);
+
+    // Check 2: pointer-events
+    if (style.pointerEvents === 'none') {
+      return { interactable: false, reason: 'pointer-events: none' };
     }
 
-    // CMP-SPECIFIC SELECTORS (priority order)
-    const cmpSelectors = {
-      // CookieScript
-      cookieScript: {
-        accept: '#cookiescript_accept',
-        reject: '#cookiescript_reject',
-        settings: '#cookiescript_manage'
-      },
-      // OneTrust
-      oneTrust: {
-        accept: '#onetrust-accept-btn-handler',
-        reject: '#onetrust-reject-all-handler',
-        settings: '#onetrust-pc-btn-handler'
-      },
-      // Cookiebot
-      cookiebot: {
-        accept: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-        reject: '#CybotCookiebotDialogBodyButtonDecline',
-        settings: '#CybotCookiebotDialogBodyLevelButtonLevelOptinCustom'
-      },
-      // Usercentrics
-      usercentrics: {
-        accept: '[data-testid="uc-accept-all-button"]',
-        reject: '[data-testid="uc-deny-all-button"]',
-        settings: '[data-testid="uc-more-button"]'
-      },
-      // Complianz
-      complianz: {
-        accept: '.cmplz-accept',
-        reject: '.cmplz-deny',
-        settings: '.cmplz-manage-consent'
-      }
-    };
-
-    let acceptButton = null;
-    let rejectButton = null;
-    let settingsButton = null;
-
-    // TRY CMP-SPECIFIC SELECTORS FIRST
-    for (const [cmpName, selectors] of Object.entries(cmpSelectors)) {
-      const accept = document.querySelector(selectors.accept);
-      const reject = document.querySelector(selectors.reject);
-      const settings = document.querySelector(selectors.settings);
-
-      if (accept && isVisible(accept)) {
-        console.log(`[findBannerButtons] Detected ${cmpName} platform`);
-        acceptButton = accept;
-        rejectButton = reject && isVisible(reject) ? reject : null;
-        settingsButton = settings && isVisible(settings) ? settings : null;
-        break; // Found CMP, stop searching
-      }
+    // Check 3: opacity
+    if (parseFloat(style.opacity) === 0) {
+      return { interactable: false, reason: 'opacity: 0' };
     }
 
-    // FALLBACK: Generic text-based search
-    if (!acceptButton) {
-      const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
+    // Check 4: bounding box
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      return { interactable: false, reason: 'Zero bounding box' };
+    }
 
-      // Find Accept button
-      acceptButton = allButtons.find(b => {
-        if (!isVisible(b)) return false;
-        const text = b.textContent.toLowerCase();
-        const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
-        const dataAction = (b.getAttribute('data-action') || '').toLowerCase();
+    // Check 5: overlay element (элемент с higher z-index covering button)
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const topElement = document.elementFromPoint(centerX, centerY);
 
-        return text.includes('accept all') ||
-               text.includes('allow all') ||
-               text.includes('agree') ||
-               (text.includes('accept') && !text.includes('reject')) ||
-               ariaLabel.includes('accept') ||
-               dataAction.includes('accept');
-      });
-
-      // Find Reject button
-      rejectButton = allButtons.find(b => {
-        if (!isVisible(b)) return false;
-        const text = b.textContent.toLowerCase();
-        const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
-        const dataAction = (b.getAttribute('data-action') || '').toLowerCase();
-
-        return text.includes('reject all') ||
-               text.includes('deny all') ||
-               text.includes('decline all') ||
-               (text.includes('reject') && !text.includes('accept')) ||
-               ariaLabel.includes('reject') ||
-               dataAction.includes('reject');
-      });
-
-      // Find Settings button
-      settingsButton = allButtons.find(b => {
-        if (!isVisible(b)) return false;
-        const text = b.textContent.toLowerCase();
-        const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
-
-        return text.includes('settings') ||
-               text.includes('customize') ||
-               text.includes('manage') ||
-               text.includes('preferences') ||
-               text.includes('options') ||
-               ariaLabel.includes('settings');
-      });
+    if (topElement && !element.contains(topElement) && topElement !== element) {
+      const topStyle = window.getComputedStyle(topElement);
+      if (topStyle.position === 'fixed' || topStyle.position === 'absolute') {
+        return {
+          interactable: false,
+          reason: `Overlay element detected: ${topElement.tagName}#${topElement.id}.${topElement.className}`
+        };
+      }
     }
 
     return {
-      acceptButton: acceptButton ? {
-        text: acceptButton.textContent.trim(),
-        selector: getSelector(acceptButton),
-        visible: true,
-        element: acceptButton
-      } : null,
-      rejectButton: rejectButton ? {
-        text: rejectButton.textContent.trim(),
-        selector: getSelector(rejectButton),
-        visible: true,
-        element: rejectButton
-      } : null,
-      settingsButton: settingsButton ? {
-        text: settingsButton.textContent.trim(),
-        selector: getSelector(settingsButton),
-        visible: true,
-        element: settingsButton
-      } : null
+      interactable: true,
+      reason: 'Element is interactable',
+      boundingBox: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      }
     };
+  }, selector);
+}
+
+/**
+ * Wait for button to become INTERACTABLE (not just visible)
+ * @param {Page} page - Puppeteer page
+ * @param {string} selector - Button selector
+ * @param {number} timeout - Max wait time (ms)
+ * @returns {Promise<boolean>} Success
+ */
+async function waitForInteractionReady(page, selector, timeout = 5000) {
+  const startTime = Date.now();
+  const DEBUG = process.env.DEBUG_CONSENT === 'true';
+
+  while (Date.now() - startTime < timeout) {
+    const status = await isInteractable(page, selector);
+
+    if (status.interactable) {
+      if (DEBUG) console.log(`   ✅ Button ${selector} is interactable`, status.boundingBox);
+      return true;
+    }
+
+    if (DEBUG) console.log(`   ⏳ Waiting for ${selector}: ${status.reason}`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  console.log(`   ❌ Button ${selector} never became interactable after ${timeout}ms`);
+  return false;
+}
+
+/**
+ * Perform HUMAN-LIKE click using mouse events
+ * @param {Page} page - Puppeteer page
+ * @param {string} selector - Button selector
+ * @param {Object} boundingBox - Button bounding box {x, y, width, height}
+ * @returns {Promise<boolean>} Success
+ */
+async function performHumanClick(page, selector, boundingBox) {
+  const DEBUG = process.env.DEBUG_CONSENT === 'true';
+
+  try {
+    // Screenshot BEFORE click (if DEBUG)
+    if (DEBUG) {
+      await page.screenshot({ path: `/tmp/before-click-${Date.now()}.png` });
+      console.log(`   📸 Screenshot saved (before click)`);
+    }
+
+    // Calculate click coordinates (center of button)
+    const x = boundingBox.x + boundingBox.width / 2;
+    const y = boundingBox.y + boundingBox.height / 2;
+
+    console.log(`   🖱️  Clicking at (${Math.round(x)}, ${Math.round(y)}) - ${selector}`);
+
+    // Move mouse to button
+    await page.mouse.move(x, y);
+    await new Promise(resolve => setTimeout(resolve, 100)); // Human delay
+
+    // Mouse down + up (real pointer events)
+    await page.mouse.down();
+    await new Promise(resolve => setTimeout(resolve, 50)); // Human click duration
+    await page.mouse.up();
+
+    // Screenshot AFTER click (if DEBUG)
+    if (DEBUG) {
+      await new Promise(resolve => setTimeout(resolve, 500)); // Wait for visual change
+      await page.screenshot({ path: `/tmp/after-click-${Date.now()}.png` });
+      console.log(`   📸 Screenshot saved (after click)`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`   ❌ performHumanClick failed:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Find consent banner buttons (returns ONLY selectors + metadata, NO DOM elements)
+ * @param {Page} page - Puppeteer page
+ * @returns {Promise<Object>} {acceptButton, rejectButton, settingsButton}
+ */
+async function findBannerButtons(page) {
+  const DEBUG = process.env.DEBUG_CONSENT === 'true';
+
+  // CMP-SPECIFIC SELECTORS (priority order)
+  const cmpSelectors = {
+    cookieScript: {
+      accept: '#cookiescript_accept',
+      reject: '#cookiescript_reject',
+      settings: '#cookiescript_manage'
+    },
+    oneTrust: {
+      accept: '#onetrust-accept-btn-handler',
+      reject: '#onetrust-reject-all-handler',
+      settings: '#onetrust-pc-btn-handler'
+    },
+    cookiebot: {
+      accept: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+      reject: '#CybotCookiebotDialogBodyButtonDecline',
+      settings: '#CybotCookiebotDialogBodyLevelButtonLevelOptinCustom'
+    },
+    usercentrics: {
+      accept: '[data-testid="uc-accept-all-button"]',
+      reject: '[data-testid="uc-deny-all-button"]',
+      settings: '[data-testid="uc-more-button"]'
+    },
+    complianz: {
+      accept: '.cmplz-accept',
+      reject: '.cmplz-deny',
+      settings: '.cmplz-manage-consent'
+    }
+  };
+
+  // TRY CMP-SPECIFIC SELECTORS FIRST
+  for (const [cmpName, selectors] of Object.entries(cmpSelectors)) {
+    const acceptExists = await page.$(selectors.accept);
+
+    if (acceptExists) {
+      console.log(`   🎯 Detected ${cmpName} CMP platform`);
+
+      // Check interactability for all buttons
+      const acceptStatus = await isInteractable(page, selectors.accept);
+      const rejectStatus = await isInteractable(page, selectors.reject);
+      const settingsStatus = await isInteractable(page, selectors.settings);
+
+      if (DEBUG) {
+        console.log(`   🔍 Accept: ${acceptStatus.interactable ? '✅' : '❌'} - ${acceptStatus.reason}`);
+        console.log(`   🔍 Reject: ${rejectStatus.interactable ? '✅' : '❌'} - ${rejectStatus.reason}`);
+        console.log(`   🔍 Settings: ${settingsStatus.interactable ? '✅' : '❌'} - ${settingsStatus.reason}`);
+      }
+
+      return {
+        acceptButton: acceptStatus.interactable ? {
+          selector: selectors.accept,
+          boundingBox: acceptStatus.boundingBox,
+          text: await page.$eval(selectors.accept, el => el.textContent.trim()).catch(() => 'Accept')
+        } : null,
+        rejectButton: rejectStatus.interactable ? {
+          selector: selectors.reject,
+          boundingBox: rejectStatus.boundingBox,
+          text: await page.$eval(selectors.reject, el => el.textContent.trim()).catch(() => 'Reject')
+        } : null,
+        settingsButton: settingsStatus.interactable ? {
+          selector: selectors.settings,
+          boundingBox: settingsStatus.boundingBox,
+          text: await page.$eval(selectors.settings, el => el.textContent.trim()).catch(() => 'Settings')
+        } : null
+      };
+    }
+  }
+
+  // FALLBACK: Generic text-based search (if no CMP detected)
+  console.log(`   ⚠️  No known CMP detected, falling back to generic search...`);
+
+  const genericButtons = await page.evaluate(() => {
+    const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
+    const results = { accept: null, reject: null, settings: null };
+
+    allButtons.forEach(b => {
+      if (!b.offsetParent && b.tagName !== 'BODY') return; // Skip hidden
+
+      const text = b.textContent.toLowerCase();
+      const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase();
+
+      // Accept button
+      if (!results.accept && (text.includes('accept all') || text.includes('allow all') || ariaLabel.includes('accept'))) {
+        results.accept = {
+          id: b.id,
+          className: b.className,
+          tagName: b.tagName,
+          text: b.textContent.trim()
+        };
+      }
+
+      // Reject button
+      if (!results.reject && (text.includes('reject all') || text.includes('deny all') || text.includes('decline all'))) {
+        results.reject = {
+          id: b.id,
+          className: b.className,
+          tagName: b.tagName,
+          text: b.textContent.trim()
+        };
+      }
+
+      // Settings button
+      if (!results.settings && (text.includes('settings') || text.includes('customize') || text.includes('manage'))) {
+        results.settings = {
+          id: b.id,
+          className: b.className,
+          tagName: b.tagName,
+          text: b.textContent.trim()
+        };
+      }
+    });
+
+    return results;
   });
+
+  // Build selectors from generic search
+  const buildSelector = (btn) => {
+    if (!btn) return null;
+    if (btn.id) return `#${btn.id}`;
+    if (btn.className && typeof btn.className === 'string') {
+      const classes = btn.className.split(' ').filter(c => c.trim());
+      if (classes.length > 0) return `.${classes[0]}`;
+    }
+    return btn.tagName.toLowerCase();
+  };
+
+  const acceptSel = buildSelector(genericButtons.accept);
+  const rejectSel = buildSelector(genericButtons.reject);
+  const settingsSel = buildSelector(genericButtons.settings);
+
+  return {
+    acceptButton: acceptSel ? {
+      selector: acceptSel,
+      boundingBox: (await isInteractable(page, acceptSel)).boundingBox,
+      text: genericButtons.accept?.text || 'Accept'
+    } : null,
+    rejectButton: rejectSel ? {
+      selector: rejectSel,
+      boundingBox: (await isInteractable(page, rejectSel)).boundingBox,
+      text: genericButtons.reject?.text || 'Reject'
+    } : null,
+    settingsButton: settingsSel ? {
+      selector: settingsSel,
+      boundingBox: (await isInteractable(page, settingsSel)).boundingBox,
+      text: genericButtons.settings?.text || 'Settings'
+    } : null
+  };
 }
 
 /**
@@ -578,73 +724,58 @@ async function waitForConsentStateChange(page, timeout = 15000) {
 }
 
 /**
- * Click button and wait for consent state change (supports CMP-specific selectors)
+ * Click button using REAL pointer events (not page.click() or element.click())
  * @param {Page} page - Puppeteer page
- * @param {Object|string} buttonInfo - Button object from findBannerButtons() or text string
+ * @param {Object} buttonInfo - Button object {selector, boundingBox, text}
  * @returns {Promise<boolean>} Success
  */
 async function clickButton(page, buttonInfo) {
+  const DEBUG = process.env.DEBUG_CONSENT === 'true';
+
   try {
-    // If buttonInfo is a string, search by text (legacy mode)
-    const buttonText = typeof buttonInfo === 'string' ? buttonInfo : buttonInfo.text;
-    const buttonSelector = typeof buttonInfo === 'object' ? buttonInfo.selector : null;
-
-    // TRY 1: Use selector if available (more reliable)
-    if (buttonSelector) {
-      try {
-        await page.click(buttonSelector);
-        console.log(`   ✅ Clicked button via selector: ${buttonSelector}`);
-      } catch (selectorError) {
-        console.log(`   ⚠️  Selector click failed, trying evaluate method...`);
-
-        // TRY 2: Fallback to evaluate click
-        const clicked = await page.evaluate((selector) => {
-          const button = document.querySelector(selector);
-          if (button) {
-            button.click();
-            return true;
-          }
-          return false;
-        }, buttonSelector);
-
-        if (!clicked) {
-          throw new Error(`Selector ${buttonSelector} not found`);
-        }
-      }
-    } else {
-      // TRY 3: Text-based search (last resort)
-      const clicked = await page.evaluate((text) => {
-        const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
-        const target = allButtons.find(b => {
-          const buttonText = b.textContent.toLowerCase();
-          return buttonText.includes(text.toLowerCase());
-        });
-
-        if (target) {
-          target.click();
-          return true;
-        }
-        return false;
-      }, buttonText);
-
-      if (!clicked) {
-        console.log(`⚠️  Button "${buttonText}" not found`);
-        return false;
-      }
-
-      console.log(`   ✅ Clicked button via text: "${buttonText}"`);
+    if (!buttonInfo || !buttonInfo.selector) {
+      console.log(`   ❌ No button info provided`);
+      return false;
     }
 
-    // Wait for consent state change using race condition strategy
+    const { selector, boundingBox, text } = buttonInfo;
+
+    console.log(`   🎯 Attempting to click: "${text}" (${selector})`);
+
+    // STEP 1: Wait for button to become INTERACTABLE
+    const ready = await waitForInteractionReady(page, selector, 5000);
+    if (!ready) {
+      console.log(`   ❌ Button ${selector} is not interactable`);
+      return false;
+    }
+
+    // STEP 2: Get fresh bounding box (might have changed during animation)
+    const freshStatus = await isInteractable(page, selector);
+    if (!freshStatus.interactable) {
+      console.log(`   ❌ Button became non-interactable: ${freshStatus.reason}`);
+      return false;
+    }
+
+    // STEP 3: Perform HUMAN-LIKE click with mouse events
+    const clicked = await performHumanClick(page, selector, freshStatus.boundingBox);
+    if (!clicked) {
+      console.log(`   ❌ performHumanClick failed`);
+      return false;
+    }
+
+    console.log(`   ✅ Clicked button: "${text}"`);
+
+    // STEP 4: Wait for consent state change
     const trigger = await waitForConsentStateChange(page, 15000);
     console.log(`   ✅ Consent state changed via: ${trigger}`);
 
-    // Additional wait for cookies to be set/removed
+    // STEP 5: Additional wait for cookies to be set/removed
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     return true;
   } catch (error) {
-    console.error(`   ❌ Failed to click button:`, error.message);
+    console.error(`   ❌ clickButton failed:`, error.message);
+    if (DEBUG) console.error(error.stack);
     return false;
   }
 }
@@ -681,6 +812,32 @@ async function runRejectScenario(websiteUrl) {
       console.log(`   ⚠️  Navigation failed: ${navError.message}`);
       console.log(`   ➡️  Continuing anyway - consent UI may still be available...`);
       // DO NOT throw - navigation failure is diagnostic, NOT stopping condition!
+    }
+
+    // DIAGNOSTIC: Verify actual page URL and content
+    const DEBUG = process.env.DEBUG_CONSENT === 'true';
+    const currentUrl = page.url();
+    console.log(`   🌐 Current page URL: ${currentUrl}`);
+
+    if (currentUrl !== websiteUrl && !currentUrl.startsWith(websiteUrl)) {
+      console.log(`   ⚠️  WARNING: Page URL mismatch! Expected ${websiteUrl}, got ${currentUrl}`);
+    }
+
+    // DIAGNOSTIC: Check if consent buttons exist in DOM
+    const domCheck = await page.evaluate(() => {
+      const html = document.documentElement.outerHTML;
+      return {
+        hasCookieScript: html.includes('cookiescript_accept'),
+        hasOneTrust: html.includes('onetrust-accept'),
+        hasCookiebot: html.includes('CybotCookiebotDialog'),
+        htmlLength: html.length
+      };
+    });
+    console.log(`   🔍 DOM Check:`, domCheck);
+
+    if (DEBUG) {
+      await page.screenshot({ path: `/tmp/reject-after-nav-${Date.now()}.png` });
+      console.log(`   📸 Screenshot saved (after navigation)`);
     }
 
     // STATE CHECK: Wait for consent UI to be ready (REGARDLESS of navigation outcome!)
@@ -834,6 +991,32 @@ async function runAcceptScenario(websiteUrl) {
       console.log(`   ⚠️  Navigation failed: ${navError.message}`);
       console.log(`   ➡️  Continuing anyway - consent UI may still be available...`);
       // DO NOT throw - navigation failure is diagnostic, NOT stopping condition!
+    }
+
+    // DIAGNOSTIC: Verify actual page URL and content
+    const DEBUG = process.env.DEBUG_CONSENT === 'true';
+    const currentUrl = page.url();
+    console.log(`   🌐 Current page URL: ${currentUrl}`);
+
+    if (currentUrl !== websiteUrl && !currentUrl.startsWith(websiteUrl)) {
+      console.log(`   ⚠️  WARNING: Page URL mismatch! Expected ${websiteUrl}, got ${currentUrl}`);
+    }
+
+    // DIAGNOSTIC: Check if consent buttons exist in DOM
+    const domCheck = await page.evaluate(() => {
+      const html = document.documentElement.outerHTML;
+      return {
+        hasCookieScript: html.includes('cookiescript_accept'),
+        hasOneTrust: html.includes('onetrust-accept'),
+        hasCookiebot: html.includes('CybotCookiebotDialog'),
+        htmlLength: html.length
+      };
+    });
+    console.log(`   🔍 DOM Check:`, domCheck);
+
+    if (DEBUG) {
+      await page.screenshot({ path: `/tmp/accept-after-nav-${Date.now()}.png` });
+      console.log(`   📸 Screenshot saved (after navigation)`);
     }
 
     // STATE CHECK: Wait for consent UI to be ready (REGARDLESS of navigation outcome!)
