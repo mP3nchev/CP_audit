@@ -154,7 +154,30 @@ async function captureStateSnapshot(page, client, label) {
   console.log(`   📸 Capturing ${label} snapshot...`);
 
   // 1. Cookies via CDP (most comprehensive)
-  const { cookies } = await client.send('Network.getAllCookies');
+  let cookies = [];
+  try {
+    const result = await client.send('Network.getAllCookies');
+    cookies = result.cookies;
+  } catch (err) {
+    // CDP session may be detached if page reloaded - try to recreate
+    console.log(`   ℹ️  CDP session detached, recreating...`);
+    try {
+      const newClient = await page.target().createCDPSession();
+      await newClient.send('Network.enable');
+      const result = await newClient.send('Network.getAllCookies');
+      cookies = result.cookies;
+      await newClient.detach();
+    } catch (err2) {
+      console.log(`   ⚠️  Could not capture cookies via CDP: ${err2.message}`);
+      // Fallback to document.cookie
+      cookies = await page.evaluate(() => {
+        return document.cookie.split(';').map(c => {
+          const [name, value] = c.trim().split('=');
+          return { name, value };
+        }).filter(c => c.name);
+      });
+    }
+  }
 
   // 2. LocalStorage via CDP
   const storageItems = await page.evaluate(() => {
@@ -325,7 +348,23 @@ async function runRejectScenario(browser, websiteUrl) {
   console.log('   4. Wait 3 seconds after clicking');
   console.log('   5. Come back to this terminal and press ENTER');
   console.log('');
+
+  // Start listening for navigation before user clicks
+  const navigationPromise = page.waitForNavigation({
+    timeout: 10000,
+    waitUntil: 'networkidle2'
+  }).catch(() => null); // Ignore timeout if no navigation
+
   await askQuestion('   Press ENTER when you have rejected cookies... ');
+
+  // Check if page reloaded/navigated after clicking
+  const didNavigate = await navigationPromise;
+  if (didNavigate) {
+    console.log(`   🔄 Page reloaded after reject - waiting for stabilization...`);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  } else {
+    console.log(`   ℹ️  No page reload detected`);
+  }
 
   // Wait for tracking to propagate
   console.log(`   ⏱️  Waiting 5 seconds for tracking runtime propagation...`);
@@ -335,8 +374,20 @@ async function runRejectScenario(browser, websiteUrl) {
   const afterSnapshot = await captureStateSnapshot(page, client, 'after_reject');
   console.log(`   🍪 Cookies after reject: ${afterSnapshot.cookies.length}`);
 
-  await page.close();
-  await client.detach();
+  // Clean up CDP session and page
+  try {
+    if (client && !client._closed) {
+      await client.detach();
+    }
+  } catch (err) {
+    console.log(`   ℹ️  CDP session already closed (page may have reloaded)`);
+  }
+
+  try {
+    await page.close();
+  } catch (err) {
+    console.log(`   ℹ️  Page already closed`);
+  }
 
   return {
     scenario: 'reject',
@@ -458,7 +509,23 @@ async function runAcceptScenario(browser, websiteUrl) {
   console.log('   4. Wait 3 seconds after clicking');
   console.log('   5. Come back to this terminal and press ENTER');
   console.log('');
+
+  // Start listening for navigation before user clicks
+  const navigationPromise = page.waitForNavigation({
+    timeout: 10000,
+    waitUntil: 'networkidle2'
+  }).catch(() => null); // Ignore timeout if no navigation
+
   await askQuestion('   Press ENTER when you have accepted cookies... ');
+
+  // Check if page reloaded/navigated after clicking
+  const didNavigate = await navigationPromise;
+  if (didNavigate) {
+    console.log(`   🔄 Page reloaded after accept - waiting for stabilization...`);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  } else {
+    console.log(`   ℹ️  No page reload detected`);
+  }
 
   // Wait for tracking to propagate (longer for accept - analytics needs time)
   console.log(`   ⏱️  Waiting 5 seconds for tracking runtime initialization...`);
@@ -468,8 +535,20 @@ async function runAcceptScenario(browser, websiteUrl) {
   const afterSnapshot = await captureStateSnapshot(page, client, 'after_accept');
   console.log(`   🍪 Cookies after accept: ${afterSnapshot.cookies.length}`);
 
-  await page.close();
-  await client.detach();
+  // Clean up CDP session and page
+  try {
+    if (client && !client._closed) {
+      await client.detach();
+    }
+  } catch (err) {
+    console.log(`   ℹ️  CDP session already closed (page may have reloaded)`);
+  }
+
+  try {
+    await page.close();
+  } catch (err) {
+    console.log(`   ℹ️  Page already closed`);
+  }
 
   return {
     scenario: 'accept',
