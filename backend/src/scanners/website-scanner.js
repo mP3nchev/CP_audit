@@ -540,8 +540,10 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log(`   Tracking before consent: ${results.trackingBeforeConsent ? 'YES ⚠️' : 'NO ✅'}`);
     console.log(`   Compliance Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
     console.log(`   Screenshots uploaded: ${screenshotUrls.fullPageUrl ? 'YES' : 'NO'}`);
-    if (consentSimulation && consentSimulation.success !== false) {
-      console.log(`   Consent violations: ${consentSimulation.comparison.violations.length}`);
+    if (consentSimulation && !consentSimulation.skipped && consentSimulation.comparison) {
+      console.log(`   Consent simulation: ${consentSimulation.comparison.cookies.newAfterAccept.length} new cookies after Accept`);
+    } else if (consentSimulation && consentSimulation.skipped) {
+      console.log(`   Consent simulation: SKIPPED (${consentSimulation.reason})`);
     }
     console.log('═══════════════════════════════════════════════════════');
     console.log('');
