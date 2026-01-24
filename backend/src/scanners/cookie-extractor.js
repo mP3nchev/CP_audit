@@ -4,9 +4,10 @@
 
 /**
  * Extract all cookies from the page
- * Uses COMBINATION of:
- * 1. document.cookie (JavaScript-set cookies like CookieScriptConsent)
- * 2. CDP Network.getAllCookies() (HTTP + JS + all contexts)
+ * Uses TRIPLE-SOURCE APPROACH for maximum reliability:
+ * 1. CDP Storage.getCookies() - Persistent layer (best for JS-set cookies like _ga)
+ * 2. CDP Network.getAllCookies() - Transaction layer (HTTP + all contexts)
+ * 3. document.cookie - Fallback for JS-accessible cookies
  *
  * @param {Page} page - Puppeteer page
  * @param {Object} options - Options { skipDelay: boolean, delay: number }
@@ -23,12 +24,29 @@ async function extractCookies(page, options = {}) {
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
-    // Method 1: CDP Network.getAllCookies() - most comprehensive
     const client = await page.target().createCDPSession();
-    const { cookies: cdpCookies } = await client.send('Network.getAllCookies');
+
+    // Method 1: CDP Storage.getCookies() - PERSISTENT LAYER (best for _ga, _gcl_au)
+    let storageCookies = [];
+    try {
+      const storageResult = await client.send('Storage.getCookies');
+      storageCookies = storageResult.cookies || [];
+    } catch (storageError) {
+      console.log(`⚠️  Storage.getCookies() failed: ${storageError.message}`);
+    }
+
+    // Method 2: CDP Network.getAllCookies() - TRANSACTION LAYER
+    let networkCookies = [];
+    try {
+      const networkResult = await client.send('Network.getAllCookies');
+      networkCookies = networkResult.cookies || [];
+    } catch (networkError) {
+      console.log(`⚠️  Network.getAllCookies() failed: ${networkError.message}`);
+    }
+
     await client.detach();
 
-    // Method 2: document.cookie - catch any JS-only cookies CDP might miss
+    // Method 3: document.cookie - FALLBACK for JS-accessible cookies
     const documentCookies = await page.evaluate(() => {
       const cookieString = document.cookie;
       if (!cookieString) return [];
@@ -43,15 +61,28 @@ async function extractCookies(page, options = {}) {
       });
     });
 
-    // Merge and deduplicate (CDP is authoritative, document.cookie is backup)
+    // MERGE ALL THREE SOURCES (Storage > Network > document.cookie priority)
     const cookieMap = new Map();
 
-    // Add CDP cookies first (authoritative)
-    cdpCookies.forEach(cookie => {
-      cookieMap.set(cookie.name, cookie);
+    // Priority 1: Storage.getCookies() - most reliable for persistent cookies
+    storageCookies.forEach(cookie => {
+      cookieMap.set(cookie.name, {
+        ...cookie,
+        source: 'Storage.getCookies'
+      });
     });
 
-    // Add document.cookie entries if not already present
+    // Priority 2: Network.getAllCookies() - add if not in Storage
+    networkCookies.forEach(cookie => {
+      if (!cookieMap.has(cookie.name)) {
+        cookieMap.set(cookie.name, {
+          ...cookie,
+          source: 'Network.getAllCookies'
+        });
+      }
+    });
+
+    // Priority 3: document.cookie - final fallback
     documentCookies.forEach(docCookie => {
       if (!cookieMap.has(docCookie.name)) {
         // Construct CDP-like cookie object from document.cookie
@@ -92,7 +123,7 @@ async function extractCookies(page, options = {}) {
       };
     });
 
-    console.log(`✅ Extracted ${enrichedCookies.length} cookies (CDP: ${cdpCookies.length}, document.cookie: ${documentCookies.length})`);
+    console.log(`✅ Extracted ${enrichedCookies.length} cookies (Storage: ${storageCookies.length}, Network: ${networkCookies.length}, document: ${documentCookies.length})`);
     return enrichedCookies;
   } catch (error) {
     console.error('❌ Cookie extraction failed:', error.message);
