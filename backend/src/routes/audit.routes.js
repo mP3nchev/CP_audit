@@ -698,4 +698,214 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
   }
 });
 
+/**
+ * Manual Consent Data Upload
+ * POST /api/audit/manual-consent/upload
+ * Body: { websiteUrl, scenarios: { reject, accept }, metadata }
+ *
+ * Purpose: Accept manual consent simulation data from headful Puppeteer script
+ */
+router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }), async (req, res) => {
+  let auditId = null;
+
+  try {
+    const { websiteUrl, scenarios, metadata } = req.body;
+
+    // Validation
+    if (!websiteUrl || !scenarios) {
+      return res.status(400).json({
+        error: 'Missing required fields: websiteUrl, scenarios',
+        code: 'E003'
+      });
+    }
+
+    if (!scenarios.reject) {
+      return res.status(400).json({
+        error: 'Missing reject scenario data',
+        code: 'E003'
+      });
+    }
+
+    console.log('');
+    console.log('📤 Manual consent data upload received');
+    console.log(`   Website: ${websiteUrl}`);
+    console.log(`   Reject scenario: ${scenarios.reject ? 'Yes' : 'No'}`);
+    console.log(`   Accept scenario: ${scenarios.accept ? 'Yes' : 'No'}`);
+
+    // Generate unique audit ID
+    const auditUid = `aud_${crypto.randomBytes(8).toString('hex')}`;
+
+    // Create audit record
+    const db = getDatabase();
+    const auditStmt = db.prepare(`
+      INSERT INTO audits (audit_uid, website_url, status, created_at, updated_at)
+      VALUES (?, ?, ?, datetime('now'), datetime('now'))
+    `);
+
+    const result = auditStmt.run(auditUid, websiteUrl, constants.AUDIT_STATUS.PROCESSING);
+    auditId = result.lastInsertRowid;
+
+    console.log(`   📝 Created audit: ${auditUid} (ID: ${auditId})`);
+
+    // ============================================
+    // PROCESS CONSENT SIMULATION DATA
+    // ============================================
+    const rejectScenario = scenarios.reject;
+    const acceptScenario = scenarios.accept;
+
+    // Extract cookies from scenarios
+    const cookiesBeforeConsent = rejectScenario.before.cookies || [];
+    const cookiesAfterReject = rejectScenario.after.cookies || [];
+    const cookiesAfterAccept = acceptScenario ? (acceptScenario.after.cookies || []) : [];
+
+    // Detect tracking cookies after reject (GDPR violation)
+    const trackingCookiesInReject = cookiesAfterReject.filter(c =>
+      c.name.includes('_ga') || c.name.includes('_gid') ||
+      c.name.includes('_fbp') || c.name.includes('_hjid') ||
+      c.name.includes('doubleclick') || c.name.includes('_utm')
+    );
+
+    // Click count comparison (from tracking data if available)
+    const clickImbalance = 0; // TODO: Extract from trackingData if implemented
+
+    // Build consent simulation results
+    const consentSimulation = {
+      reject: {
+        cookiesBeforeConsent: cookiesBeforeConsent.length,
+        cookiesAfterConsent: cookiesAfterReject.length,
+        clickCount: 1, // TODO: Extract from tracking data
+        clickPath: ['Manual interaction'],
+        trackingData: rejectScenario.after.trackingData
+      },
+      accept: acceptScenario ? {
+        cookiesBeforeConsent: acceptScenario.before.cookies.length,
+        cookiesAfterConsent: cookiesAfterAccept.length,
+        clickCount: 1, // TODO: Extract from tracking data
+        clickPath: ['Manual interaction'],
+        trackingData: acceptScenario.after.trackingData
+      } : null,
+      comparison: {
+        clickImbalance,
+        clickViolation: clickImbalance > 0,
+        cookiesBeforeConsent: cookiesBeforeConsent.length,
+        cookiesAfterReject: cookiesAfterReject.length,
+        cookiesAfterAccept: cookiesAfterAccept.length,
+        trackingCookiesInReject: trackingCookiesInReject.length,
+        cookieDifference: cookiesAfterAccept.length - cookiesAfterReject.length,
+        violations: []
+      }
+    };
+
+    // Detect violations
+    if (clickImbalance > 0) {
+      consentSimulation.comparison.violations.push({
+        type: 'click_imbalance',
+        severity: 'critical',
+        description: `Reject requires ${clickImbalance} more clicks than Accept`,
+        legal_basis: 'GDPR Article 7(3) - Withdrawal must be as easy as giving consent'
+      });
+    }
+
+    if (trackingCookiesInReject.length > 0) {
+      consentSimulation.comparison.violations.push({
+        type: 'tracking_after_reject',
+        severity: 'critical',
+        description: `${trackingCookiesInReject.length} tracking cookies found after rejection`,
+        cookies: trackingCookiesInReject.map(c => c.name),
+        legal_basis: 'ePrivacy Directive Article 5(3) - Consent required for non-essential cookies'
+      });
+    }
+
+    const cookieDifference = cookiesAfterAccept.length - cookiesAfterReject.length;
+    if (acceptScenario && cookieDifference <= 0) {
+      consentSimulation.comparison.violations.push({
+        type: 'no_consent_effect',
+        severity: 'high',
+        description: 'Accept and Reject produce same cookies - consent mechanism ineffective',
+        legal_basis: 'GDPR Article 4(11) - Consent must have real effect'
+      });
+    }
+
+    // ============================================
+    // SAVE TO DATABASE
+    // ============================================
+    const scanStmt = db.prepare(`
+      INSERT INTO scan_results (
+        audit_id,
+        cookies_json,
+        network_requests_json,
+        tracking_before_consent,
+        consent_simulation_json,
+        scan_duration_seconds,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+
+    scanStmt.run(
+      auditId,
+      JSON.stringify(cookiesAfterReject),
+      JSON.stringify([]), // Network requests not yet implemented
+      trackingCookiesInReject.length > 0 ? 1 : 0,
+      JSON.stringify(consentSimulation),
+      0
+    );
+
+    console.log(`   ✅ Consent simulation data saved to database`);
+
+    // ============================================
+    // UPDATE AUDIT STATUS
+    // ============================================
+    const updateStmt = db.prepare(`
+      UPDATE audits
+      SET status = ?,
+          completed_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    updateStmt.run(constants.AUDIT_STATUS.COMPLETED, auditId);
+
+    console.log(`   ✅ Audit ${auditUid} marked as completed`);
+    console.log('');
+
+    // Return success response
+    res.status(200).json({
+      success: true,
+      audit_id: auditUid,
+      message: 'Manual consent data uploaded successfully',
+      report_url: `/api/audit/${auditUid}/report`,
+      data: {
+        cookiesAfterReject: cookiesAfterReject.length,
+        cookiesAfterAccept: cookiesAfterAccept.length,
+        violations: consentSimulation.comparison.violations.length
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Manual consent upload failed:', error);
+
+    // Update audit status to failed if auditId exists
+    if (auditId) {
+      try {
+        const db = getDatabase();
+        const updateStmt = db.prepare(`
+          UPDATE audits
+          SET status = ?,
+              error_message = ?,
+              updated_at = datetime('now')
+          WHERE id = ?
+        `);
+        updateStmt.run(constants.AUDIT_STATUS.FAILED, error.message, auditId);
+      } catch (dbError) {
+        console.error('Failed to update audit status:', dbError);
+      }
+    }
+
+    res.status(500).json({
+      error: 'Failed to process manual consent data',
+      message: error.message,
+      code: 'E500'
+    });
+  }
+});
+
 module.exports = router;

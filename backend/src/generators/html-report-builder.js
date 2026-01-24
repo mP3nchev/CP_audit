@@ -426,6 +426,20 @@ function transformDataForTemplate(data) {
     fine_max: formatNumber(riskAssessment?.total_risk_max || 0),
     timeline_data_json: JSON.stringify(timelineData),
 
+    // Consent Mode V2
+    consent_mode_detected: data.consentModeStatus?.detected || false,
+    consent_mode_compliant: data.consentModeStatus?.compliant || false,
+    consent_mode_version: data.consentModeStatus?.version || 'Not detected',
+    consent_mode_method: data.consentModeStatus?.detectionMethod || 'N/A',
+    consent_mode_confidence: data.consentModeStatus?.confidence || 0,
+    consent_mode_has_updates: data.consentModeStatus?.hasUpdates || false,
+    consent_mode_ad_storage: data.consentModeStatus?.defaultStates?.ad_storage || null,
+    consent_mode_analytics_storage: data.consentModeStatus?.defaultStates?.analytics_storage || null,
+    consent_mode_ad_user_data: data.consentModeStatus?.defaultStates?.ad_user_data || null,
+    consent_mode_ad_personalization: data.consentModeStatus?.defaultStates?.ad_personalization || null,
+    consent_mode_issues: data.consentModeStatus?.issues || [],
+    consent_mode_ga4_present: data.consentModeStatus?.ga4Present || false,
+
     // Privacy Policy Analysis
     tier1_criteria: tier1.map(c => formatCriterion(c)),
     tier2_criteria: tier2.map(c => formatCriterion(c)),
