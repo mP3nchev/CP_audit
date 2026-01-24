@@ -128,7 +128,7 @@ async function createPage(browser) {
 }
 
 /**
- * Navigate to URL with retry logic and error screenshot capture
+ * Navigate to URL with DOM presence validation (NO networkidle strategies)
  * @param {Page} page - Puppeteer page
  * @param {string} url - URL to navigate to
  * @param {string} auditId - Optional audit ID for error screenshots
@@ -136,72 +136,85 @@ async function createPage(browser) {
  * @returns {Promise<Response>} Navigation response
  */
 async function navigateToUrl(page, url, auditId = 'unknown', options = {}) {
-  const defaultTimeout = options.timeout || 30000;
-  let response = null;
+  const timeout = options.timeout || 30000;
+  const startTime = Date.now();
 
   console.log(`🌐 Navigating to: ${url}`);
 
-  // STRATEGY 1: Try networkidle2 (optimal - waits for network to be quiet)
   try {
-    console.log(`   📡 Strategy 1: Trying networkidle2 (${defaultTimeout}ms timeout)...`);
-    response = await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: defaultTimeout,
-      ...options
+    // SINGLE STRATEGY: Use 'load' event only (no networkidle*)
+    const response = await page.goto(url, {
+      waitUntil: 'load',
+      timeout: timeout
     });
-    console.log(`   ✅ Navigation succeeded with networkidle2`);
-  } catch (error) {
-    console.log(`   ⚠️  networkidle2 failed: ${error.message}`);
 
-    // STRATEGY 2: Fallback to domcontentloaded (faster, less reliable)
-    try {
-      console.log(`   📡 Strategy 2: Falling back to domcontentloaded...`);
-      response = await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 20000,
-        ...options
-      });
-      console.log(`   ✅ Navigation succeeded with domcontentloaded`);
-    } catch (error2) {
-      console.log(`   ⚠️  domcontentloaded failed: ${error2.message}`);
+    const elapsed = Date.now() - startTime;
+    console.log(`   ✅ Navigation completed in ${elapsed}ms`);
 
-      // STRATEGY 3: Final fallback to 'load' (baseline)
-      try {
-        console.log(`   📡 Strategy 3: Final fallback to load event...`);
-        response = await page.goto(url, {
-          waitUntil: 'load',
-          timeout: 15000,
-          ...options
-        });
-        console.log(`   ✅ Navigation succeeded with load event`);
-      } catch (error3) {
-        console.error(`   ❌ All navigation strategies failed!`);
+    // HARD VALIDATION: Check actual page URL
+    const currentUrl = page.url();
 
-        // Capture screenshot for debugging
-        try {
-          const screenshot = await page.screenshot({ fullPage: false });
-          await saveErrorScreenshot(screenshot, auditId, 'navigation-failure');
-        } catch (screenshotError) {
-          console.error('Failed to capture error screenshot:', screenshotError);
-        }
-
-        throw error3;
-      }
+    // TERMINAL FAILURE #1: about:blank
+    if (currentUrl === 'about:blank') {
+      console.error(`   ❌ TERMINAL FAILURE: Page stuck on about:blank`);
+      throw new Error('Navigation failed - page is about:blank');
     }
+
+    // TERMINAL FAILURE #2: URL mismatch (redirect to error page, etc.)
+    const targetHost = new URL(url).hostname;
+    const currentHost = new URL(currentUrl).hostname;
+
+    if (!currentHost.includes(targetHost) && !targetHost.includes(currentHost)) {
+      console.error(`   ❌ TERMINAL FAILURE: URL mismatch`);
+      console.error(`      Expected: ${url}`);
+      console.error(`      Got: ${currentUrl}`);
+      throw new Error(`Navigation failed - URL mismatch (expected ${targetHost}, got ${currentHost})`);
+    }
+
+    // HARD VALIDATION: Check HTTP status
+    if (!response) {
+      throw new Error('No response received from navigation');
+    }
+
+    const status = response.status();
+    console.log(`   📊 HTTP Status: ${status}`);
+
+    if (status >= 400) {
+      throw new Error(`HTTP ${status} error`);
+    }
+
+    // HARD VALIDATION: Check DOM loaded
+    const domReady = await page.evaluate(() => {
+      return {
+        readyState: document.readyState,
+        hasBody: !!document.body,
+        bodyChildCount: document.body?.children.length || 0
+      };
+    });
+
+    console.log(`   🔍 DOM State:`, domReady);
+
+    if (!domReady.hasBody || domReady.bodyChildCount === 0) {
+      throw new Error('DOM not loaded - body is empty');
+    }
+
+    console.log(`✅ Navigation VALIDATED - page is ready`);
+    return response;
+
+  } catch (error) {
+    console.error(`   ❌ Navigation FAILED: ${error.message}`);
+
+    // Capture screenshot for debugging
+    try {
+      const screenshot = await page.screenshot({ fullPage: false });
+      await saveErrorScreenshot(screenshot, auditId, 'navigation-failure');
+    } catch (screenshotError) {
+      console.error('Failed to capture error screenshot:', screenshotError);
+    }
+
+    // RE-THROW - no fallback, no retry, HARD FAILURE
+    throw error;
   }
-
-  if (!response) {
-    throw new Error('No response received from page');
-  }
-
-  const status = response.status();
-  console.log(`✅ Page loaded with status: ${status}`);
-
-  if (status >= 400) {
-    throw new Error(`HTTP ${status} error`);
-  }
-
-  return response;
 }
 
 /**

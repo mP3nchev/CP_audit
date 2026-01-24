@@ -799,31 +799,13 @@ async function runRejectScenario(websiteUrl) {
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
-    // NAVIGATION is BEST-EFFORT, NOT a prerequisite!
-    // Even if navigation fails/timeout-s, consent UI may still be available
-    console.log(`   📡 Attempting navigation (best-effort, NOT blocking)...`);
-    try {
-      await navigateToUrl(page, websiteUrl, 'reject-scenario', {
-        waitUntil: 'load',
-        timeout: 15000
-      });
-      console.log(`   ✅ Navigation completed successfully`);
-    } catch (navError) {
-      console.log(`   ⚠️  Navigation failed: ${navError.message}`);
-      console.log(`   ➡️  Continuing anyway - consent UI may still be available...`);
-      // DO NOT throw - navigation failure is diagnostic, NOT stopping condition!
-    }
+    // NAVIGATION - BLOCKING (consent simulation REQUIRES valid page)
+    console.log(`   📡 Navigating to page (hard requirement)...`);
+    await navigateToUrl(page, websiteUrl, 'reject-scenario', { timeout: 30000 });
+    console.log(`   ✅ Navigation successful - page is valid`);
 
-    // DIAGNOSTIC: Verify actual page URL and content
+    // DIAGNOSTIC: Verify DOM content
     const DEBUG = process.env.DEBUG_CONSENT === 'true';
-    const currentUrl = page.url();
-    console.log(`   🌐 Current page URL: ${currentUrl}`);
-
-    if (currentUrl !== websiteUrl && !currentUrl.startsWith(websiteUrl)) {
-      console.log(`   ⚠️  WARNING: Page URL mismatch! Expected ${websiteUrl}, got ${currentUrl}`);
-    }
-
-    // DIAGNOSTIC: Check if consent buttons exist in DOM
     const domCheck = await page.evaluate(() => {
       const html = document.documentElement.outerHTML;
       return {
@@ -840,10 +822,10 @@ async function runRejectScenario(websiteUrl) {
       console.log(`   📸 Screenshot saved (after navigation)`);
     }
 
-    // STATE CHECK: Wait for consent UI to be ready (REGARDLESS of navigation outcome!)
+    // STATE CHECK: Wait for consent UI to be ready (HARD DEADLINE: 30s)
     const uiReady = await waitForConsentUIReady(page, 30000);
     if (!uiReady) {
-      throw new Error('Consent UI never reached ready state - application not functional');
+      throw new Error('TERMINAL FAILURE: Consent UI never reached ready state after 30s');
     }
 
     // Extract cookies BEFORE any interaction (NO delay - immediate state snapshot)
@@ -978,31 +960,13 @@ async function runAcceptScenario(websiteUrl) {
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
-    // NAVIGATION is BEST-EFFORT, NOT a prerequisite!
-    // Even if navigation fails/timeout-s, consent UI may still be available
-    console.log(`   📡 Attempting navigation (best-effort, NOT blocking)...`);
-    try {
-      await navigateToUrl(page, websiteUrl, 'accept-scenario', {
-        waitUntil: 'load',
-        timeout: 15000
-      });
-      console.log(`   ✅ Navigation completed successfully`);
-    } catch (navError) {
-      console.log(`   ⚠️  Navigation failed: ${navError.message}`);
-      console.log(`   ➡️  Continuing anyway - consent UI may still be available...`);
-      // DO NOT throw - navigation failure is diagnostic, NOT stopping condition!
-    }
+    // NAVIGATION - BLOCKING (consent simulation REQUIRES valid page)
+    console.log(`   📡 Navigating to page (hard requirement)...`);
+    await navigateToUrl(page, websiteUrl, 'accept-scenario', { timeout: 30000 });
+    console.log(`   ✅ Navigation successful - page is valid`);
 
-    // DIAGNOSTIC: Verify actual page URL and content
+    // DIAGNOSTIC: Verify DOM content
     const DEBUG = process.env.DEBUG_CONSENT === 'true';
-    const currentUrl = page.url();
-    console.log(`   🌐 Current page URL: ${currentUrl}`);
-
-    if (currentUrl !== websiteUrl && !currentUrl.startsWith(websiteUrl)) {
-      console.log(`   ⚠️  WARNING: Page URL mismatch! Expected ${websiteUrl}, got ${currentUrl}`);
-    }
-
-    // DIAGNOSTIC: Check if consent buttons exist in DOM
     const domCheck = await page.evaluate(() => {
       const html = document.documentElement.outerHTML;
       return {
@@ -1019,10 +983,10 @@ async function runAcceptScenario(websiteUrl) {
       console.log(`   📸 Screenshot saved (after navigation)`);
     }
 
-    // STATE CHECK: Wait for consent UI to be ready (REGARDLESS of navigation outcome!)
+    // STATE CHECK: Wait for consent UI to be ready (HARD DEADLINE: 30s)
     const uiReady = await waitForConsentUIReady(page, 30000);
     if (!uiReady) {
-      throw new Error('Consent UI never reached ready state - application not functional');
+      throw new Error('TERMINAL FAILURE: Consent UI never reached ready state after 30s');
     }
 
     // Extract cookies BEFORE any interaction (immediate snapshot)
