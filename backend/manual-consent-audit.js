@@ -69,7 +69,7 @@ async function setupCDPMonitoring(page) {
 
   // Enable CDP domains
   await client.send('Network.enable');
-  await client.send('Storage.enable');
+  // Note: Storage.enable removed - not needed for cookie capture (using Network.getAllCookies instead)
 
   const monitoringData = {
     cookies: [],
