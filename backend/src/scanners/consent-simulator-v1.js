@@ -16,6 +16,7 @@ const { launchBrowser, createPage, closeBrowser } = require('./puppeteer-setup')
 const { extractCookies } = require('./cookie-extractor');
 const readline = require('readline');
 const constants = require('../config/constants');
+const db = require('../database/db');
 
 /**
  * Tracking domains for network filtering (v1)
@@ -275,28 +276,83 @@ async function runScenario(browser, websiteUrl, scenarioType) {
 }
 
 /**
+ * Check if manual consent data has been uploaded for this audit
+ * @param {string} auditId - Audit ID
+ * @param {string} websiteUrl - Website URL
+ * @returns {Promise<Object|null>} Consent data or null
+ */
+async function checkForManualConsentData(auditId, websiteUrl) {
+  if (!auditId) return null;
+
+  try {
+    const result = db.prepare(`
+      SELECT consent_simulation_json, created_at
+      FROM scan_results
+      WHERE audit_id = ? AND consent_simulation_json IS NOT NULL
+      LIMIT 1
+    `).get(auditId);
+
+    if (result && result.consent_simulation_json) {
+      return {
+        consentSimulation: JSON.parse(result.consent_simulation_json),
+        uploadedAt: result.created_at
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Error checking for manual consent data: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Run human-assisted consent simulation (CANONICAL v1.0)
  * @param {string} websiteUrl - URL to test
+ * @param {string} auditId - Optional audit ID for Railway integration
  * @returns {Promise<Object>} Simulation results
  */
-async function runAssistedConsentSimulation(websiteUrl) {
+async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
   const startTime = Date.now();
 
   // Check if running on Railway (no GUI available)
   if (constants.IS_RAILWAY && constants.CONSENT_MODE === 'assisted') {
+    // Check if manual consent data already uploaded for this audit
+    const existingData = await checkForManualConsentData(auditId, websiteUrl);
+
+    if (existingData) {
+      console.log('');
+      console.log('✅ Using pre-uploaded manual consent simulation data');
+      console.log(`   Upload time: ${existingData.uploadedAt}`);
+      console.log('');
+
+      return existingData.consentSimulation;
+    }
+
+    // No data yet - need to wait for manual upload
     console.log('');
-    console.log('⚠️  === CONSENT SIMULATION SKIPPED ===');
+    console.log('⏸️  === WAITING FOR MANUAL CONSENT SIMULATION ===');
     console.log('   Reason: Assisted mode requires local execution (GUI needed)');
     console.log('   Environment: Railway (no display available)');
-    console.log('   To run consent simulation, execute audit locally with GUI');
+    console.log('');
+    console.log('📋 INSTRUCTIONS:');
+    console.log('   1. Open a terminal on your LOCAL machine (Windows/Mac/Linux)');
+    console.log(`   2. Run: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${process.env.PUBLIC_URL || 'https://your-railway-url.up.railway.app'}`);
+    console.log('   3. Complete the Reject + Accept scenarios');
+    console.log('   4. Data will be uploaded automatically');
+    console.log('   5. This audit will resume automatically after upload');
     console.log('');
 
     return {
-      skipped: true,
-      reason: 'Assisted consent simulation requires local execution with GUI',
+      waiting: true,
+      skipped: false,
+      reason: 'Waiting for manual consent simulation upload from local machine',
       environment: 'Railway',
-      rejectScenario: { success: false, skipped: true },
-      acceptScenario: { success: false, skipped: true },
+      auditId: auditId,
+      websiteUrl: websiteUrl,
+      instructions: `Run locally: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${process.env.PUBLIC_URL}`,
+      rejectScenario: { success: false, pending: true },
+      acceptScenario: { success: false, pending: true },
       comparison: null
     };
   }

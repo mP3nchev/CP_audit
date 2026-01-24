@@ -490,9 +490,12 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     updateProgress(auditId, 16, 17, 'Consent simulation (human-assisted)...', startTime);
 
     try {
-      consentSimulation = await runAssistedConsentSimulation(websiteUrl);
+      consentSimulation = await runAssistedConsentSimulation(websiteUrl, auditId);
 
-      if (consentSimulation.skipped) {
+      if (consentSimulation.waiting) {
+        console.log(`   ⏸️  Consent simulation waiting: ${consentSimulation.reason}`);
+        console.log(`   📋 Instructions: ${consentSimulation.instructions}`);
+      } else if (consentSimulation.skipped) {
         console.log(`   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`);
       } else {
         console.log(`   ✅ Consent simulation completed in ${consentSimulation.duration}s`);
