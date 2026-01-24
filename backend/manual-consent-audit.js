@@ -235,6 +235,10 @@ async function runRejectScenario(browser, websiteUrl) {
   });
   console.log(`   ✅ Page loaded`);
 
+  // Wait for dynamic content to stabilize (cookie banner, overlays, etc.)
+  console.log(`   ⏳ Waiting 5 seconds for UI elements to stabilize...`);
+  await new Promise(resolve => setTimeout(resolve, 5000));
+
   // Capture BEFORE consent
   const beforeSnapshot = await captureStateSnapshot(page, client, 'before_interaction');
   console.log(`   🍪 Cookies before interaction: ${beforeSnapshot.cookies.length}`);
@@ -242,8 +246,13 @@ async function runRejectScenario(browser, websiteUrl) {
   // PAUSE for user interaction (REJECT)
   console.log('');
   console.log('   ⏸️  PAUSE: Please interact with the cookie banner');
-  console.log('   👉 Click "REJECT ALL" (or navigate to settings and reject)');
-  console.log('   ⏳ After clicking, wait 3 seconds for cookies to load');
+  console.log('   ');
+  console.log('   🎯 INSTRUCTIONS:');
+  console.log('   1. Look at the Chrome window - do you see the cookie banner?');
+  console.log('   2. If banner disappeared, refresh the page (F5) and wait');
+  console.log('   3. Click "REJECT ALL" or "Cookie Settings" → reject categories');
+  console.log('   4. Wait 3 seconds after clicking');
+  console.log('   5. Come back to this terminal and press ENTER');
   console.log('');
   await askQuestion('   Press ENTER when you have rejected cookies... ');
 
@@ -288,6 +297,10 @@ async function runAcceptScenario(browser, websiteUrl) {
   });
   console.log(`   ✅ Page loaded`);
 
+  // Wait for dynamic content to stabilize (cookie banner, overlays, etc.)
+  console.log(`   ⏳ Waiting 5 seconds for UI elements to stabilize...`);
+  await new Promise(resolve => setTimeout(resolve, 5000));
+
   // Capture BEFORE consent
   const beforeSnapshot = await captureStateSnapshot(page, client, 'before_interaction');
   console.log(`   🍪 Cookies before interaction: ${beforeSnapshot.cookies.length}`);
@@ -295,8 +308,13 @@ async function runAcceptScenario(browser, websiteUrl) {
   // PAUSE for user interaction (ACCEPT)
   console.log('');
   console.log('   ⏸️  PAUSE: Please interact with the cookie banner');
-  console.log('   👉 Click "ACCEPT ALL"');
-  console.log('   ⏳ After clicking, wait 3 seconds for cookies to load');
+  console.log('   ');
+  console.log('   🎯 INSTRUCTIONS:');
+  console.log('   1. Look at the Chrome window - do you see the cookie banner?');
+  console.log('   2. If banner disappeared, refresh the page (F5) and wait');
+  console.log('   3. Click "ACCEPT ALL"');
+  console.log('   4. Wait 3 seconds after clicking');
+  console.log('   5. Come back to this terminal and press ENTER');
   console.log('');
   await askQuestion('   Press ENTER when you have accepted cookies... ');
 
