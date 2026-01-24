@@ -1130,6 +1130,144 @@
             </div>
         </div>
 
+        <!-- ===== 5.5 HUMAN-ASSISTED CONSENT ANALYSIS ===== -->
+        {{#if consent_simulation_enabled}}
+        <div class="card">
+            <div class="card-header" onclick="toggleSection('consent-simulation')">
+                <div class="card-header-left">
+                    <svg class="card-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                        <h2 class="card-title">Human-Assisted Consent Analysis</h2>
+                        <p class="card-description">Real runtime behavior observed after Reject vs Accept</p>
+                    </div>
+                </div>
+                <svg class="chevron expanded" id="chevron-consent-simulation" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </div>
+            <div class="card-content" id="content-consent-simulation">
+                <div style="margin-bottom: 2rem; padding: 1rem; background: #f0f9ff; border-left: 4px solid #3b82f6; border-radius: 4px;">
+                    <p style="margin: 0; color: #1e40af; font-weight: 500;">
+                        <strong>Methodology:</strong> Consent behavior was verified via a human-assisted browser session observing real runtime behavior after Reject and Accept actions.
+                        This approach ensures accurate detection of tracking that may be blocked by automated systems.
+                    </p>
+                </div>
+
+                <!-- Summary Metrics -->
+                <div class="risk-cards" style="margin-bottom: 2rem;">
+                    <div class="risk-card risk-card-medium">
+                        <div class="risk-card-header">
+                            <div class="risk-category">After Reject</div>
+                            <div class="risk-percentage">{{consent_simulation_reject_cookies}} cookies</div>
+                        </div>
+                        <div class="risk-description">{{consent_simulation_reject_requests}} tracking requests detected</div>
+                    </div>
+
+                    <div class="risk-card risk-card-high">
+                        <div class="risk-card-header">
+                            <div class="risk-category">After Accept</div>
+                            <div class="risk-percentage">{{consent_simulation_accept_cookies}} cookies</div>
+                        </div>
+                        <div class="risk-description">{{consent_simulation_accept_requests}} tracking requests detected</div>
+                    </div>
+
+                    <div class="risk-card {{#if consent_simulation_new_cookies}}risk-card-critical{{else}}risk-card-low{{/if}}">
+                        <div class="risk-card-header">
+                            <div class="risk-category">New After Accept</div>
+                            <div class="risk-percentage">+{{consent_simulation_new_cookies}}</div>
+                        </div>
+                        <div class="risk-description">
+                            {{#if consent_simulation_new_cookies}}
+                                Additional cookies loaded after accepting consent
+                            {{else}}
+                                No additional cookies detected
+                            {{/if}}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- New Cookies Table (if any) -->
+                {{#if consent_simulation_new_cookies}}
+                <div style="margin-top: 2rem;">
+                    <h3 style="margin-bottom: 1rem; color: #1e293b; font-size: 1.1rem;">Cookies Loaded After Accept</h3>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Cookie Name</th>
+                                    <th>Domain</th>
+                                    <th>Category</th>
+                                    <th>Purpose</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{#each consent_simulation_new_cookies_list}}
+                                <tr>
+                                    <td><code>{{name}}</code></td>
+                                    <td>{{domain}}</td>
+                                    <td><span class="badge badge-{{category}}">{{category}}</span></td>
+                                    <td>{{purpose}}</td>
+                                </tr>
+                                {{/each}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {{/if}}
+
+                <!-- New Tracking Domains -->
+                {{#if consent_simulation_new_domains.length}}
+                <div style="margin-top: 2rem;">
+                    <h3 style="margin-bottom: 1rem; color: #1e293b; font-size: 1.1rem;">New Tracking Domains After Accept</h3>
+                    <div style="padding: 1rem; background: #fef2f2; border-radius: 4px;">
+                        <ul style="margin: 0; padding-left: 1.5rem;">
+                            {{#each consent_simulation_new_domains}}
+                            <li style="margin: 0.5rem 0; color: #991b1b;">{{this}}</li>
+                            {{/each}}
+                        </ul>
+                    </div>
+                </div>
+                {{/if}}
+
+                <!-- Duration Info -->
+                <div style="margin-top: 2rem; padding: 0.75rem; background: #f9fafb; border-radius: 4px; font-size: 0.9rem; color: #6b7280;">
+                    Analysis completed in {{consent_simulation_duration}} seconds via human-assisted browser session.
+                </div>
+            </div>
+        </div>
+        {{/if}}
+
+        {{#if consent_simulation_skipped}}
+        <div class="card">
+            <div class="card-header">
+                <div class="card-header-left">
+                    <svg class="card-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div>
+                        <h2 class="card-title">Human-Assisted Consent Analysis</h2>
+                        <p class="card-description">Skipped - Requires local execution</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card-content">
+                <div style="padding: 1.5rem; background: #fffbeb; border: 2px solid #fbbf24; border-radius: 4px;">
+                    <p style="margin: 0 0 1rem 0; color: #92400e; font-weight: 500;">
+                        ⚠️ Consent simulation was skipped
+                    </p>
+                    <p style="margin: 0; color: #78350f;">
+                        <strong>Reason:</strong> {{consent_simulation_skip_reason}}
+                    </p>
+                    <p style="margin: 1rem 0 0 0; color: #78350f; font-size: 0.9rem;">
+                        To run consent simulation, execute the audit locally with a GUI environment where human interaction is possible.
+                    </p>
+                </div>
+            </div>
+        </div>
+        {{/if}}
+
         <!-- ===== 6. RISK ASSESSMENT ===== -->
         <div class="card">
             <div class="card-header" onclick="toggleSection('risk')">

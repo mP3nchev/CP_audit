@@ -42,8 +42,8 @@ const {
 } = require('../analyzers/cookie-banner-checker');
 
 const {
-  runConsentSimulation
-} = require('./consent-simulator');
+  runAssistedConsentSimulation
+} = require('./consent-simulator-v1');
 
 const {
   auditConsentMode
@@ -482,34 +482,37 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log('🧹 Step 15: Cleaning up...');
     await closeBrowser(browser);
 
-    // Step 16: Consent Simulation (Accept vs Reject scenarios)
+    // Step 16: Consent Simulation (Human-Assisted Accept vs Reject)
     let consentSimulation = null;
-    const enableConsentSim = process.env.ENABLE_CONSENT_SIMULATION !== 'false'; // Enabled by default
+    stepStartTime = Date.now();
+    console.log('');
+    console.log('🎭 Step 16: Running human-assisted consent simulation...');
+    updateProgress(auditId, 16, 17, 'Consent simulation (human-assisted)...', startTime);
 
-    if (enableConsentSim) {
-      stepStartTime = Date.now();
-      console.log('');
-      console.log('🎭 Step 16: Running Accept/Reject consent simulation...');
-      updateProgress(auditId, 16, 17, 'Running consent simulation (Accept vs Reject)...', startTime);
-      try {
-        consentSimulation = await runConsentSimulation(websiteUrl);
-        console.log(`   ✅ Consent simulation completed in ${Date.now() - stepStartTime}ms`);
-        console.log(`   🖱️  Click imbalance: ${consentSimulation.comparison.clickImbalance} extra clicks to reject`);
-        console.log(`   ⚠️  Violations found: ${consentSimulation.comparison.violations.length}`);
+    try {
+      consentSimulation = await runAssistedConsentSimulation(websiteUrl);
 
-        // Add consent simulation results to main results
-        results.consentSimulation = consentSimulation;
-      } catch (error) {
-        console.error(`   ⚠️  Consent simulation failed: ${error.message}`);
-        // Don't fail the entire scan if simulation fails
-        results.consentSimulation = {
-          error: error.message,
-          success: false
-        };
+      if (consentSimulation.skipped) {
+        console.log(`   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`);
+      } else {
+        console.log(`   ✅ Consent simulation completed in ${consentSimulation.duration}s`);
+        if (consentSimulation.comparison) {
+          console.log(`   🍪 New cookies after Accept: ${consentSimulation.comparison.cookies.newAfterAccept.length}`);
+          console.log(`   📡 New tracking domains after Accept: ${consentSimulation.comparison.network.newDomainsAfterAccept.length}`);
+        }
       }
-    } else {
-      console.log('');
-      console.log('⏭️  Step 16: Consent simulation skipped (ENABLE_CONSENT_SIMULATION=false)');
+
+      // Add consent simulation results to main results
+      results.consentSimulation = consentSimulation;
+    } catch (error) {
+      console.error(`   ⚠️  Consent simulation failed: ${error.message}`);
+      // Don't fail the entire scan if simulation fails
+      results.consentSimulation = {
+        error: error.message,
+        skipped: false,
+        rejectScenario: { success: false },
+        acceptScenario: { success: false }
+      };
     }
 
     // Step 17: Calculate overall compliance score (Problem 7)
@@ -575,6 +578,7 @@ async function saveScanResults(auditId, results) {
     const columnNames = tableInfo.map(col => col.name);
     const hasComplianceScore = columnNames.includes('compliance_score_json');
     const hasRequestCategorization = columnNames.includes('request_categorization_json');
+    const hasConsentSimulation = columnNames.includes('consent_simulation_json');
 
     // Build dynamic INSERT statement based on available columns
     let insertColumns = `
@@ -613,6 +617,12 @@ async function saveScanResults(auditId, results) {
       insertColumns += ',\n      request_categorization_json';
       insertPlaceholders += ', ?';
       insertValues.push(JSON.stringify(results.trackingSummary || {}));
+    }
+
+    if (hasConsentSimulation) {
+      insertColumns += ',\n      consent_simulation_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.consentSimulation || {}));
     }
 
     const stmt = db.prepare(`

@@ -26,6 +26,10 @@ module.exports = {
   PUPPETEER_TIMEOUT_MS: parseInt(process.env.PUPPETEER_TIMEOUT_MS) || 120000,
   PUPPETEER_HEADLESS: process.env.PUPPETEER_HEADLESS === 'true',
 
+  // Consent Simulation
+  CONSENT_MODE: process.env.CONSENT_MODE || 'assisted', // Only 'assisted' supported in v1
+  IS_RAILWAY: !!process.env.RAILWAY_ENVIRONMENT,
+
   // Screenshots (feature flag)
   ENABLE_SCREENSHOTS: process.env.ENABLE_SCREENSHOTS === 'true',
   SCREENSHOT_TIMEOUT_MS: parseInt(process.env.SCREENSHOT_TIMEOUT_MS) || 20000,

@@ -83,6 +83,8 @@ async function gatherAuditData(auditUid) {
     JSON.parse(scanResults.request_categorization_json) : null;
   const timelineData = scanResults?.timeline_json ?
     JSON.parse(scanResults.timeline_json) : null;
+  const consentSimulation = scanResults?.consent_simulation_json ?
+    JSON.parse(scanResults.consent_simulation_json) : null;
 
   return {
     audit,
@@ -94,6 +96,7 @@ async function gatherAuditData(auditUid) {
     complianceScore,
     requestCategorization,
     timelineData,
+    consentSimulation,
     privacyAnalysis,
     cookieComparison: cookieComparison ? {
       declared: JSON.parse(cookieComparison.declared_cookies_json || '[]'),
@@ -234,7 +237,8 @@ function transformDataForTemplate(data) {
     privacyAnalysis,
     cookieComparison,
     riskAssessment,
-    complianceScore
+    complianceScore,
+    consentSimulation
   } = data;
 
   // 1. Executive Summary - Aggregate ALL critical violations
@@ -492,7 +496,26 @@ function transformDataForTemplate(data) {
     suspicious_tracking_count: data.requestCategorization?.categoryB?.count || 0,
 
     // Recommendations
-    recommendations: recommendations
+    recommendations: recommendations,
+
+    // Human-Assisted Consent Simulation (v1.0)
+    consent_simulation_enabled: consentSimulation && !consentSimulation.skipped,
+    consent_simulation_skipped: consentSimulation?.skipped || false,
+    consent_simulation_skip_reason: consentSimulation?.reason || null,
+    consent_simulation_error: consentSimulation?.error || null,
+    consent_simulation_reject_cookies: consentSimulation?.rejectScenario?.cookies || 0,
+    consent_simulation_accept_cookies: consentSimulation?.acceptScenario?.cookies || 0,
+    consent_simulation_new_cookies: consentSimulation?.comparison?.cookies?.newAfterAccept?.length || 0,
+    consent_simulation_new_cookies_list: consentSimulation?.comparison?.cookies?.newAfterAccept?.slice(0, 10).map(c => ({
+      name: c.name,
+      domain: c.domain,
+      category: c.category,
+      purpose: c.purpose
+    })) || [],
+    consent_simulation_reject_requests: consentSimulation?.rejectScenario?.networkRequests || 0,
+    consent_simulation_accept_requests: consentSimulation?.acceptScenario?.networkRequests || 0,
+    consent_simulation_new_domains: consentSimulation?.comparison?.network?.newDomainsAfterAccept || [],
+    consent_simulation_duration: consentSimulation?.duration || 0
   };
 }
 
