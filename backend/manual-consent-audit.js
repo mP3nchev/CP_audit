@@ -374,15 +374,7 @@ async function runRejectScenario(browser, websiteUrl) {
   const afterSnapshot = await captureStateSnapshot(page, client, 'after_reject');
   console.log(`   🍪 Cookies after reject: ${afterSnapshot.cookies.length}`);
 
-  // Clean up CDP session and page
-  try {
-    if (client && !client._closed) {
-      await client.detach();
-    }
-  } catch (err) {
-    console.log(`   ℹ️  CDP session already closed (page may have reloaded)`);
-  }
-
+  // Clean up page (CDP session auto-closes with page)
   try {
     await page.close();
   } catch (err) {
@@ -535,15 +527,7 @@ async function runAcceptScenario(browser, websiteUrl) {
   const afterSnapshot = await captureStateSnapshot(page, client, 'after_accept');
   console.log(`   🍪 Cookies after accept: ${afterSnapshot.cookies.length}`);
 
-  // Clean up CDP session and page
-  try {
-    if (client && !client._closed) {
-      await client.detach();
-    }
-  } catch (err) {
-    console.log(`   ℹ️  CDP session already closed (page may have reloaded)`);
-  }
-
+  // Clean up page (CDP session auto-closes with page)
   try {
     await page.close();
   } catch (err) {
