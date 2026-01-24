@@ -1,4 +1,15 @@
 const noybViolations = require('../config/noyb-violations.json');
+const {
+  initDebugSession,
+  logViolationCheck,
+  saveScreenshot,
+  logElementDetails,
+  saveSummary,
+  logError
+} = require('../utils/violation-debug-logger');
+
+// Debug mode flag (set via environment variable DEBUG_VIOLATIONS=true)
+const DEBUG_VIOLATIONS = process.env.DEBUG_VIOLATIONS === 'true';
 
 /**
  * Multi-language keyword sets for cookie banner detection
@@ -26,18 +37,28 @@ function findElementByTextHybrid(elements, keywords) {
 /**
  * Analyze cookie banner for noyb 8-point checklist violations
  * @param {Page} page - Puppeteer page
+ * @param {string} auditId - Audit ID for debug logging
  * @returns {Promise<Object>} Violations detected
  */
-async function analyzeCookieBanner(page) {
+async function analyzeCookieBanner(page, auditId = null) {
+  let debugSessionId = null;
+
   try {
     console.log('🔍 Analyzing cookie banner for noyb violations...');
 
+    // Initialize debug session if enabled
+    if (DEBUG_VIOLATIONS && auditId) {
+      debugSessionId = await initDebugSession(auditId);
+      console.log(`📝 Debug logging enabled: ${debugSessionId}`);
+    }
+
     const violations = [];
     const passedChecks = [];
+    const debugLogs = [];
 
     // Check each violation type
     for (const violation of noybViolations.violations) {
-      const result = await checkViolation(page, violation);
+      const result = await checkViolation(page, violation, debugSessionId);
 
       if (result.detected) {
         violations.push({
@@ -56,6 +77,22 @@ async function analyzeCookieBanner(page) {
         });
         console.log(`  ✅ ${violation.id.toUpperCase()}: Passed`);
       }
+
+      // Save debug log for this violation
+      if (DEBUG_VIOLATIONS && debugSessionId) {
+        debugLogs.push({
+          violationType: violation.id,
+          detected: result.detected,
+          evidence: result.evidence
+        });
+
+        await logViolationCheck(debugSessionId, violation.id, {
+          detected: result.detected,
+          violationName: violation.name,
+          severity: violation.severity,
+          evidence: result.evidence
+        });
+      }
     }
 
     const totalChecks = noybViolations.violations.length;
@@ -65,6 +102,18 @@ async function analyzeCookieBanner(page) {
 
     console.log(`✅ Banner analysis complete: ${passedCount}/${totalChecks} checks passed (${compliancePercentage}%)`);
 
+    // Save debug summary
+    if (DEBUG_VIOLATIONS && debugSessionId) {
+      await saveSummary(debugSessionId, {
+        totalChecks,
+        passedCount,
+        violationCount,
+        compliancePercentage,
+        violations: violations.map(v => v.id),
+        passedChecks: passedChecks.map(c => c.id)
+      });
+    }
+
     return {
       violations,
       passedChecks,
@@ -72,10 +121,20 @@ async function analyzeCookieBanner(page) {
       passedCount,
       violationCount,
       compliancePercentage,
-      hasCriticalViolations: violations.some(v => v.severity === 'critical')
+      hasCriticalViolations: violations.some(v => v.severity === 'critical'),
+      debugSessionId: DEBUG_VIOLATIONS ? debugSessionId : null
     };
   } catch (error) {
     console.error('❌ Cookie banner analysis failed:', error.message);
+
+    // Log error if debug enabled
+    if (DEBUG_VIOLATIONS && debugSessionId) {
+      await logError(debugSessionId, 'banner_analysis', error, {
+        auditId,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     throw error;
   }
 }
@@ -84,28 +143,53 @@ async function analyzeCookieBanner(page) {
  * Check individual violation
  * @param {Page} page - Puppeteer page
  * @param {Object} violation - Violation definition
+ * @param {string} debugSessionId - Debug session ID (optional)
  * @returns {Promise<Object>} Detection result
  */
-async function checkViolation(page, violation) {
-  switch (violation.id) {
-    case 'type_a':
-      return checkNoRejectButton(page, violation);
-    case 'type_b':
-      return checkPreTickedBoxes(page, violation);
-    case 'type_c':
-      return checkDeceptiveLinkDesign(page, violation);
-    case 'type_d':
-      return checkDeceptiveButtonColors(page, violation);
-    case 'type_e':
-      return checkDeceptiveButtonContrast(page, violation);
-    case 'type_h':
-      return checkLegitimateInterestForAds(page, violation);
-    case 'type_i':
-      return checkMisclassifiedEssentialCookies(page, violation);
-    case 'type_k':
-      return checkDifficultConsentWithdrawal(page, violation);
-    default:
-      return { detected: false, evidence: null };
+async function checkViolation(page, violation, debugSessionId = null) {
+  try {
+    let result;
+
+    switch (violation.id) {
+      case 'type_a':
+        result = await checkNoRejectButton(page, violation, debugSessionId);
+        break;
+      case 'type_b':
+        result = await checkPreTickedBoxes(page, violation, debugSessionId);
+        break;
+      case 'type_c':
+        result = await checkDeceptiveLinkDesign(page, violation, debugSessionId);
+        break;
+      case 'type_d':
+        result = await checkDeceptiveButtonColors(page, violation, debugSessionId);
+        break;
+      case 'type_e':
+        result = await checkDeceptiveButtonContrast(page, violation, debugSessionId);
+        break;
+      case 'type_h':
+        result = await checkLegitimateInterestForAds(page, violation, debugSessionId);
+        break;
+      case 'type_i':
+        result = await checkMisclassifiedEssentialCookies(page, violation, debugSessionId);
+        break;
+      case 'type_k':
+        result = await checkDifficultConsentWithdrawal(page, violation, debugSessionId);
+        break;
+      default:
+        result = { detected: false, evidence: null };
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`  ❌ ${violation.id} check failed:`, error.message);
+
+    if (DEBUG_VIOLATIONS && debugSessionId) {
+      await logError(debugSessionId, violation.id, error, {
+        violationName: violation.name
+      });
+    }
+
+    return { detected: false, evidence: null, error: error.message };
   }
 }
 

@@ -858,6 +858,101 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Google Consent Mode V2 Status -->
+                {{#if consent_mode_detected}}
+                <div style="margin-top: 2rem; padding: 1.5rem; background: {{#if consent_mode_compliant}}#f0fdf4{{else}}#fef2f2{{/if}}; border: 2px solid {{#if consent_mode_compliant}}#86efac{{else}}#fca5a5{{/if}}; border-radius: 8px;">
+                    <h3 style="margin-bottom: 1rem; font-size: 1rem; font-weight: 600; color: {{#if consent_mode_compliant}}#166534{{else}}#991b1b{{/if}};">
+                        {{#if consent_mode_compliant}}✅{{else}}⚠️{{/if}} Google Consent Mode V2 - {{#if consent_mode_compliant}}Compliant{{else}}Issues Found{{/if}}
+                    </h3>
+                    <p style="color: {{#if consent_mode_compliant}}#15803d{{else}}#7f1d1d{{/if}}; font-size: 0.875rem; margin-bottom: 1rem;">
+                        {{#if consent_mode_compliant}}
+                        Google Consent Mode V2 is properly configured with GDPR-compliant defaults.
+                        {{else}}
+                        Google Consent Mode was detected but configuration issues were found.
+                        {{/if}}
+                    </p>
+
+                    <div class="metrics-grid" style="margin-bottom: 1rem;">
+                        <div class="metric-card" style="background: white;">
+                            <div class="metric-label">Version</div>
+                            <div class="metric-value" style="font-size: 1rem;">{{consent_mode_version}}</div>
+                        </div>
+                        <div class="metric-card" style="background: white;">
+                            <div class="metric-label">Detection Method</div>
+                            <div style="font-size: 0.8rem; color: var(--text-secondary);">{{consent_mode_method}}</div>
+                        </div>
+                        <div class="metric-card" style="background: white;">
+                            <div class="metric-label">Confidence</div>
+                            <div class="metric-value" style="font-size: 1rem;">{{consent_mode_confidence}}%</div>
+                        </div>
+                        {{#if consent_mode_has_updates}}
+                        <div class="metric-card" style="background: white;">
+                            <div class="metric-label">Consent Updates</div>
+                            <div class="metric-value" style="font-size: 1rem; color: #16a34a;">✓</div>
+                        </div>
+                        {{/if}}
+                    </div>
+
+                    <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: #374151;">Default Consent States:</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
+                        {{#if consent_mode_ad_storage}}
+                        <div style="padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
+                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.25rem;">ad_storage</div>
+                            <div style="font-size: 0.875rem; font-weight: 600; color: {{#if_eq consent_mode_ad_storage 'denied'}}#16a34a{{else}}#dc2626{{/if_eq}};">
+                                {{consent_mode_ad_storage}}
+                            </div>
+                        </div>
+                        {{/if}}
+                        {{#if consent_mode_analytics_storage}}
+                        <div style="padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
+                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.25rem;">analytics_storage</div>
+                            <div style="font-size: 0.875rem; font-weight: 600; color: {{#if_eq consent_mode_analytics_storage 'denied'}}#16a34a{{else}}#dc2626{{/if_eq}};">
+                                {{consent_mode_analytics_storage}}
+                            </div>
+                        </div>
+                        {{/if}}
+                        {{#if consent_mode_ad_user_data}}
+                        <div style="padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
+                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.25rem;">ad_user_data</div>
+                            <div style="font-size: 0.875rem; font-weight: 600; color: {{#if_eq consent_mode_ad_user_data 'denied'}}#16a34a{{else}}#dc2626{{/if_eq}};">
+                                {{consent_mode_ad_user_data}}
+                            </div>
+                        </div>
+                        {{/if}}
+                        {{#if consent_mode_ad_personalization}}
+                        <div style="padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
+                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.25rem;">ad_personalization</div>
+                            <div style="font-size: 0.875rem; font-weight: 600; color: {{#if_eq consent_mode_ad_personalization 'denied'}}#16a34a{{else}}#dc2626{{/if_eq}};">
+                                {{consent_mode_ad_personalization}}
+                            </div>
+                        </div>
+                        {{/if}}
+                    </div>
+
+                    {{#if consent_mode_issues.length}}
+                    <div style="padding: 1rem; background: white; border-radius: 6px; border: 1px solid #fca5a5;">
+                        <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: #991b1b;">Issues:</h4>
+                        <ul style="margin: 0; padding-left: 1.25rem; color: #7f1d1d; font-size: 0.813rem;">
+                            {{#each consent_mode_issues}}
+                            <li style="margin-bottom: 0.25rem;">{{this}}</li>
+                            {{/each}}
+                        </ul>
+                    </div>
+                    {{/if}}
+                </div>
+                {{else}}
+                {{#if consent_mode_ga4_present}}
+                <div style="margin-top: 2rem; padding: 1.5rem; background: #fef2f2; border: 2px solid #fca5a5; border-radius: 8px;">
+                    <h3 style="margin-bottom: 1rem; font-size: 1rem; font-weight: 600; color: #991b1b;">
+                        ⚠️ Google Consent Mode Not Detected
+                    </h3>
+                    <p style="color: #7f1d1d; font-size: 0.875rem;">
+                        Google Analytics 4 was detected but Google Consent Mode is not implemented. This is required for GDPR compliance when using Google Analytics in the EEA.
+                    </p>
+                </div>
+                {{/if}}
+                {{/if}}
             </div>
         </div>
 
@@ -1472,34 +1567,65 @@
         // ===== TIMELINE CHART =====
         // TEMPLATE: Backend should inject timeline data as JSON
         const timelineData = {{timeline_data_json}};
-        /* Expected format:
-        {
-            labels: ['Request 1', 'Request 2', ...],
-            beforeConsent: [12, 8, 5, ...], // milliseconds before consent
-            afterConsent: [0, 0, 0, 15, 20, ...] // milliseconds after consent
-        }
-        */
 
         const ctx = document.getElementById('timelineChart');
-        if (ctx && timelineData) {
+        if (ctx && timelineData && timelineData.labels && timelineData.labels.length > 0) {
+            // Convert timeline data to scatter plot format (x = time in ms, y = category)
+            const allEvents = [];
+
+            // Process events
+            for (let i = 0; i < timelineData.labels.length; i++) {
+                const beforeTime = timelineData.beforeConsent[i];
+                const afterTime = timelineData.afterConsent[i];
+                const label = timelineData.labels[i];
+
+                if (beforeTime > 0) {
+                    allEvents.push({
+                        x: beforeTime,
+                        y: 1, // Before consent = violation zone
+                        label: label,
+                        type: 'violation'
+                    });
+                } else if (afterTime > 0) {
+                    allEvents.push({
+                        x: afterTime,
+                        y: 2, // After consent = compliant zone
+                        label: label,
+                        type: 'compliant'
+                    });
+                }
+            }
+
+            // Separate violation and compliant events
+            const violationEvents = allEvents.filter(e => e.type === 'violation');
+            const compliantEvents = allEvents.filter(e => e.type === 'compliant');
+
+            // Find consent boundary (where violations end)
+            const maxViolationTime = violationEvents.length > 0
+                ? Math.max(...violationEvents.map(e => e.x))
+                : 0;
+
             new Chart(ctx, {
-                type: 'bar',
+                type: 'scatter',
                 data: {
-                    labels: timelineData.labels,
                     datasets: [
                         {
                             label: 'Before Consent (Violation)',
-                            data: timelineData.beforeConsent,
+                            data: violationEvents,
                             backgroundColor: '#ef4444',
                             borderColor: '#dc2626',
-                            borderWidth: 1
+                            borderWidth: 2,
+                            pointRadius: 6,
+                            pointHoverRadius: 8
                         },
                         {
                             label: 'After Consent (Compliant)',
-                            data: timelineData.afterConsent,
+                            data: compliantEvents,
                             backgroundColor: '#0175ff',
                             borderColor: '#0066dd',
-                            borderWidth: 1
+                            borderWidth: 2,
+                            pointRadius: 6,
+                            pointHoverRadius: 8
                         }
                     ]
                 },
@@ -1508,18 +1634,48 @@
                     maintainAspectRatio: false,
                     scales: {
                         x: {
-                            stacked: false,
+                            type: 'linear',
+                            position: 'bottom',
                             title: {
                                 display: true,
-                                text: 'Tracking Requests'
+                                text: 'Time from Page Load (ms)',
+                                font: { size: 13, weight: 'bold' }
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value + 'ms';
+                                }
+                            },
+                            grid: {
+                                color: '#e5e7eb',
+                                lineWidth: 1
                             }
                         },
                         y: {
-                            stacked: false,
-                            beginAtZero: true,
+                            type: 'linear',
+                            min: 0.5,
+                            max: 2.5,
                             title: {
                                 display: true,
-                                text: 'Time (ms)'
+                                text: 'Consent Status',
+                                font: { size: 13, weight: 'bold' }
+                            },
+                            ticks: {
+                                stepSize: 1,
+                                callback: function(value) {
+                                    if (value === 1) return 'Before Consent';
+                                    if (value === 2) return 'After Consent';
+                                    return '';
+                                }
+                            },
+                            grid: {
+                                color: function(context) {
+                                    // Horizontal grid lines for zones
+                                    if (context.tick.value === 1) return '#fee2e2'; // Light red
+                                    if (context.tick.value === 2) return '#dbeafe'; // Light blue
+                                    return 'transparent';
+                                },
+                                lineWidth: 20
                             }
                         }
                     },
@@ -1529,14 +1685,59 @@
                         },
                         tooltip: {
                             callbacks: {
+                                title: function(context) {
+                                    return context[0].raw.label || 'Event';
+                                },
                                 label: function(context) {
-                                    return context.dataset.label + ': ' + context.parsed.y + 'ms';
+                                    const event = context.raw;
+                                    return [
+                                        event.type === 'violation' ? 'VIOLATION: Before Consent' : 'Compliant: After Consent',
+                                        'Time: ' + event.x + 'ms'
+                                    ];
                                 }
-                            }
+                            },
+                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: '#666',
+                            borderWidth: 1,
+                            padding: 12,
+                            titleFont: { size: 13, weight: 'bold' },
+                            bodyFont: { size: 12 }
+                        },
+                        annotation: {
+                            annotations: maxViolationTime > 0 ? {
+                                consentLine: {
+                                    type: 'line',
+                                    xMin: maxViolationTime,
+                                    xMax: maxViolationTime,
+                                    borderColor: '#9333ea',
+                                    borderWidth: 3,
+                                    borderDash: [6, 4],
+                                    label: {
+                                        content: 'Consent Given',
+                                        enabled: true,
+                                        position: 'start',
+                                        backgroundColor: '#9333ea',
+                                        color: '#fff',
+                                        font: { size: 11, weight: 'bold' }
+                                    }
+                                }
+                            } : {}
                         }
+                    },
+                    interaction: {
+                        mode: 'point',
+                        intersect: true
                     }
                 }
             });
+        } else if (ctx) {
+            // No timeline data - display message
+            ctx.getContext('2d').font = '14px sans-serif';
+            ctx.getContext('2d').fillStyle = '#6b7280';
+            ctx.getContext('2d').textAlign = 'center';
+            ctx.getContext('2d').fillText('No timeline data available', ctx.width / 2, ctx.height / 2);
         }
 
         // Initialize: Keep all sections expanded by default
