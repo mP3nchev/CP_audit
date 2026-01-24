@@ -239,6 +239,77 @@ async function runRejectScenario(browser, websiteUrl) {
   console.log(`   ⏳ Waiting 5 seconds for UI elements to stabilize...`);
   await new Promise(resolve => setTimeout(resolve, 5000));
 
+  // Force cookie banner to stay visible (prevent auto-hide scripts)
+  console.log(`   🔧 Forcing cookie banner to stay visible...`);
+  await page.evaluate(() => {
+    // Find CookieScript banner (most common selectors)
+    const selectors = [
+      '#cookiescript_injected',
+      '#cookiescript_injected_wrapper',
+      '[id*="cookiescript"]',
+      '[class*="cookie-banner"]',
+      '[class*="cookie-consent"]',
+      '[id*="cookie-banner"]',
+      '[id*="CybotCookiebotDialog"]',
+      '.cc-window',
+      '#onetrust-banner-sdk'
+    ];
+
+    let banner = null;
+    for (const selector of selectors) {
+      banner = document.querySelector(selector);
+      if (banner) {
+        console.log(`Found banner: ${selector}`);
+        break;
+      }
+    }
+
+    if (banner) {
+      // Force visibility with !important-level overrides
+      banner.style.setProperty('display', 'block', 'important');
+      banner.style.setProperty('visibility', 'visible', 'important');
+      banner.style.setProperty('opacity', '1', 'important');
+      banner.style.setProperty('z-index', '2147483647', 'important');
+      banner.style.setProperty('position', 'fixed', 'important');
+      banner.style.setProperty('pointer-events', 'auto', 'important');
+
+      // Prevent parent containers from hiding it
+      let parent = banner.parentElement;
+      while (parent && parent !== document.body) {
+        parent.style.setProperty('display', 'block', 'important');
+        parent.style.setProperty('visibility', 'visible', 'important');
+        parent.style.setProperty('opacity', '1', 'important');
+        parent = parent.parentElement;
+      }
+
+      // Install MutationObserver to prevent hiding
+      const observer = new MutationObserver(() => {
+        banner.style.setProperty('display', 'block', 'important');
+        banner.style.setProperty('visibility', 'visible', 'important');
+        banner.style.setProperty('opacity', '1', 'important');
+      });
+
+      observer.observe(banner, {
+        attributes: true,
+        attributeFilter: ['style', 'class']
+      });
+
+      // Also observe parent to prevent removal
+      if (banner.parentElement) {
+        observer.observe(banner.parentElement, {
+          childList: true,
+          subtree: false
+        });
+      }
+
+      console.log('✅ Banner forced to stay visible');
+      return true;
+    } else {
+      console.warn('⚠️  No cookie banner found');
+      return false;
+    }
+  });
+
   // Capture BEFORE consent
   const beforeSnapshot = await captureStateSnapshot(page, client, 'before_interaction');
   console.log(`   🍪 Cookies before interaction: ${beforeSnapshot.cookies.length}`);
@@ -300,6 +371,77 @@ async function runAcceptScenario(browser, websiteUrl) {
   // Wait for dynamic content to stabilize (cookie banner, overlays, etc.)
   console.log(`   ⏳ Waiting 5 seconds for UI elements to stabilize...`);
   await new Promise(resolve => setTimeout(resolve, 5000));
+
+  // Force cookie banner to stay visible (prevent auto-hide scripts)
+  console.log(`   🔧 Forcing cookie banner to stay visible...`);
+  await page.evaluate(() => {
+    // Find CookieScript banner (most common selectors)
+    const selectors = [
+      '#cookiescript_injected',
+      '#cookiescript_injected_wrapper',
+      '[id*="cookiescript"]',
+      '[class*="cookie-banner"]',
+      '[class*="cookie-consent"]',
+      '[id*="cookie-banner"]',
+      '[id*="CybotCookiebotDialog"]',
+      '.cc-window',
+      '#onetrust-banner-sdk'
+    ];
+
+    let banner = null;
+    for (const selector of selectors) {
+      banner = document.querySelector(selector);
+      if (banner) {
+        console.log(`Found banner: ${selector}`);
+        break;
+      }
+    }
+
+    if (banner) {
+      // Force visibility with !important-level overrides
+      banner.style.setProperty('display', 'block', 'important');
+      banner.style.setProperty('visibility', 'visible', 'important');
+      banner.style.setProperty('opacity', '1', 'important');
+      banner.style.setProperty('z-index', '2147483647', 'important');
+      banner.style.setProperty('position', 'fixed', 'important');
+      banner.style.setProperty('pointer-events', 'auto', 'important');
+
+      // Prevent parent containers from hiding it
+      let parent = banner.parentElement;
+      while (parent && parent !== document.body) {
+        parent.style.setProperty('display', 'block', 'important');
+        parent.style.setProperty('visibility', 'visible', 'important');
+        parent.style.setProperty('opacity', '1', 'important');
+        parent = parent.parentElement;
+      }
+
+      // Install MutationObserver to prevent hiding
+      const observer = new MutationObserver(() => {
+        banner.style.setProperty('display', 'block', 'important');
+        banner.style.setProperty('visibility', 'visible', 'important');
+        banner.style.setProperty('opacity', '1', 'important');
+      });
+
+      observer.observe(banner, {
+        attributes: true,
+        attributeFilter: ['style', 'class']
+      });
+
+      // Also observe parent to prevent removal
+      if (banner.parentElement) {
+        observer.observe(banner.parentElement, {
+          childList: true,
+          subtree: false
+        });
+      }
+
+      console.log('✅ Banner forced to stay visible');
+      return true;
+    } else {
+      console.warn('⚠️  No cookie banner found');
+      return false;
+    }
+  });
 
   // Capture BEFORE consent
   const beforeSnapshot = await captureStateSnapshot(page, client, 'before_interaction');
