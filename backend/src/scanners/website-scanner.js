@@ -393,7 +393,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
     const timelineReport = generateTimelineReport(timeline);
     console.log(`   ✅ Timeline built in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📊 Events: ${timeline.events.length}, Violations: ${timeline.violations.length}`);
+    console.log(`   📊 Events: ${timeline.events.length}, Violations: ${timeline.violations?.length || 0}`);
     console.log(`   ⚠️  Before consent: ${timelineReport.beforeConsent.cookies} cookies, ${timelineReport.beforeConsent.requests} requests`);
 
     // Step 13.6: Categorize network requests (Problem 5)
@@ -463,7 +463,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       trackingBeforeConsentDetails: trackingAnalysis,
       trackingBeforeConsentDetailed: trackingBeforeConsentDetailed,
       trackingBeforeConsentCount: trackingBeforeConsentRequests.length + trackingAnalysis.violationCount,
-      bannerViolations: bannerAnalysis.violations,
+      bannerViolations: bannerAnalysis?.violations || [],
       bannerAnalysis: bannerAnalysis,
       consentModeAudit: consentModeAudit,
       timeline: timeline,
@@ -567,7 +567,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log(`   Tracking before consent: ${results.trackingBeforeConsent ? 'YES ⚠️' : 'NO ✅'}`);
     console.log(`   Compliance Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
     console.log(`   Screenshots uploaded: ${screenshotUrls.fullPageUrl ? 'YES' : 'NO'}`);
-    if (consentSimulation && consentSimulation.success !== false) {
+    if (consentSimulation && consentSimulation.success !== false && consentSimulation.comparison?.violations) {
       console.log(`   Consent violations: ${consentSimulation.comparison.violations.length}`);
     }
     console.log('═══════════════════════════════════════════════════════');
