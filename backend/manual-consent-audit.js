@@ -13,6 +13,9 @@
  * 5. Auto-exports JSON to backend API or local file
  */
 
+// Load environment variables
+require('dotenv').config();
+
 const puppeteer = require('puppeteer');
 const readline = require('readline');
 const fs = require('fs').promises;
