@@ -210,6 +210,89 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
 });
 
 /**
+ * Resume audit from waiting state
+ * POST /api/audit/:audit_id/resume
+ */
+router.post('/api/audit/:audit_id/resume', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    const db = getDatabase();
+
+    // Get audit info
+    const audit = db.prepare(`
+      SELECT id, audit_uid, website_url, status
+      FROM audits
+      WHERE audit_uid = ? OR id = ?
+    `).get(audit_id, audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is in WAITING_MANUAL_CONSENT state
+    if (audit.status !== constants.AUDIT_STATUS.PROCESSING) {
+      return res.status(400).json({
+        error: 'Audit is not in waiting state',
+        status: audit.status
+      });
+    }
+
+    // Check if consent simulation data has been uploaded
+    const scanResult = db.prepare(`
+      SELECT consent_simulation_json
+      FROM scan_results
+      WHERE audit_id = ? AND consent_simulation_json IS NOT NULL
+      LIMIT 1
+    `).get(audit.id);
+
+    if (!scanResult || !scanResult.consent_simulation_json) {
+      return res.status(400).json({
+        error: 'No manual consent simulation data found. Please upload data first.',
+        code: 'E_NO_CONSENT_DATA'
+      });
+    }
+
+    console.log('');
+    console.log(`📤 Resume request received for audit: ${audit.audit_uid}`);
+    console.log(`   Consent data found: Yes`);
+    console.log(`   Continuing from Step 17...`);
+
+    // Import scanner dynamically to avoid circular dependency
+    const { continueAuditFromStep17 } = require('../scanners/website-scanner');
+
+    // Continue audit from Step 17 in background
+    continueAuditFromStep17(audit.id, audit.website_url).catch(err => {
+      console.error(`Failed to resume audit ${audit.audit_uid}:`, err);
+
+      // Update audit status to failed
+      db.prepare(`
+        UPDATE audits
+        SET status = ?, error_message = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(constants.AUDIT_STATUS.FAILED, err.message, audit.id);
+    });
+
+    res.json({
+      message: 'Audit resumed successfully',
+      audit_id: audit.audit_uid,
+      status: 'resumed',
+      note: 'Audit is now continuing from Step 17. Poll /api/audit/:id/status for completion.'
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to resume audit:', error);
+    res.status(500).json({
+      error: 'Failed to resume audit',
+      message: error.message
+    });
+  }
+});
+
+/**
  * Get audit results (detailed)
  * GET /api/audit/:audit_id/results
  */

@@ -129,22 +129,26 @@ function estimateRemainingTime(step, totalSteps, elapsedSeconds) {
  * @param {string} message - Progress message
  * @param {number} startTime - Scan start time (Date.now())
  */
-function updateProgress(auditId, currentStep, totalSteps, message, startTime = Date.now()) {
+function updateProgress(auditId, currentStep, totalSteps, message, startTime = Date.now(), extraMetadata = {}) {
   try {
     const db = getDatabase();
     const now = Date.now();
     const elapsedSeconds = Math.round((now - startTime) / 1000);
+
+    // Use extraMetadata.state if provided (for WAITING_MANUAL_CONSENT)
+    const state = extraMetadata.state || mapStepToState(currentStep);
 
     const progress = {
       currentStep,
       totalSteps,
       message,
       percentage: Math.round((currentStep / totalSteps) * 100),
-      state: mapStepToState(currentStep),
+      state: state,
       estimatedTimeRemaining: estimateRemainingTime(currentStep, totalSteps, elapsedSeconds),
       timestamp: now,
       metadata: {
-        currentOperation: message
+        currentOperation: message,
+        ...extraMetadata  // Merge extra metadata (websiteUrl, instructions, etc.)
       }
     };
 
@@ -495,6 +499,26 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       if (consentSimulation.waiting) {
         console.log(`   ⏸️  Consent simulation waiting: ${consentSimulation.reason}`);
         console.log(`   📋 Instructions: ${consentSimulation.instructions}`);
+
+        // PAUSE audit and set status to WAITING_MANUAL_CONSENT
+        updateProgress(auditId, 16, 17, 'WAITING_MANUAL_CONSENT', startTime, {
+          state: 'WAITING_MANUAL_CONSENT',
+          websiteUrl: websiteUrl,
+          instructions: consentSimulation.instructions
+        });
+
+        // Save partial results to database
+        results.consentSimulation = consentSimulation;
+        savePartialResults(auditId, results);
+
+        console.log('');
+        console.log('⏸️  === AUDIT PAUSED ===');
+        console.log('   Waiting for manual consent simulation upload from local machine');
+        console.log('   Audit will resume automatically after data upload via /api/audit/:id/resume');
+        console.log('');
+
+        // Return early - do NOT continue to Step 17
+        return;
       } else if (consentSimulation.skipped) {
         console.log(`   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`);
       } else {
@@ -664,7 +688,118 @@ async function saveScanResults(auditId, results) {
   }
 }
 
+/**
+ * Save partial results to database (for paused audits)
+ */
+function savePartialResults(auditId, results) {
+  try {
+    const db = require('../database/db');
+
+    // Check if scan_results already exists
+    const existing = db.prepare(`
+      SELECT id FROM scan_results WHERE audit_id = ? LIMIT 1
+    `).get(auditId);
+
+    if (existing) {
+      // Update existing
+      db.prepare(`
+        UPDATE scan_results
+        SET updated_at = datetime('now')
+        WHERE audit_id = ?
+      `).run(auditId);
+    } else {
+      // Insert minimal record
+      db.prepare(`
+        INSERT INTO scan_results (
+          audit_id,
+          cookies_json,
+          scan_duration_seconds,
+          created_at
+        ) VALUES (?, ?, ?, datetime('now'))
+      `).run(auditId, JSON.stringify([]), 0);
+    }
+
+    console.log('   ✅ Partial results saved');
+  } catch (error) {
+    console.warn('   ⚠️  Could not save partial results:', error.message);
+  }
+}
+
+/**
+ * Continue audit from Step 17 (after manual consent upload)
+ */
+async function continueAuditFromStep17(auditId, websiteUrl) {
+  console.log('');
+  console.log('▶️  === RESUMING AUDIT FROM STEP 17 ===');
+  console.log(`   Audit ID: ${auditId}`);
+  console.log(`   Website: ${websiteUrl}`);
+  console.log('');
+
+  const startTime = Date.now();
+  const db = require('../database/db');
+
+  try {
+    // Load existing scan results
+    const scanResult = db.prepare(`
+      SELECT * FROM scan_results WHERE audit_id = ? LIMIT 1
+    `).get(auditId);
+
+    if (!scanResult) {
+      throw new Error('No scan results found for this audit');
+    }
+
+    // Parse existing data
+    const cookies = scanResult.cookies_json ? JSON.parse(scanResult.cookies_json) : [];
+    const consentSimulation = scanResult.consent_simulation_json ? JSON.parse(scanResult.consent_simulation_json) : null;
+
+    // Build results object
+    const results = {
+      cookies,
+      consentSimulation,
+      // Other fields will be loaded from database as needed
+    };
+
+    // Step 17: Calculate overall compliance score
+    let stepStartTime = Date.now();
+    console.log('');
+    console.log('📊 Step 17: Calculating overall compliance score...');
+    updateProgress(auditId, 17, 17, 'Calculating compliance score and finalizing report...', startTime);
+
+    const complianceScore = calculateOverallScore(results);
+    results.complianceScore = complianceScore;
+
+    console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
+    console.log(`   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
+
+    // Update database with compliance score
+    db.prepare(`
+      UPDATE audits
+      SET overall_score = ?,
+          score_grade = ?,
+          status = ?,
+          completed_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(
+      complianceScore.overallScore,
+      complianceScore.grade,
+      'completed',
+      auditId
+    );
+
+    console.log('');
+    console.log('✅ === AUDIT RESUMED AND COMPLETED ===');
+    console.log(`   Total duration: ${Math.round((Date.now() - startTime) / 1000)}s`);
+    console.log('');
+
+  } catch (error) {
+    console.error('❌ Failed to resume audit:', error);
+    throw error;
+  }
+}
+
 module.exports = {
   scanWebsite,
-  saveScanResults
+  saveScanResults,
+  continueAuditFromStep17
 };

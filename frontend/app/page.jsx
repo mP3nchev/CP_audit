@@ -52,7 +52,12 @@ export default function Home() {
       {/* Main Content */}
       {completedAudit ? (
         <div className="space-y-4">
-          <ResultsDisplay auditId={completedAudit.auditId} />
+          <ResultsDisplay
+            auditId={completedAudit.auditId}
+            status={completedAudit.status}
+            websiteUrl={completedAudit.websiteUrl}
+            instructions={completedAudit.instructions}
+          />
 
           <button
             onClick={handleNewAudit}
