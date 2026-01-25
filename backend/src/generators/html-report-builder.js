@@ -4,6 +4,31 @@ const Handlebars = require('handlebars');
 const { getDatabase } = require('../database/db');
 const { getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
 
+// Register Handlebars helpers
+Handlebars.registerHelper('if_eq', function(a, b, options) {
+  return a === b ? options.fn(this) : options.inverse(this);
+});
+
+Handlebars.registerHelper('if_ne', function(a, b, options) {
+  return a !== b ? options.fn(this) : options.inverse(this);
+});
+
+Handlebars.registerHelper('if_gt', function(a, b, options) {
+  return a > b ? options.fn(this) : options.inverse(this);
+});
+
+Handlebars.registerHelper('if_gte', function(a, b, options) {
+  return a >= b ? options.fn(this) : options.inverse(this);
+});
+
+Handlebars.registerHelper('if_lt', function(a, b, options) {
+  return a < b ? options.fn(this) : options.inverse(this);
+});
+
+Handlebars.registerHelper('if_lte', function(a, b, options) {
+  return a <= b ? options.fn(this) : options.inverse(this);
+});
+
 /**
  * Generate HTML report using user's gdpr-report-template.html
  * @param {string} auditUid - Audit UID

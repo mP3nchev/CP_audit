@@ -16,7 +16,7 @@ const { launchBrowser, createPage, closeBrowser } = require('./puppeteer-setup')
 const { extractCookies } = require('./cookie-extractor');
 const readline = require('readline');
 const constants = require('../config/constants');
-const db = require('../database/db');
+const { getDatabase } = require('../database/db');
 
 /**
  * Tracking domains for network filtering (v1)
@@ -285,6 +285,7 @@ async function checkForManualConsentData(auditId, websiteUrl) {
   if (!auditId) return null;
 
   try {
+    const db = getDatabase();
     const result = db.prepare(`
       SELECT consent_simulation_json, created_at
       FROM scan_results
