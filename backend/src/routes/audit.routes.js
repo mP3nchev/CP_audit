@@ -210,6 +210,89 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
 });
 
 /**
+ * Resume audit from waiting state
+ * POST /api/audit/:audit_id/resume
+ */
+router.post('/api/audit/:audit_id/resume', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    const db = getDatabase();
+
+    // Get audit info
+    const audit = db.prepare(`
+      SELECT id, audit_uid, website_url, status
+      FROM audits
+      WHERE audit_uid = ? OR id = ?
+    `).get(audit_id, audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is in WAITING_MANUAL_CONSENT state
+    if (audit.status !== constants.AUDIT_STATUS.PROCESSING) {
+      return res.status(400).json({
+        error: 'Audit is not in waiting state',
+        status: audit.status
+      });
+    }
+
+    // Check if consent simulation data has been uploaded
+    const scanResult = db.prepare(`
+      SELECT consent_simulation_json
+      FROM scan_results
+      WHERE audit_id = ? AND consent_simulation_json IS NOT NULL
+      LIMIT 1
+    `).get(audit.id);
+
+    if (!scanResult || !scanResult.consent_simulation_json) {
+      return res.status(400).json({
+        error: 'No manual consent simulation data found. Please upload data first.',
+        code: 'E_NO_CONSENT_DATA'
+      });
+    }
+
+    console.log('');
+    console.log(`📤 Resume request received for audit: ${audit.audit_uid}`);
+    console.log(`   Consent data found: Yes`);
+    console.log(`   Continuing from Step 17...`);
+
+    // Import scanner dynamically to avoid circular dependency
+    const { continueAuditFromStep17 } = require('../scanners/website-scanner');
+
+    // Continue audit from Step 17 in background
+    continueAuditFromStep17(audit.id, audit.website_url).catch(err => {
+      console.error(`Failed to resume audit ${audit.audit_uid}:`, err);
+
+      // Update audit status to failed
+      db.prepare(`
+        UPDATE audits
+        SET status = ?, error_message = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(constants.AUDIT_STATUS.FAILED, err.message, audit.id);
+    });
+
+    res.json({
+      message: 'Audit resumed successfully',
+      audit_id: audit.audit_uid,
+      status: 'resumed',
+      note: 'Audit is now continuing from Step 17. Poll /api/audit/:id/status for completion.'
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to resume audit:', error);
+    res.status(500).json({
+      error: 'Failed to resume audit',
+      message: error.message
+    });
+  }
+});
+
+/**
  * Get audit results (detailed)
  * GET /api/audit/:audit_id/results
  */
@@ -709,7 +792,7 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
   let auditId = null;
 
   try {
-    const { websiteUrl, scenarios, metadata } = req.body;
+    const { websiteUrl, scenarios, metadata, auditId: providedAuditId } = req.body;
 
     // Validation
     if (!websiteUrl || !scenarios) {
@@ -729,23 +812,44 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
     console.log('');
     console.log('📤 Manual consent data upload received');
     console.log(`   Website: ${websiteUrl}`);
+    console.log(`   Provided audit ID: ${providedAuditId || 'None (will create new)'}`);
     console.log(`   Reject scenario: ${scenarios.reject ? 'Yes' : 'No'}`);
     console.log(`   Accept scenario: ${scenarios.accept ? 'Yes' : 'No'}`);
 
-    // Generate unique audit ID
-    const auditUid = `aud_${crypto.randomBytes(8).toString('hex')}`;
-
-    // Create audit record
     const db = getDatabase();
-    const auditStmt = db.prepare(`
-      INSERT INTO audits (audit_uid, website_url, status, created_at, updated_at)
-      VALUES (?, ?, ?, datetime('now'), datetime('now'))
-    `);
+    let auditUid;
 
-    const result = auditStmt.run(auditUid, websiteUrl, constants.AUDIT_STATUS.PROCESSING);
-    auditId = result.lastInsertRowid;
+    // Check if updating existing audit or creating new
+    if (providedAuditId) {
+      // Find existing audit
+      const existingAudit = db.prepare(`
+        SELECT id, audit_uid FROM audits WHERE audit_uid = ? OR id = ?
+      `).get(providedAuditId, providedAuditId);
 
-    console.log(`   📝 Created audit: ${auditUid} (ID: ${auditId})`);
+      if (existingAudit) {
+        auditId = existingAudit.id;
+        auditUid = existingAudit.audit_uid;
+        console.log(`   📝 Updating existing audit: ${auditUid} (ID: ${auditId})`);
+      } else {
+        return res.status(404).json({
+          error: `Audit not found: ${providedAuditId}`,
+          code: 'E004'
+        });
+      }
+    } else {
+      // Create new audit
+      auditUid = `aud_${crypto.randomBytes(8).toString('hex')}`;
+
+      const auditStmt = db.prepare(`
+        INSERT INTO audits (audit_uid, website_url, status, created_at, updated_at)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+      `);
+
+      const result = auditStmt.run(auditUid, websiteUrl, constants.AUDIT_STATUS.PROCESSING);
+      auditId = result.lastInsertRowid;
+
+      console.log(`   📝 Created new audit: ${auditUid} (ID: ${auditId})`);
+    }
 
     // ============================================
     // PROCESS CONSENT SIMULATION DATA
@@ -829,28 +933,53 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
     // ============================================
     // SAVE TO DATABASE
     // ============================================
-    const scanStmt = db.prepare(`
-      INSERT INTO scan_results (
-        audit_id,
-        cookies_json,
-        network_requests_json,
-        tracking_before_consent,
-        consent_simulation_json,
-        scan_duration_seconds,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    `);
+    // Check if scan_results already exists for this audit
+    const existingScan = db.prepare(`
+      SELECT id FROM scan_results WHERE audit_id = ? LIMIT 1
+    `).get(auditId);
 
-    scanStmt.run(
-      auditId,
-      JSON.stringify(cookiesAfterReject),
-      JSON.stringify([]), // Network requests not yet implemented
-      trackingCookiesInReject.length > 0 ? 1 : 0,
-      JSON.stringify(consentSimulation),
-      0
-    );
+    if (existingScan) {
+      // Update existing scan_results
+      const updateStmt = db.prepare(`
+        UPDATE scan_results
+        SET consent_simulation_json = ?,
+            tracking_before_consent = ?,
+            updated_at = datetime('now')
+        WHERE audit_id = ?
+      `);
 
-    console.log(`   ✅ Consent simulation data saved to database`);
+      updateStmt.run(
+        JSON.stringify(consentSimulation),
+        trackingCookiesInReject.length > 0 ? 1 : 0,
+        auditId
+      );
+
+      console.log(`   ✅ Consent simulation data updated in database`);
+    } else {
+      // Insert new scan_results
+      const scanStmt = db.prepare(`
+        INSERT INTO scan_results (
+          audit_id,
+          cookies_json,
+          network_requests_json,
+          tracking_before_consent,
+          consent_simulation_json,
+          scan_duration_seconds,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+
+      scanStmt.run(
+        auditId,
+        JSON.stringify(cookiesAfterReject),
+        JSON.stringify([]), // Network requests not yet implemented
+        trackingCookiesInReject.length > 0 ? 1 : 0,
+        JSON.stringify(consentSimulation),
+        0
+      );
+
+      console.log(`   ✅ Consent simulation data saved to database`);
+    }
 
     // ============================================
     // UPDATE AUDIT STATUS

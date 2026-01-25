@@ -149,6 +149,16 @@ export default function AuditForm({ onAuditComplete }) {
           throw new Error('Audit failed: ' + errorMsg);
         }
 
+        // Termination condition 1c: State is WAITING_MANUAL_CONSENT
+        if (statusData.state === 'WAITING_MANUAL_CONSENT') {
+          return {
+            auditId,
+            status: 'waiting_manual_consent',
+            websiteUrl: statusData.websiteUrl || data.websiteUrl,
+            instructions: statusData.instructions
+          };
+        }
+
         // Termination condition 2: Stall detection
         // Check if state OR progress has changed
         const stateChanged = statusData.state !== lastState;

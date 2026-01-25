@@ -13,6 +13,9 @@
  * 5. Auto-exports JSON to backend API or local file
  */
 
+// Load environment variables
+require('dotenv').config();
+
 const puppeteer = require('puppeteer');
 const readline = require('readline');
 const fs = require('fs').promises;
@@ -24,23 +27,26 @@ const path = require('path');
 const args = process.argv.slice(2);
 const urlIndex = args.indexOf('--url');
 const outputIndex = args.indexOf('--output');
-const apiUrlIndex = args.indexOf('--api');
+const apiUrlIndex = args.indexOf('--api-url');
+const auditIdIndex = args.indexOf('--audit-id');
 
 if (urlIndex === -1 || !args[urlIndex + 1]) {
   console.error('❌ Error: --url parameter required');
-  console.log('Usage: node manual-consent-audit.js --url https://example.com [--output results.json] [--api http://localhost:3001]');
+  console.log('Usage: node manual-consent-audit.js --url https://example.com [--output results.json] [--api-url http://localhost:3001] [--audit-id aud_xxx]');
   process.exit(1);
 }
 
 const WEBSITE_URL = args[urlIndex + 1];
 const OUTPUT_FILE = outputIndex !== -1 ? args[outputIndex + 1] : null;
 const API_URL = apiUrlIndex !== -1 ? args[apiUrlIndex + 1] : process.env.API_URL || null;
+const AUDIT_ID = auditIdIndex !== -1 ? args[auditIdIndex + 1] : null;
 
 console.log('');
 console.log('═══════════════════════════════════════════════════════');
 console.log('🎭 MANUAL CONSENT AUDIT - Human-Assisted Browser Session');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`   Website: ${WEBSITE_URL}`);
+console.log(`   Audit ID: ${AUDIT_ID || 'Will create new audit'}`);
 console.log(`   Output: ${OUTPUT_FILE || 'API upload only'}`);
 console.log(`   API: ${API_URL || 'Not configured'}`);
 console.log('');
@@ -581,6 +587,7 @@ async function main() {
     const finalResults = {
       timestamp: new Date().toISOString(),
       websiteUrl: WEBSITE_URL,
+      auditId: AUDIT_ID || undefined, // Include audit ID if provided
       scenarios: {
         reject: rejectResults,
         accept: acceptResults
