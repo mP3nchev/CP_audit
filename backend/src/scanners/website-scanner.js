@@ -693,7 +693,7 @@ async function saveScanResults(auditId, results) {
  */
 function savePartialResults(auditId, results) {
   try {
-    const db = require('../database/db');
+    const db = getDatabase();
 
     // Check if scan_results already exists
     const existing = db.prepare(`
@@ -736,7 +736,7 @@ async function continueAuditFromStep17(auditId, websiteUrl) {
   console.log('');
 
   const startTime = Date.now();
-  const db = require('../database/db');
+  const db = getDatabase();
 
   try {
     // Load existing scan results
