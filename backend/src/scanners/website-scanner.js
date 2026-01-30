@@ -642,7 +642,7 @@ async function saveScanResults(auditId, results) {
       results.trackingBeforeConsent ? 1 : 0,
       JSON.stringify(results.bannerViolations || []),
       JSON.stringify(results.consentModeAudit || {}),
-      JSON.stringify(results.timelineReport || {}),
+      JSON.stringify(results.timeline || {}),
       results.screenshots.full || null,
       results.screenshots.banner || null,
       results.scanDuration

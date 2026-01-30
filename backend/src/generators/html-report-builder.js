@@ -542,18 +542,13 @@ function transformDataForTemplate(data) {
     consent_simulation_skipped: consentSimulation?.skipped || false,
     consent_simulation_skip_reason: consentSimulation?.reason || null,
     consent_simulation_error: consentSimulation?.error || null,
-    consent_simulation_reject_cookies: consentSimulation?.rejectScenario?.cookies || 0,
-    consent_simulation_accept_cookies: consentSimulation?.acceptScenario?.cookies || 0,
-    consent_simulation_new_cookies: consentSimulation?.comparison?.cookies?.newAfterAccept?.length || 0,
-    consent_simulation_new_cookies_list: consentSimulation?.comparison?.cookies?.newAfterAccept?.slice(0, 10).map(c => ({
-      name: c.name,
-      domain: c.domain,
-      category: c.category,
-      purpose: c.purpose
-    })) || [],
-    consent_simulation_reject_requests: consentSimulation?.rejectScenario?.networkRequests || 0,
-    consent_simulation_accept_requests: consentSimulation?.acceptScenario?.networkRequests || 0,
-    consent_simulation_new_domains: consentSimulation?.comparison?.network?.newDomainsAfterAccept || [],
+    consent_simulation_reject_cookies: consentSimulation?.reject?.cookiesAfterConsent || 0,
+    consent_simulation_accept_cookies: consentSimulation?.accept?.cookiesAfterConsent || 0,
+    consent_simulation_new_cookies: consentSimulation?.comparison?.cookieDifference || 0,
+    consent_simulation_new_cookies_list: [], // TODO: Add cookie list from comparison
+    consent_simulation_reject_requests: consentSimulation?.reject?.networkRequests || 0,
+    consent_simulation_accept_requests: consentSimulation?.accept?.networkRequests || 0,
+    consent_simulation_new_domains: [], // TODO: Extract from comparison
     consent_simulation_duration: consentSimulation?.duration || 0
   };
 }
