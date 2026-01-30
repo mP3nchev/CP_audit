@@ -147,6 +147,7 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
         website_url,
         status,
         error_message,
+        progress_json,
         created_at,
         updated_at,
         completed_at
@@ -177,6 +178,8 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
       state = 'DONE';
     } else if (audit.status === constants.AUDIT_STATUS.FAILED) {
       state = 'FAILED';
+    } else if (audit.status === constants.AUDIT_STATUS.PAUSED) {
+      state = 'WAITING_MANUAL_CONSENT';
     } else if (progressData && progressData.state) {
       state = progressData.state;
     } else if (audit.status === constants.AUDIT_STATUS.PROCESSING) {
@@ -203,6 +206,14 @@ router.get('/api/audit/:audit_id/status', (req, res) => {
 
     if (audit.status === constants.AUDIT_STATUS.FAILED) {
       response.error_message = audit.error_message;
+    }
+
+    if (audit.status === constants.AUDIT_STATUS.PAUSED) {
+      // Add pause-specific data for manual consent simulation
+      if (progressData && progressData.metadata) {
+        response.websiteUrl = progressData.metadata.websiteUrl || audit.website_url;
+        response.instructions = progressData.metadata.instructions;
+      }
     }
 
     res.json(response);
