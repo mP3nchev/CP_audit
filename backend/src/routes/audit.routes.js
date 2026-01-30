@@ -61,6 +61,16 @@ router.post('/api/audit/start', async (req, res) => {
     // Start scanning asynchronously
     scanWebsite(website_url, auditId, auditUid)
       .then(scanResults => {
+        // Check if audit was paused (waiting for manual consent)
+        const currentAudit = db.prepare(`
+          SELECT status FROM audits WHERE id = ?
+        `).get(auditId);
+
+        if (currentAudit && currentAudit.status === constants.AUDIT_STATUS.PAUSED) {
+          console.log(`⏸️  Audit ${auditUid} paused - waiting for manual consent upload`);
+          return; // Don't mark as completed
+        }
+
         // Update audit status to completed
         const updateStmt = db.prepare(`
           UPDATE audits
