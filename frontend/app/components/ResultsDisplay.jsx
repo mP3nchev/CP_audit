@@ -70,8 +70,9 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
         console.log(`📡 Poll #${attempts + 1}: status=${statusData.status}, state=${statusData.state}`);
 
         if (statusData.status === 'completed' || statusData.state === 'DONE') {
-          console.log('✅ Audit completed! Reloading page to show report...');
-          window.location.reload();
+          console.log('✅ Audit completed! Redirecting to show report...');
+          // Redirect with URL params to preserve audit ID after reload
+          window.location.href = `/?audit=${auditId}&status=completed`;
           return;
         }
 
