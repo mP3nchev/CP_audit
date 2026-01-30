@@ -8,6 +8,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
   const [copied, setCopied] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [resumed, setResumed] = useState(false);
+  const [pollingForCompletion, setPollingForCompletion] = useState(false);
 
   // Normalize API URL - ensure it starts with protocol
   let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -46,10 +47,8 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       const result = await resumeResponse.json();
       console.log('✅ Resume response:', result);
 
-      // Mark as resumed - hides the pause screen
-      setResumed(true);
-
-      // Start polling for completion (NO page reload)
+      // Start polling - keep showing pause screen with "Resuming..." message
+      setPollingForCompletion(true);
       pollForCompletion();
 
     } catch (error) {
@@ -109,6 +108,27 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
 
   // Show waiting state for manual consent
   if (status === 'waiting_manual_consent' && !resumed) {
+    // If polling for completion, show loading state
+    if (pollingForCompletion) {
+      return (
+        <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6 space-y-6">
+          <div className="flex items-center space-x-3">
+            <div className="text-4xl">⏳</div>
+            <div>
+              <h3 className="text-xl font-semibold text-gray-900">Resuming Audit...</h3>
+              <p className="text-sm text-gray-600">Step 17 is running (compliance score calculation)</p>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <LoadingSpinner size="lg" text="Polling for completion... This should take 30-60 seconds." />
+          </div>
+          <div className="text-xs text-gray-500 text-center">
+            The page will automatically reload when the audit is complete.
+          </div>
+        </div>
+      );
+    }
+
     // Determine the correct API URL for the command
     // If we're on Vercel, use Railway backend URL
     // If we're on localhost, use localhost
