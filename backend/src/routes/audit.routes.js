@@ -251,10 +251,10 @@ router.post('/api/audit/:audit_id/resume', async (req, res) => {
       });
     }
 
-    // Check if audit is in WAITING_MANUAL_CONSENT state
-    if (audit.status !== constants.AUDIT_STATUS.PROCESSING) {
+    // Check if audit is in PAUSED state (waiting for manual consent)
+    if (audit.status !== constants.AUDIT_STATUS.PAUSED) {
       return res.status(400).json({
-        error: 'Audit is not in waiting state',
+        error: 'Audit is not in paused state. Current status: ' + audit.status,
         status: audit.status
       });
     }
