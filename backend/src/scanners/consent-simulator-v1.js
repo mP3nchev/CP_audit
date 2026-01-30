@@ -353,20 +353,11 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
 
   // Check if running on Railway (no GUI available)
   if (constants.IS_RAILWAY && constants.CONSENT_MODE === 'assisted') {
-    console.log(`[DEBUG] Entered Railway block - checking for existing data...`);
-    // Check if manual consent data already uploaded for this audit
-    const existingData = await checkForManualConsentData(auditId, websiteUrl);
+    console.log(`[DEBUG] Entered Railway block - ALWAYS pausing for manual upload...`);
 
-    if (existingData) {
-      console.log('');
-      console.log('✅ Using pre-uploaded manual consent simulation data');
-      console.log(`   Upload time: ${existingData.uploadedAt}`);
-      console.log('');
-
-      return existingData.consentSimulation;
-    }
-
-    // No data yet - need to wait for manual upload
+    // IMPORTANT: Always pause on first run during audit scan
+    // Data will be loaded when audit is resumed via continueAuditFromStep17()
+    // This prevents re-using old data from previous audits
     const railwayUrl = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
       : 'https://cpaudit-production.up.railway.app';
@@ -381,7 +372,7 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     console.log(`   2. Run: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayUrl}`);
     console.log('   3. Complete the Reject + Accept scenarios');
     console.log('   4. Data will be uploaded automatically');
-    console.log('   5. This audit will resume automatically after upload');
+    console.log('   5. Click "Resume Audit" button in the frontend to continue');
     console.log('');
 
     return {
