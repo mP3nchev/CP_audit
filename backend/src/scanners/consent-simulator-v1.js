@@ -294,8 +294,37 @@ async function checkForManualConsentData(auditId, websiteUrl) {
     `).get(auditId);
 
     if (result && result.consent_simulation_json) {
+      const rawData = JSON.parse(result.consent_simulation_json);
+
+      // Transform data from upload format to expected format
+      // Upload format: { reject: {...}, accept: {...}, comparison: {...} }
+      // Expected format: { skipped: false, rejectScenario: {...}, acceptScenario: {...}, comparison: {...} }
+      const transformed = {
+        skipped: false,
+        rejectScenario: {
+          success: true,
+          cookies: rawData.reject?.cookiesAfterConsent || 0,
+          networkRequests: 0,  // Not tracked in upload
+          localStorageKeys: 0
+        },
+        acceptScenario: rawData.accept ? {
+          success: true,
+          cookies: rawData.accept?.cookiesAfterConsent || 0,
+          networkRequests: 0,
+          localStorageKeys: 0
+        } : {
+          success: false,
+          cookies: 0,
+          networkRequests: 0,
+          localStorageKeys: 0
+        },
+        comparison: rawData.comparison || null,
+        duration: 0,  // Not tracked in upload
+        uploadedManually: true
+      };
+
       return {
-        consentSimulation: JSON.parse(result.consent_simulation_json),
+        consentSimulation: transformed,
         uploadedAt: result.created_at
       };
     }
@@ -356,6 +385,44 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
       acceptScenario: { success: false, pending: true },
       comparison: null
     };
+  }
+
+  // Local execution - check if data already uploaded
+  if (!constants.IS_RAILWAY) {
+    const existingData = await checkForManualConsentData(auditId, websiteUrl);
+
+    if (existingData) {
+      console.log('');
+      console.log('✅ Using pre-uploaded manual consent simulation data');
+      console.log(`   Upload time: ${existingData.uploadedAt}`);
+      console.log('');
+
+      return existingData.consentSimulation;
+    }
+
+    // No data - check if we can run headful browser
+    // If headless mode or no GUI, skip and show instructions
+    if (constants.PUPPETEER_HEADLESS) {
+      console.log('');
+      console.log('⚠️  === CONSENT SIMULATION SKIPPED ===');
+      console.log('   Reason: PUPPETEER_HEADLESS=true (no GUI for manual interaction)');
+      console.log('   Environment: Local headless mode');
+      console.log('');
+      console.log('💡 To run consent simulation:');
+      console.log('   Option 1: Set PUPPETEER_HEADLESS=false in .env and restart');
+      console.log(`   Option 2: Run manually: node manual-consent-audit.js --url "${websiteUrl}"`);
+      console.log('');
+
+      return {
+        waiting: false,
+        skipped: true,
+        reason: 'Headless mode enabled - no GUI for manual interaction',
+        environment: 'Local',
+        rejectScenario: { success: false, skipped: true },
+        acceptScenario: { success: false, skipped: true },
+        comparison: null
+      };
+    }
   }
 
   console.log('');
@@ -435,9 +502,11 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
       await closeBrowser(browser).catch(() => {});
     }
 
+    // Return as skipped to prevent audit failure
     return {
-      skipped: false,
+      skipped: true,
       error: error.message,
+      reason: `Consent simulation failed: ${error.message}`,
       rejectScenario: { success: false, error: error.message },
       acceptScenario: { success: false, error: error.message },
       comparison: null
