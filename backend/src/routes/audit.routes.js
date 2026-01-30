@@ -961,8 +961,7 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
       const updateStmt = db.prepare(`
         UPDATE scan_results
         SET consent_simulation_json = ?,
-            tracking_before_consent = ?,
-            updated_at = datetime('now')
+            tracking_before_consent = ?
         WHERE audit_id = ?
       `);
 
