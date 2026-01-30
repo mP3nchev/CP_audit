@@ -44,17 +44,21 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       }
 
       const result = await resumeResponse.json();
+      console.log('Resume response:', result);
 
-      if (result.status === 'completed' || result.state === 'DONE') {
-        setResumed(true);
-        // Reload page to show completed audit
+      // Mark as resumed (this will trigger parent to start polling)
+      setResumed(true);
+
+      // Start polling for completion
+      alert('✅ Audit resumed! Step 17 is running. Polling for completion...');
+
+      // Reload page after short delay to restart polling in parent component
+      setTimeout(() => {
         window.location.reload();
-      } else {
-        alert('Audit resumed but not completed yet. Please wait and try again.');
-      }
+      }, 1000);
+
     } catch (error) {
       alert(`Failed to resume audit: ${error.message}`);
-    } finally {
       setIsResuming(false);
     }
   };
