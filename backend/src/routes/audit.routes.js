@@ -279,6 +279,15 @@ router.post('/api/audit/:audit_id/resume', async (req, res) => {
     console.log(`   Consent data found: Yes`);
     console.log(`   Continuing from Step 17...`);
 
+    // Update audit status back to PROCESSING
+    db.prepare(`
+      UPDATE audits
+      SET status = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(constants.AUDIT_STATUS.PROCESSING, audit.id);
+
+    console.log(`   ✅ Audit status updated: PAUSED → PROCESSING`);
+
     // Import scanner dynamically to avoid circular dependency
     const { continueAuditFromStep17 } = require('../scanners/website-scanner');
 
@@ -999,18 +1008,13 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
     }
 
     // ============================================
-    // UPDATE AUDIT STATUS
+    // KEEP AUDIT IN PAUSED STATE
     // ============================================
-    const updateStmt = db.prepare(`
-      UPDATE audits
-      SET status = ?,
-          completed_at = datetime('now'),
-          updated_at = datetime('now')
-      WHERE id = ?
-    `);
-    updateStmt.run(constants.AUDIT_STATUS.COMPLETED, auditId);
+    // DO NOT mark as completed here!
+    // Resume endpoint will handle status update and continue to Step 17
 
-    console.log(`   ✅ Audit ${auditUid} marked as completed`);
+    console.log(`   ✅ Consent data uploaded for audit ${auditUid}`);
+    console.log(`   ⏸️  Audit remains PAUSED - waiting for Resume button click`);
     console.log('');
 
     // Return success response
