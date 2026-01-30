@@ -61,8 +61,14 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
 
   // Show waiting state for manual consent
   if (status === 'waiting_manual_consent' && !resumed) {
-    const railwayUrl = apiUrl.replace('http://localhost:3001', process.env.NEXT_PUBLIC_API_URL || apiUrl);
-    const commandLine = `node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayUrl}`;
+    // Determine the correct API URL for the command
+    // If we're on Vercel, use Railway backend URL
+    // If we're on localhost, use localhost
+    const railwayBackendUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.includes('vercel')
+      ? 'https://cpaudit-production.up.railway.app'
+      : apiUrl;
+
+    const commandLine = `node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayBackendUrl}`;
 
     return (
       <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6 space-y-6">

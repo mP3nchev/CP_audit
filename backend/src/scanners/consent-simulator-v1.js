@@ -345,8 +345,15 @@ async function checkForManualConsentData(auditId, websiteUrl) {
 async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
   const startTime = Date.now();
 
+  console.log(`[DEBUG] Consent simulation starting...`);
+  console.log(`[DEBUG] IS_RAILWAY: ${constants.IS_RAILWAY}`);
+  console.log(`[DEBUG] CONSENT_MODE: ${constants.CONSENT_MODE}`);
+  console.log(`[DEBUG] RAILWAY_ENVIRONMENT: ${process.env.RAILWAY_ENVIRONMENT}`);
+  console.log(`[DEBUG] auditId: ${auditId}`);
+
   // Check if running on Railway (no GUI available)
   if (constants.IS_RAILWAY && constants.CONSENT_MODE === 'assisted') {
+    console.log(`[DEBUG] Entered Railway block - checking for existing data...`);
     // Check if manual consent data already uploaded for this audit
     const existingData = await checkForManualConsentData(auditId, websiteUrl);
 
@@ -360,6 +367,10 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     }
 
     // No data yet - need to wait for manual upload
+    const railwayUrl = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : 'https://cpaudit-production.up.railway.app';
+
     console.log('');
     console.log('⏸️  === WAITING FOR MANUAL CONSENT SIMULATION ===');
     console.log('   Reason: Assisted mode requires local execution (GUI needed)');
@@ -367,7 +378,7 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     console.log('');
     console.log('📋 INSTRUCTIONS:');
     console.log('   1. Open a terminal on your LOCAL machine (Windows/Mac/Linux)');
-    console.log(`   2. Run: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${process.env.PUBLIC_URL || 'https://your-railway-url.up.railway.app'}`);
+    console.log(`   2. Run: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayUrl}`);
     console.log('   3. Complete the Reject + Accept scenarios');
     console.log('   4. Data will be uploaded automatically');
     console.log('   5. This audit will resume automatically after upload');
@@ -380,7 +391,7 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
       environment: 'Railway',
       auditId: auditId,
       websiteUrl: websiteUrl,
-      instructions: `Run locally: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${process.env.PUBLIC_URL}`,
+      instructions: `Run locally: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayUrl}`,
       rejectScenario: { success: false, pending: true },
       acceptScenario: { success: false, pending: true },
       comparison: null
