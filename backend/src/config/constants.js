@@ -42,6 +42,7 @@ module.exports = {
   AUDIT_STATUS: {
     PENDING: 'pending',
     PROCESSING: 'processing',
+    PAUSED: 'paused',
     COMPLETED: 'completed',
     FAILED: 'failed'
   },

@@ -511,14 +511,28 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         results.consentSimulation = consentSimulation;
         savePartialResults(auditId, results);
 
+        // Update audit status to PAUSED (prevents audit.routes.js from marking as COMPLETED)
+        const db = getDatabase();
+        db.prepare(`
+          UPDATE audits
+          SET status = ?,
+              updated_at = datetime('now')
+          WHERE id = ?
+        `).run(constants.AUDIT_STATUS.PAUSED, auditId);
+
         console.log('');
         console.log('⏸️  === AUDIT PAUSED ===');
         console.log('   Waiting for manual consent simulation upload from local machine');
         console.log('   Audit will resume automatically after data upload via /api/audit/:id/resume');
         console.log('');
 
-        // Return early - do NOT continue to Step 17
-        return;
+        // Return pause indicator - do NOT continue to Step 17
+        return {
+          paused: true,
+          auditId,
+          websiteUrl,
+          instructions: consentSimulation.instructions
+        };
       } else if (consentSimulation.skipped) {
         console.log(`   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`);
       } else {
@@ -701,12 +715,8 @@ function savePartialResults(auditId, results) {
     `).get(auditId);
 
     if (existing) {
-      // Update existing
-      db.prepare(`
-        UPDATE scan_results
-        SET updated_at = datetime('now')
-        WHERE audit_id = ?
-      `).run(auditId);
+      // Update existing (scan_results doesn't have updated_at column)
+      // Just skip update for now
     } else {
       // Insert minimal record
       db.prepare(`
