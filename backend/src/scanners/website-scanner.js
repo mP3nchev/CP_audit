@@ -526,8 +526,13 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         console.log('   Audit will resume automatically after data upload via /api/audit/:id/resume');
         console.log('');
 
-        // Return early - do NOT continue to Step 17
-        return;
+        // Return pause indicator - do NOT continue to Step 17
+        return {
+          paused: true,
+          auditId,
+          websiteUrl,
+          instructions: consentSimulation.instructions
+        };
       } else if (consentSimulation.skipped) {
         console.log(`   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`);
       } else {
