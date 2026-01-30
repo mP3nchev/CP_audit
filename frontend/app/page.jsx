@@ -1,11 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AuditForm from './components/AuditForm';
 import ResultsDisplay from './components/ResultsDisplay';
 
 export default function Home() {
   const [completedAudit, setCompletedAudit] = useState(null);
+
+  // Check URL params on mount (for resume redirect)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const auditId = params.get('audit');
+    const status = params.get('status');
+
+    if (auditId && status === 'completed') {
+      console.log('📋 Detected completed audit from URL params:', auditId);
+      setCompletedAudit({ auditId, status: 'completed' });
+
+      // Clean URL (remove params)
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
 
   const handleAuditComplete = (result) => {
     setCompletedAudit(result);

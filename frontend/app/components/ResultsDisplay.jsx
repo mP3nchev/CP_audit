@@ -8,6 +8,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
   const [copied, setCopied] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [resumed, setResumed] = useState(false);
+  const [pollingForCompletion, setPollingForCompletion] = useState(false);
 
   // Normalize API URL - ensure it starts with protocol
   let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -44,18 +45,11 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       }
 
       const result = await resumeResponse.json();
-      console.log('Resume response:', result);
+      console.log('✅ Resume response:', result);
 
-      // Mark as resumed (this will trigger parent to start polling)
-      setResumed(true);
-
-      // Start polling for completion
-      alert('✅ Audit resumed! Step 17 is running. Polling for completion...');
-
-      // Reload page after short delay to restart polling in parent component
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      // Start polling - keep showing pause screen with "Resuming..." message
+      setPollingForCompletion(true);
+      pollForCompletion();
 
     } catch (error) {
       alert(`Failed to resume audit: ${error.message}`);
@@ -63,8 +57,79 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     }
   };
 
+  const pollForCompletion = async () => {
+    console.log('⏳ Starting polling for audit completion...');
+    const MAX_POLLS = 60; // 60 polls * 2s = 2 minutes max
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const statusData = await statusResponse.json();
+
+        console.log(`📡 Poll #${attempts + 1}: status=${statusData.status}, state=${statusData.state}`);
+
+        if (statusData.status === 'completed' || statusData.state === 'DONE') {
+          console.log('✅ Audit completed! Redirecting to show report...');
+          // Redirect with URL params to preserve audit ID after reload
+          window.location.href = `/?audit=${auditId}&status=completed`;
+          return;
+        }
+
+        if (statusData.status === 'failed' || statusData.state === 'FAILED') {
+          console.error('❌ Audit failed:', statusData.error_message);
+          alert('Audit failed: ' + (statusData.error_message || 'Unknown error'));
+          setIsResuming(false);
+          return;
+        }
+
+        // Continue polling
+        attempts++;
+        if (attempts < MAX_POLLS) {
+          setTimeout(poll, 2000); // Poll every 2 seconds
+        } else {
+          console.error('⏰ Polling timeout after', attempts, 'attempts');
+          alert('Polling timeout. Please refresh the page to check audit status.');
+          setIsResuming(false);
+        }
+
+      } catch (error) {
+        console.error('❌ Polling error:', error);
+        attempts++;
+        if (attempts < MAX_POLLS) {
+          setTimeout(poll, 2000);
+        } else {
+          setIsResuming(false);
+        }
+      }
+    };
+
+    poll();
+  };
+
   // Show waiting state for manual consent
   if (status === 'waiting_manual_consent' && !resumed) {
+    // If polling for completion, show loading state
+    if (pollingForCompletion) {
+      return (
+        <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6 space-y-6">
+          <div className="flex items-center space-x-3">
+            <div className="text-4xl">⏳</div>
+            <div>
+              <h3 className="text-xl font-semibold text-gray-900">Resuming Audit...</h3>
+              <p className="text-sm text-gray-600">Step 17 is running (compliance score calculation)</p>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <LoadingSpinner size="lg" text="Polling for completion... This should take 30-60 seconds." />
+          </div>
+          <div className="text-xs text-gray-500 text-center">
+            The page will automatically reload when the audit is complete.
+          </div>
+        </div>
+      );
+    }
+
     // Determine the correct API URL for the command
     // If we're on Vercel, use Railway backend URL
     // If we're on localhost, use localhost
