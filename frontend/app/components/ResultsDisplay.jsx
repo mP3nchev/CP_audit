@@ -44,23 +44,67 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       }
 
       const result = await resumeResponse.json();
-      console.log('Resume response:', result);
+      console.log('✅ Resume response:', result);
 
-      // Mark as resumed (this will trigger parent to start polling)
+      // Mark as resumed - hides the pause screen
       setResumed(true);
 
-      // Start polling for completion
-      alert('✅ Audit resumed! Step 17 is running. Polling for completion...');
-
-      // Reload page after short delay to restart polling in parent component
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      // Start polling for completion (NO page reload)
+      pollForCompletion();
 
     } catch (error) {
       alert(`Failed to resume audit: ${error.message}`);
       setIsResuming(false);
     }
+  };
+
+  const pollForCompletion = async () => {
+    console.log('⏳ Starting polling for audit completion...');
+    const MAX_POLLS = 60; // 60 polls * 2s = 2 minutes max
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const statusData = await statusResponse.json();
+
+        console.log(`📡 Poll #${attempts + 1}: status=${statusData.status}, state=${statusData.state}`);
+
+        if (statusData.status === 'completed' || statusData.state === 'DONE') {
+          console.log('✅ Audit completed! Reloading page to show report...');
+          window.location.reload();
+          return;
+        }
+
+        if (statusData.status === 'failed' || statusData.state === 'FAILED') {
+          console.error('❌ Audit failed:', statusData.error_message);
+          alert('Audit failed: ' + (statusData.error_message || 'Unknown error'));
+          setIsResuming(false);
+          return;
+        }
+
+        // Continue polling
+        attempts++;
+        if (attempts < MAX_POLLS) {
+          setTimeout(poll, 2000); // Poll every 2 seconds
+        } else {
+          console.error('⏰ Polling timeout after', attempts, 'attempts');
+          alert('Polling timeout. Please refresh the page to check audit status.');
+          setIsResuming(false);
+        }
+
+      } catch (error) {
+        console.error('❌ Polling error:', error);
+        attempts++;
+        if (attempts < MAX_POLLS) {
+          setTimeout(poll, 2000);
+        } else {
+          setIsResuming(false);
+        }
+      }
+    };
+
+    poll();
   };
 
   // Show waiting state for manual consent
