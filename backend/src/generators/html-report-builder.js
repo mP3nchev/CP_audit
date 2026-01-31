@@ -542,19 +542,45 @@ function transformDataForTemplate(data) {
     consent_simulation_skipped: consentSimulation?.skipped || false,
     consent_simulation_skip_reason: consentSimulation?.reason || null,
     consent_simulation_error: consentSimulation?.error || null,
-    consent_simulation_reject_cookies: consentSimulation?.rejectScenario?.cookies || 0,
-    consent_simulation_accept_cookies: consentSimulation?.acceptScenario?.cookies || 0,
-    consent_simulation_new_cookies: consentSimulation?.comparison?.cookies?.newAfterAccept?.length || 0,
-    consent_simulation_new_cookies_list: consentSimulation?.comparison?.cookies?.newAfterAccept?.slice(0, 10).map(c => ({
-      name: c.name,
-      domain: c.domain,
-      category: c.category,
-      purpose: c.purpose
-    })) || [],
-    consent_simulation_reject_requests: consentSimulation?.rejectScenario?.networkRequests || 0,
-    consent_simulation_accept_requests: consentSimulation?.acceptScenario?.networkRequests || 0,
-    consent_simulation_new_domains: consentSimulation?.comparison?.network?.newDomainsAfterAccept || [],
-    consent_simulation_duration: consentSimulation?.duration || 0
+    consent_simulation_reject_cookies: consentSimulation?.reject?.cookiesAfterConsent || 0,
+    consent_simulation_accept_cookies: consentSimulation?.accept?.cookiesAfterConsent || 0,
+    consent_simulation_new_cookies: consentSimulation?.comparison?.cookieDifference || 0,
+    consent_simulation_new_cookies_list: [], // TODO: Add cookie list from comparison
+    consent_simulation_reject_requests: consentSimulation?.reject?.networkRequests || 0,
+    consent_simulation_accept_requests: consentSimulation?.accept?.networkRequests || 0,
+    consent_simulation_new_domains: [], // TODO: Extract from comparison
+    consent_simulation_duration: consentSimulation?.duration || 0,
+
+    // Consent Monitoring Data (v2.0)
+    monitoring_enabled: data.scanResults?.monitoring_data_json ? true : false,
+    monitoring_violations: data.scanResults?.monitoring_analysis_json ?
+      JSON.parse(data.scanResults.monitoring_analysis_json).violations || [] : [],
+    monitoring_critical_violations: data.scanResults?.monitoring_analysis_json ?
+      JSON.parse(data.scanResults.monitoring_analysis_json).summary?.criticalViolations || 0 : 0,
+    monitoring_gtag_calls: data.scanResults?.monitoring_data_json ?
+      JSON.parse(data.scanResults.monitoring_data_json).gtagCalls?.length || 0 : 0,
+    monitoring_datalayer_events: data.scanResults?.monitoring_data_json ?
+      JSON.parse(data.scanResults.monitoring_data_json).dataLayerEvents?.length || 0 : 0,
+    monitoring_storage_writes: data.scanResults?.monitoring_data_json ?
+      JSON.parse(data.scanResults.monitoring_data_json).storageWrites?.length || 0 : 0,
+
+    // Detected Vendors (v2.0)
+    detected_vendors: data.scanResults?.detected_vendors_json ?
+      JSON.parse(data.scanResults.detected_vendors_json).map(vendor => ({
+        name: vendor.name,
+        category: vendor.category,
+        confidence: vendor.confidence,
+        violation: vendor.violation || false,
+        before_consent: vendor.beforeConsent || false,
+        first_seen: vendor.firstSeen ? (vendor.firstSeen / 1000).toFixed(2) + 's' : 'N/A',
+        evidence_count: vendor.matches || 0
+      })) : [],
+    vendor_violations_count: data.scanResults?.vendor_summary_json ?
+      JSON.parse(data.scanResults.vendor_summary_json).violations?.length || 0 : 0,
+    vendor_total_count: data.scanResults?.vendor_summary_json ?
+      JSON.parse(data.scanResults.vendor_summary_json).total || 0 : 0,
+    vendor_requires_consent_count: data.scanResults?.vendor_summary_json ?
+      JSON.parse(data.scanResults.vendor_summary_json).requiresConsent || 0 : 0
   };
 }
 

@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS scan_results (
     compliance_score_json TEXT,
     request_categorization_json TEXT,
     consent_simulation_json TEXT,
+    monitoring_data_json TEXT,
+    monitoring_analysis_json TEXT,
+    detected_vendors_json TEXT,
+    vendor_summary_json TEXT,
     scan_duration_seconds INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
