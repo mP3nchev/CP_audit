@@ -38,9 +38,10 @@ function findElementByTextHybrid(elements, keywords) {
  * Analyze cookie banner for noyb 8-point checklist violations
  * @param {Page} page - Puppeteer page
  * @param {string} auditId - Audit ID for debug logging
+ * @param {Array} cookies - Optional cookies array for Type I check
  * @returns {Promise<Object>} Violations detected
  */
-async function analyzeCookieBanner(page, auditId = null) {
+async function analyzeCookieBanner(page, auditId = null, cookies = null) {
   let debugSessionId = null;
 
   try {
@@ -54,13 +55,21 @@ async function analyzeCookieBanner(page, auditId = null) {
 
     const violations = [];
     const passedChecks = [];
+    const skippedChecks = [];
     const debugLogs = [];
 
     // Check each violation type
     for (const violation of noybViolations.violations) {
-      const result = await checkViolation(page, violation, debugSessionId);
+      const result = await checkViolation(page, violation, debugSessionId, cookies);
 
-      if (result.detected) {
+      if (result.skipped) {
+        skippedChecks.push({
+          id: violation.id,
+          name: violation.name,
+          reason: result.skipReason || 'Check could not be performed'
+        });
+        console.log(`  ⏭️  ${violation.id.toUpperCase()}: Skipped (${result.skipReason})`);
+      } else if (result.detected) {
         violations.push({
           id: violation.id,
           name: violation.name,
@@ -83,11 +92,13 @@ async function analyzeCookieBanner(page, auditId = null) {
         debugLogs.push({
           violationType: violation.id,
           detected: result.detected,
+          skipped: result.skipped || false,
           evidence: result.evidence
         });
 
         await logViolationCheck(debugSessionId, violation.id, {
           detected: result.detected,
+          skipped: result.skipped || false,
           violationName: violation.name,
           severity: violation.severity,
           evidence: result.evidence
@@ -98,9 +109,13 @@ async function analyzeCookieBanner(page, auditId = null) {
     const totalChecks = noybViolations.violations.length;
     const passedCount = passedChecks.length;
     const violationCount = violations.length;
-    const compliancePercentage = Math.round((passedCount / totalChecks) * 100);
+    const skippedCount = skippedChecks.length;
+    const compliancePercentage = Math.round((passedCount / (totalChecks - skippedCount)) * 100);
 
-    console.log(`✅ Banner analysis complete: ${passedCount}/${totalChecks} checks passed (${compliancePercentage}%)`);
+    console.log(`✅ Banner analysis complete: ${passedCount}/${totalChecks - skippedCount} checks passed (${compliancePercentage}%)`);
+    if (skippedCount > 0) {
+      console.log(`   ⏭️  ${skippedCount} checks skipped`);
+    }
 
     // Save debug summary
     if (DEBUG_VIOLATIONS && debugSessionId) {
@@ -108,18 +123,22 @@ async function analyzeCookieBanner(page, auditId = null) {
         totalChecks,
         passedCount,
         violationCount,
+        skippedCount,
         compliancePercentage,
         violations: violations.map(v => v.id),
-        passedChecks: passedChecks.map(c => c.id)
+        passedChecks: passedChecks.map(c => c.id),
+        skippedChecks: skippedChecks.map(c => c.id)
       });
     }
 
     return {
       violations,
       passedChecks,
+      skippedChecks,
       totalChecks,
       passedCount,
       violationCount,
+      skippedCount,
       compliancePercentage,
       hasCriticalViolations: violations.some(v => v.severity === 'critical'),
       debugSessionId: DEBUG_VIOLATIONS ? debugSessionId : null
@@ -144,9 +163,10 @@ async function analyzeCookieBanner(page, auditId = null) {
  * @param {Page} page - Puppeteer page
  * @param {Object} violation - Violation definition
  * @param {string} debugSessionId - Debug session ID (optional)
+ * @param {Array} cookies - Cookies array for Type I check (optional)
  * @returns {Promise<Object>} Detection result
  */
-async function checkViolation(page, violation, debugSessionId = null) {
+async function checkViolation(page, violation, debugSessionId = null, cookies = null) {
   try {
     let result;
 
@@ -170,13 +190,28 @@ async function checkViolation(page, violation, debugSessionId = null) {
         result = await checkLegitimateInterestForAds(page, violation, debugSessionId);
         break;
       case 'type_i':
-        result = await checkMisclassifiedEssentialCookies(page, violation, debugSessionId);
+        // Type I requires cookies array - skip if not provided
+        if (!cookies || !Array.isArray(cookies)) {
+          result = {
+            detected: false,
+            skipped: true,
+            skipReason: 'Cookies data not provided',
+            evidence: null
+          };
+        } else {
+          result = checkMisclassifiedEssentialCookies(cookies, violation);
+        }
         break;
       case 'type_k':
         result = await checkDifficultConsentWithdrawal(page, violation, debugSessionId);
         break;
       default:
-        result = { detected: false, evidence: null };
+        result = {
+          detected: false,
+          skipped: true,
+          skipReason: 'Unknown violation type',
+          evidence: null
+        };
     }
 
     return result;
@@ -189,7 +224,14 @@ async function checkViolation(page, violation, debugSessionId = null) {
       });
     }
 
-    return { detected: false, evidence: null, error: error.message };
+    // Return SKIPPED status instead of false on error
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Check failed: ${error.message}`,
+      evidence: null,
+      error: error.message
+    };
   }
 }
 
@@ -261,7 +303,12 @@ async function checkNoRejectButton(page, violation) {
     };
   } catch (error) {
     console.error('Type A check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type A check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
@@ -311,7 +358,12 @@ async function checkPreTickedBoxes(page, violation) {
     };
   } catch (error) {
     console.error('Type B check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type B check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
@@ -374,12 +426,18 @@ async function checkDeceptiveLinkDesign(page, violation) {
     };
   } catch (error) {
     console.error('Type C check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type C check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
 /**
  * Type D: Deceptive Button Colors
+ * Uses HSL-based color similarity detection instead of exact matching
  */
 async function checkDeceptiveButtonColors(page, violation) {
   try {
@@ -403,17 +461,48 @@ async function checkDeceptiveButtonColors(page, violation) {
       const acceptBg = window.getComputedStyle(acceptButton).backgroundColor;
       const rejectBg = window.getComputedStyle(rejectButton).backgroundColor;
 
-      // Convert rgb to hex
+      // Convert rgb to hex AND HSL for similarity matching
       const rgbToHex = (rgb) => {
         const match = rgb.match(/\d+/g);
         if (!match) return null;
         return '#' + match.map(x => parseInt(x).toString(16).padStart(2, '0')).join('');
       };
 
+      const rgbToHsl = (rgb) => {
+        const match = rgb.match(/\d+/g);
+        if (!match || match.length < 3) return null;
+
+        let [r, g, b] = match.map(x => parseInt(x) / 255);
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+
+        if (max === min) {
+          h = s = 0; // achromatic (grey)
+        } else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+          switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            case b: h = ((r - g) / d + 4) / 6; break;
+          }
+        }
+
+        return {
+          h: Math.round(h * 360),
+          s: Math.round(s * 100),
+          l: Math.round(l * 100)
+        };
+      };
+
       return {
         hasButtons: true,
         acceptColor: rgbToHex(acceptBg),
-        rejectColor: rgbToHex(rejectBg)
+        rejectColor: rgbToHex(rejectBg),
+        acceptHsl: rgbToHsl(acceptBg),
+        rejectHsl: rgbToHsl(rejectBg)
       };
     }, { keywords: BUTTON_KEYWORDS, colorPatterns: violation.color_patterns });
 
@@ -421,28 +510,64 @@ async function checkDeceptiveButtonColors(page, violation) {
       return { detected: false, evidence: null };
     }
 
-    // Check if accept uses attractive color and reject uses muted color
+    // Strategy 1: Exact match (legacy)
     const acceptIsAttractive = violation.color_patterns.accept_attractive.some(color =>
       result.acceptColor?.toLowerCase() === color.toLowerCase()
     );
-
     const rejectIsMuted = violation.color_patterns.reject_muted.some(color =>
       result.rejectColor?.toLowerCase() === color.toLowerCase()
     );
+    const exactMatch = acceptIsAttractive && rejectIsMuted;
 
-    const detected = acceptIsAttractive && rejectIsMuted;
+    // Strategy 2: HSL similarity (more reliable)
+    let hslMatch = false;
+    if (result.acceptHsl && result.rejectHsl) {
+      const acceptHsl = result.acceptHsl;
+      const rejectHsl = result.rejectHsl;
+
+      // Accept is "attractive" if:
+      // - Hue is green (90-150°) or blue (180-260°)
+      // - Saturation > 40% (vibrant)
+      // - Lightness 40-70% (not too dark/bright)
+      const acceptIsAttractiveSimilar = (
+        ((acceptHsl.h >= 90 && acceptHsl.h <= 150) ||   // Green range
+         (acceptHsl.h >= 180 && acceptHsl.h <= 260)) &&  // Blue range
+        acceptHsl.s > 40 &&
+        acceptHsl.l >= 40 && acceptHsl.l <= 70
+      );
+
+      // Reject is "muted" if:
+      // - Saturation < 15% (desaturated/grey)
+      // - OR Lightness > 80% (very light grey/white)
+      const rejectIsMutedSimilar = (
+        rejectHsl.s < 15 ||
+        rejectHsl.l > 80
+      );
+
+      hslMatch = acceptIsAttractiveSimilar && rejectIsMutedSimilar;
+    }
+
+    const detected = exactMatch || hslMatch;
 
     return {
       detected,
       evidence: detected ? {
         message: 'Accept button uses attractive color while Reject is muted',
         acceptColor: result.acceptColor,
-        rejectColor: result.rejectColor
+        rejectColor: result.rejectColor,
+        acceptHsl: result.acceptHsl,
+        rejectHsl: result.rejectHsl,
+        detectionMethod: exactMatch ? 'exact_match' : 'hsl_similarity'
       } : null
     };
   } catch (error) {
     console.error('Type D check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Color check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
@@ -525,7 +650,12 @@ async function checkDeceptiveButtonContrast(page, violation) {
     };
   } catch (error) {
     console.error('Type E check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type E check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
@@ -571,7 +701,12 @@ async function checkLegitimateInterestForAds(page, violation) {
     };
   } catch (error) {
     console.error('Type H check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type H check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
@@ -584,7 +719,12 @@ async function checkLegitimateInterestForAds(page, violation) {
 function checkMisclassifiedEssentialCookies(cookies, violation) {
   try {
     if (!cookies || !Array.isArray(cookies)) {
-      return { detected: false, evidence: null };
+      return {
+        detected: false,
+        skipped: true,
+        skipReason: 'No cookies data available',
+        evidence: null
+      };
     }
 
     // Find cookies marked as essential/necessary
@@ -615,7 +755,12 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
     };
   } catch (error) {
     console.error('Type I check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type I check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 
@@ -681,7 +826,12 @@ async function checkDifficultConsentWithdrawal(page, violation) {
     };
   } catch (error) {
     console.error('Type K check failed:', error.message);
-    return { detected: false, evidence: null };
+    return {
+      detected: false,
+      skipped: true,
+      skipReason: `Type K check failed: ${error.message}`,
+      evidence: null
+    };
   }
 }
 

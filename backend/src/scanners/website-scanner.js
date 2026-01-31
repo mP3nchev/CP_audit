@@ -352,9 +352,12 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     stepStartTime = Date.now();
     console.log('⚖️  Step 10: Analyzing cookie banner for GDPR violations...');
     updateProgress(auditId, 10, 17, 'Analyzing cookie banner compliance (NOYB checklist)...', startTime);
-    const bannerAnalysis = await analyzeCookieBanner(page);
+    const bannerAnalysis = await analyzeCookieBanner(page, auditId, cookies);
     console.log(`   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`);
     console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
+    if (bannerAnalysis.skippedCount > 0) {
+      console.log(`   ⏭️  Checks skipped: ${bannerAnalysis.skippedCount}`);
+    }
     console.log(`   ⚠️  Critical violations: ${bannerAnalysis.hasCriticalViolations ? 'YES' : 'NO'}`);
 
     // Step 10.4: Extract consent monitoring data + vendor fingerprinting
