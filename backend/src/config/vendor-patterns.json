@@ -1,0 +1,208 @@
+{
+  "vendors": [
+    {
+      "name": "Google Analytics 4",
+      "id": "ga4",
+      "patterns": [
+        { "type": "script", "regex": "googletagmanager\\.com/gtag/js\\?id=G-" },
+        { "type": "script", "regex": "googletagmanager\\.com/gtm\\.js" },
+        { "type": "network", "regex": "google-analytics\\.com/g/collect" },
+        { "type": "function", "name": "gtag" }
+      ],
+      "category": "analytics",
+      "gdprRequired": true
+    },
+    {
+      "name": "Google Ads",
+      "id": "google_ads",
+      "patterns": [
+        { "type": "script", "regex": "googletagmanager\\.com/gtag/js\\?id=AW-" },
+        { "type": "network", "regex": "googleadservices\\.com" },
+        { "type": "network", "regex": "doubleclick\\.net" }
+      ],
+      "category": "advertising",
+      "gdprRequired": true
+    },
+    {
+      "name": "Meta Pixel",
+      "id": "meta_pixel",
+      "patterns": [
+        { "type": "script", "regex": "connect\\.facebook\\.net/.*fbevents\\.js" },
+        { "type": "function", "name": "fbq" },
+        { "type": "network", "regex": "facebook\\.com/tr" }
+      ],
+      "category": "advertising",
+      "gdprRequired": true
+    },
+    {
+      "name": "TikTok Pixel",
+      "id": "tiktok_pixel",
+      "patterns": [
+        { "type": "script", "regex": "analytics\\.tiktok\\.com" },
+        { "type": "function", "name": "ttq" }
+      ],
+      "category": "advertising",
+      "gdprRequired": true
+    },
+    {
+      "name": "LinkedIn Insight",
+      "id": "linkedin_insight",
+      "patterns": [
+        { "type": "script", "regex": "snap\\.licdn\\.com/li\\.lms-analytics" },
+        { "type": "network", "regex": "linkedin\\.com/px" }
+      ],
+      "category": "advertising",
+      "gdprRequired": true
+    },
+    {
+      "name": "Hotjar",
+      "id": "hotjar",
+      "patterns": [
+        { "type": "script", "regex": "static\\.hotjar\\.com" },
+        { "type": "function", "name": "hj" }
+      ],
+      "category": "analytics",
+      "gdprRequired": true
+    },
+    {
+      "name": "Clarity",
+      "id": "clarity",
+      "patterns": [
+        { "type": "script", "regex": "clarity\\.ms" },
+        { "type": "function", "name": "clarity" }
+      ],
+      "category": "analytics",
+      "gdprRequired": true
+    },
+    {
+      "name": "Intercom",
+      "id": "intercom",
+      "patterns": [
+        { "type": "script", "regex": "widget\\.intercom\\.io" },
+        { "type": "function", "name": "Intercom" }
+      ],
+      "category": "functional",
+      "gdprRequired": false
+    },
+    {
+      "name": "HubSpot",
+      "id": "hubspot",
+      "patterns": [
+        { "type": "script", "regex": "js\\.hs-scripts\\.com" },
+        { "type": "script", "regex": "js\\.hsforms\\.net" }
+      ],
+      "category": "marketing",
+      "gdprRequired": true
+    },
+    {
+      "name": "Segment",
+      "id": "segment",
+      "patterns": [
+        { "type": "script", "regex": "cdn\\.segment\\.com" },
+        { "type": "function", "name": "analytics" }
+      ],
+      "category": "analytics",
+      "gdprRequired": true
+    },
+    {
+      "name": "Mixpanel",
+      "id": "mixpanel",
+      "patterns": [
+        { "type": "script", "regex": "cdn\\.mxpnl\\.com" },
+        { "type": "function", "name": "mixpanel" }
+      ],
+      "category": "analytics",
+      "gdprRequired": true
+    },
+    {
+      "name": "Amplitude",
+      "id": "amplitude",
+      "patterns": [
+        { "type": "script", "regex": "cdn\\.amplitude\\.com" },
+        { "type": "function", "name": "amplitude" }
+      ],
+      "category": "analytics",
+      "gdprRequired": true
+    },
+    {
+      "name": "Google Tag Manager",
+      "id": "gtm",
+      "patterns": [
+        { "type": "script", "regex": "googletagmanager\\.com/gtm\\.js\\?id=GTM-" },
+        { "type": "function", "name": "google_tag_manager" }
+      ],
+      "category": "tag_manager",
+      "gdprRequired": false
+    },
+    {
+      "name": "OneTrust",
+      "id": "onetrust",
+      "patterns": [
+        { "type": "script", "regex": "cdn\\.cookielaw\\.org" },
+        { "type": "function", "name": "OneTrust" }
+      ],
+      "category": "consent_management",
+      "gdprRequired": false
+    },
+    {
+      "name": "Cookiebot",
+      "id": "cookiebot",
+      "patterns": [
+        { "type": "script", "regex": "consent\\.cookiebot\\.com" },
+        { "type": "function", "name": "Cookiebot" }
+      ],
+      "category": "consent_management",
+      "gdprRequired": false
+    },
+    {
+      "name": "Google reCAPTCHA",
+      "id": "recaptcha",
+      "patterns": [
+        { "type": "script", "regex": "google\\.com/recaptcha" },
+        { "type": "function", "name": "grecaptcha" }
+      ],
+      "category": "security",
+      "gdprRequired": false
+    },
+    {
+      "name": "Stripe",
+      "id": "stripe",
+      "patterns": [
+        { "type": "script", "regex": "js\\.stripe\\.com" },
+        { "type": "function", "name": "Stripe" }
+      ],
+      "category": "payment",
+      "gdprRequired": false
+    },
+    {
+      "name": "PayPal",
+      "id": "paypal",
+      "patterns": [
+        { "type": "script", "regex": "paypal\\.com/sdk" },
+        { "type": "function", "name": "paypal" }
+      ],
+      "category": "payment",
+      "gdprRequired": false
+    },
+    {
+      "name": "Zendesk",
+      "id": "zendesk",
+      "patterns": [
+        { "type": "script", "regex": "static\\.zdassets\\.com" },
+        { "type": "function", "name": "zE" }
+      ],
+      "category": "support",
+      "gdprRequired": false
+    },
+    {
+      "name": "YouTube",
+      "id": "youtube",
+      "patterns": [
+        { "type": "network", "regex": "youtube\\.com/embed" },
+        { "type": "network", "regex": "googlevideo\\.com" }
+      ],
+      "category": "media",
+      "gdprRequired": true
+    }
+  ]
+}

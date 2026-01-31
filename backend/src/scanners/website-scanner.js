@@ -65,6 +65,18 @@ const {
   calculateOverallScore
 } = require('../analyzers/compliance-score-calculator');
 
+const {
+  getWrapperInjectionScript,
+  extractMonitoringData,
+  analyzeMonitoringData
+} = require('../analyzers/consent-monitor');
+
+const {
+  fingerprintVendors,
+  generateVendorSummary,
+  extractVendorEvidence
+} = require('../analyzers/vendor-fingerprinter');
+
 const { getDatabase } = require('../database/db');
 
 const constants = require('../config/constants');
@@ -203,6 +215,20 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     const networkMonitor = setupNetworkMonitoring(page);
     console.log(`   ✅ Network monitoring setup in ${Date.now() - stepStartTime}ms`);
 
+    // Step 3.5: Inject consent monitor wrappers BEFORE any scripts load
+    stepStartTime = Date.now();
+    console.log('🛡️  Step 3.5: Injecting consent monitor wrappers...');
+    try {
+      const wrapperScript = getWrapperInjectionScript();
+      await page.evaluateOnNewDocument(wrapperScript);
+      console.log(`   ✅ Consent monitor wrappers injected (gtag, dataLayer, localStorage)`);
+      console.log(`   🎯 Ready to capture: consent calls, tracking events, storage writes`);
+    } catch (error) {
+      console.error(`   ⚠️  Consent monitor injection failed: ${error.message}`);
+      console.error(`   ⚠️  Continuing without consent monitoring...`);
+    }
+    console.log(`   ✅ Consent monitoring setup in ${Date.now() - stepStartTime}ms`);
+
     // Step 4: Inject tracking detector BEFORE navigation
     stepStartTime = Date.now();
     console.log('🔍 Step 4: Injecting tracking detector...');
@@ -331,10 +357,66 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
     console.log(`   ⚠️  Critical violations: ${bannerAnalysis.hasCriticalViolations ? 'YES' : 'NO'}`);
 
-    // Step 10.5: Audit Google Consent Mode v2
+    // Step 10.4: Extract consent monitoring data + vendor fingerprinting
+    stepStartTime = Date.now();
+    console.log('🔬 Step 10.4: Extracting consent monitor data + fingerprinting vendors...');
+    let monitoringData = null;
+    let monitoringAnalysis = null;
+    let detectedVendors = [];
+    let vendorSummary = null;
+
+    try {
+      // Extract monitoring data (gtag calls, dataLayer events, storage writes)
+      monitoringData = await extractMonitoringData(page);
+
+      if (monitoringData.initialized) {
+        console.log(`   ✅ Consent monitor active:`);
+        console.log(`      - gtag calls: ${monitoringData.gtagCalls.length}`);
+        console.log(`      - dataLayer events: ${monitoringData.dataLayerEvents.length}`);
+        console.log(`      - Storage writes: ${monitoringData.storageWrites.length}`);
+
+        if (monitoringData.errors.length > 0) {
+          console.log(`   ⚠️  Monitor errors: ${monitoringData.errors.length}`);
+        }
+
+        // Analyze for violations
+        monitoringAnalysis = analyzeMonitoringData(monitoringData);
+        console.log(`   📊 Violations: ${monitoringAnalysis.violations.length} (${monitoringAnalysis.summary.criticalViolations} critical)`);
+
+        // Extract vendor evidence
+        const vendorEvidence = await extractVendorEvidence(page, networkMonitor.getRequests());
+        vendorEvidence.monitorData = monitoringData; // Add monitoring data for timing correlation
+
+        // Fingerprint vendors
+        detectedVendors = fingerprintVendors(vendorEvidence);
+        vendorSummary = generateVendorSummary(detectedVendors, monitoringData.consentState);
+
+        console.log(`   🏷️  Detected vendors: ${detectedVendors.length}`);
+        if (detectedVendors.length > 0) {
+          const topVendors = detectedVendors.slice(0, 5);
+          topVendors.forEach(vendor => {
+            const violationFlag = vendor.violation ? '⚠️' : '✅';
+            console.log(`      ${violationFlag} ${vendor.name} (${vendor.category}, ${vendor.confidence}% confidence)`);
+          });
+        }
+
+        if (vendorSummary.violations.length > 0) {
+          console.log(`   ⚠️  Vendor violations: ${vendorSummary.violations.length}`);
+        }
+      } else {
+        console.log(`   ⚠️  Consent monitor not initialized - wrappers may have failed`);
+      }
+
+    } catch (error) {
+      console.error(`   ⚠️  Consent monitoring failed: ${error.message}`);
+    }
+
+    console.log(`   ✅ Consent monitoring + vendor fingerprinting completed in ${Date.now() - stepStartTime}ms`);
+
+    // Step 10.5: Audit Google Consent Mode v2 (with monitoring data)
     stepStartTime = Date.now();
     console.log('🎯 Step 10.5: Checking Google Consent Mode v2...');
-    const consentModeAudit = await auditConsentMode(page);
+    const consentModeAudit = await auditConsentMode(page, monitoringData);
     console.log(`   ✅ Consent Mode audit completed in ${Date.now() - stepStartTime}ms`);
     if (consentModeAudit.detected) {
       console.log(`   📊 Version: ${consentModeAudit.version || 'unknown'}`);
@@ -466,6 +548,10 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       bannerViolations: bannerAnalysis?.violations || [],
       bannerAnalysis: bannerAnalysis,
       consentModeAudit: consentModeAudit,
+      monitoringData: monitoringData,
+      monitoringAnalysis: monitoringAnalysis,
+      detectedVendors: detectedVendors,
+      vendorSummary: vendorSummary,
       timeline: timeline,
       timelineReport: timelineReport,
       requestCategorization: requestCategorization,
@@ -620,6 +706,10 @@ async function saveScanResults(auditId, results) {
     const hasComplianceScore = columnNames.includes('compliance_score_json');
     const hasRequestCategorization = columnNames.includes('request_categorization_json');
     const hasConsentSimulation = columnNames.includes('consent_simulation_json');
+    const hasMonitoringData = columnNames.includes('monitoring_data_json');
+    const hasMonitoringAnalysis = columnNames.includes('monitoring_analysis_json');
+    const hasDetectedVendors = columnNames.includes('detected_vendors_json');
+    const hasVendorSummary = columnNames.includes('vendor_summary_json');
 
     // Build dynamic INSERT statement based on available columns
     let insertColumns = `
@@ -664,6 +754,30 @@ async function saveScanResults(auditId, results) {
       insertColumns += ',\n      consent_simulation_json';
       insertPlaceholders += ', ?';
       insertValues.push(JSON.stringify(results.consentSimulation || {}));
+    }
+
+    if (hasMonitoringData) {
+      insertColumns += ',\n      monitoring_data_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.monitoringData || null));
+    }
+
+    if (hasMonitoringAnalysis) {
+      insertColumns += ',\n      monitoring_analysis_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.monitoringAnalysis || null));
+    }
+
+    if (hasDetectedVendors) {
+      insertColumns += ',\n      detected_vendors_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.detectedVendors || []));
+    }
+
+    if (hasVendorSummary) {
+      insertColumns += ',\n      vendor_summary_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.vendorSummary || null));
     }
 
     const stmt = db.prepare(`

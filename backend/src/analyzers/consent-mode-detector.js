@@ -487,9 +487,10 @@ async function checkConsentUpdate(page, acceptAction) {
 /**
  * Comprehensive Consent Mode v2 audit
  * @param {Page} page - Puppeteer page
+ * @param {Object} monitoringData - Optional monitoring data from consent-monitor
  * @returns {Promise<Object>} Full audit results
  */
-async function auditConsentMode(page) {
+async function auditConsentMode(page, monitoringData = null) {
   const startTime = Date.now();
 
   const detection = await detectConsentMode(page);
@@ -500,6 +501,59 @@ async function auditConsentMode(page) {
     ...detection,
     recommendations: []
   };
+
+  // If monitoring data is available, enhance detection with real-time evidence
+  if (monitoringData && monitoringData.initialized) {
+    console.log('   🔬 Enhancing Consent Mode detection with monitoring data...');
+
+    // Check for V2 parameters in gtag calls (more reliable than ics.entries)
+    const consentDefaultCalls = monitoringData.gtagCalls.filter(call =>
+      call.type === 'consent' && call.args && call.args[1] === 'default'
+    );
+
+    if (consentDefaultCalls.length > 0) {
+      const latestDefault = consentDefaultCalls[consentDefaultCalls.length - 1];
+      const defaultValues = latestDefault.args[2] || {};
+
+      // Check for V2 parameters
+      const v2Params = ['ad_user_data', 'ad_personalization'];
+      const hasV2Params = v2Params.every(param => defaultValues.hasOwnProperty(param));
+
+      if (hasV2Params && detection.version === 'v1_or_incomplete') {
+        console.log('   ✅ Monitoring data confirms V2 parameters present (upgrading detection)');
+        audit.version = 'v2';
+        audit.confidence = Math.max(audit.confidence, 97);
+        audit.detectionMethod = 'gtag monitoring (V2 confirmed)';
+
+        // Remove the "missing V2 params" issue if present
+        audit.issues = audit.issues.filter(issue =>
+          !issue.toLowerCase().includes('missing') && !issue.toLowerCase().includes('ad_user_data')
+        );
+      }
+
+      // Update consent states with monitored data
+      audit.monitoredDefaultStates = defaultValues;
+    }
+
+    // Check for consent update calls
+    const consentUpdateCalls = monitoringData.gtagCalls.filter(call =>
+      call.type === 'consent' && call.args && call.args[1] === 'update'
+    );
+
+    if (consentUpdateCalls.length > 0) {
+      audit.monitoredUpdates = consentUpdateCalls.length;
+      audit.hasUpdates = true;
+      console.log(`   ✅ Detected ${consentUpdateCalls.length} consent update(s) via monitoring`);
+    }
+
+    // Add monitoring evidence to audit
+    audit.monitoringEvidence = {
+      gtagCalls: monitoringData.gtagCalls.length,
+      dataLayerEvents: monitoringData.dataLayerEvents.length,
+      storageWrites: monitoringData.storageWrites.length,
+      consentStateFromMonitor: monitoringData.consentState
+    };
+  }
 
   // Generate recommendations
   if (!detection.detected) {
@@ -518,7 +572,7 @@ async function auditConsentMode(page) {
     audit.severity = 'none';
   }
 
-  if (detection.detected && !detection.hasUpdates) {
+  if (detection.detected && !detection.hasUpdates && !audit.hasUpdates) {
     audit.recommendations.push('Ensure consent "update" commands are fired when user interacts with cookie banner');
   }
 
