@@ -840,21 +840,22 @@
                 </div>
                 {{/if}}
 
-                <!-- Request Timeline Chart -->
-                <div class="chart-container">
-                    <h3 style="margin-bottom: 1rem; font-size: 1.125rem; font-weight: 600;">Request Timeline</h3>
-                    <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1rem;">
-                        This timeline shows when tracking requests were made relative to user consent. <strong style="color: var(--danger-red);">Red bars</strong> represent tracking that occurred <strong>before consent</strong> (GDPR violation). <strong style="color: var(--primary-blue);">Blue bars</strong> show legitimate tracking <strong>after consent</strong> was granted. The vertical line marks the moment user consent was obtained.
+                <!-- Request Timeline Summary (Static) -->
+                <div style="margin-top: 2rem; padding: 1.5rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h3 style="margin-bottom: 1rem; font-size: 1.125rem; font-weight: 600;">Request Timeline Summary</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1.5rem;">
+                        Tracking timeline analysis showing when requests occurred relative to user consent.
                     </p>
-                    <canvas id="timelineChart" width="800" height="300"></canvas>
-                    <div class="chart-legend">
-                        <div class="legend-item">
-                            <div class="legend-color legend-before"></div>
-                            <span>Before Consent (Violation)</span>
+                    <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                        <div class="metric-card" style="background: #fef2f2; border-left: 4px solid #ef4444;">
+                            <div class="metric-label">Before Consent</div>
+                            <div class="metric-value" style="color: #dc2626;">{{tracking_before_consent_count}}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">GDPR Violations</div>
                         </div>
-                        <div class="legend-item">
-                            <div class="legend-color legend-after"></div>
-                            <span>After Consent (Compliant)</span>
+                        <div class="metric-card" style="background: #eff6ff; border-left: 4px solid #0175ff;">
+                            <div class="metric-label">After Consent</div>
+                            <div class="metric-value" style="color: #0175ff;">{{tracking_after_consent_count}}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">Compliant</div>
                         </div>
                     </div>
                 </div>
@@ -1472,9 +1473,6 @@
         </div>
     </main>
 
-    <!-- ===== CHART.JS CDN ===== -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-
     <!-- ===== JAVASCRIPT ===== -->
     <script>
         // ===== SECTION TOGGLE =====
@@ -1562,182 +1560,6 @@
                     item.style.display = 'none';
                 }
             });
-        }
-
-        // ===== TIMELINE CHART =====
-        // TEMPLATE: Backend should inject timeline data as JSON
-        const timelineData = {{timeline_data_json}};
-
-        const ctx = document.getElementById('timelineChart');
-        if (ctx && timelineData && timelineData.labels && timelineData.labels.length > 0) {
-            // Convert timeline data to scatter plot format (x = time in ms, y = category)
-            const allEvents = [];
-
-            // Process events
-            for (let i = 0; i < timelineData.labels.length; i++) {
-                const beforeTime = timelineData.beforeConsent[i];
-                const afterTime = timelineData.afterConsent[i];
-                const label = timelineData.labels[i];
-
-                if (beforeTime > 0) {
-                    allEvents.push({
-                        x: beforeTime,
-                        y: 1, // Before consent = violation zone
-                        label: label,
-                        type: 'violation'
-                    });
-                } else if (afterTime > 0) {
-                    allEvents.push({
-                        x: afterTime,
-                        y: 2, // After consent = compliant zone
-                        label: label,
-                        type: 'compliant'
-                    });
-                }
-            }
-
-            // Separate violation and compliant events
-            const violationEvents = allEvents.filter(e => e.type === 'violation');
-            const compliantEvents = allEvents.filter(e => e.type === 'compliant');
-
-            // Find consent boundary (where violations end)
-            const maxViolationTime = violationEvents.length > 0
-                ? Math.max(...violationEvents.map(e => e.x))
-                : 0;
-
-            new Chart(ctx, {
-                type: 'scatter',
-                data: {
-                    datasets: [
-                        {
-                            label: 'Before Consent (Violation)',
-                            data: violationEvents,
-                            backgroundColor: '#ef4444',
-                            borderColor: '#dc2626',
-                            borderWidth: 2,
-                            pointRadius: 6,
-                            pointHoverRadius: 8
-                        },
-                        {
-                            label: 'After Consent (Compliant)',
-                            data: compliantEvents,
-                            backgroundColor: '#0175ff',
-                            borderColor: '#0066dd',
-                            borderWidth: 2,
-                            pointRadius: 6,
-                            pointHoverRadius: 8
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            type: 'linear',
-                            position: 'bottom',
-                            title: {
-                                display: true,
-                                text: 'Time from Page Load (ms)',
-                                font: { size: 13, weight: 'bold' }
-                            },
-                            ticks: {
-                                callback: function(value) {
-                                    return value + 'ms';
-                                }
-                            },
-                            grid: {
-                                color: '#e5e7eb',
-                                lineWidth: 1
-                            }
-                        },
-                        y: {
-                            type: 'linear',
-                            min: 0.5,
-                            max: 2.5,
-                            title: {
-                                display: true,
-                                text: 'Consent Status',
-                                font: { size: 13, weight: 'bold' }
-                            },
-                            ticks: {
-                                stepSize: 1,
-                                callback: function(value) {
-                                    if (value === 1) return 'Before Consent';
-                                    if (value === 2) return 'After Consent';
-                                    return '';
-                                }
-                            },
-                            grid: {
-                                color: function(context) {
-                                    // Horizontal grid lines for zones
-                                    if (context.tick.value === 1) return '#fee2e2'; // Light red
-                                    if (context.tick.value === 2) return '#dbeafe'; // Light blue
-                                    return 'transparent';
-                                },
-                                lineWidth: 20
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            display: false // We have custom legend below
-                        },
-                        tooltip: {
-                            callbacks: {
-                                title: function(context) {
-                                    return context[0].raw.label || 'Event';
-                                },
-                                label: function(context) {
-                                    const event = context.raw;
-                                    return [
-                                        event.type === 'violation' ? 'VIOLATION: Before Consent' : 'Compliant: After Consent',
-                                        'Time: ' + event.x + 'ms'
-                                    ];
-                                }
-                            },
-                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                            titleColor: '#fff',
-                            bodyColor: '#fff',
-                            borderColor: '#666',
-                            borderWidth: 1,
-                            padding: 12,
-                            titleFont: { size: 13, weight: 'bold' },
-                            bodyFont: { size: 12 }
-                        },
-                        annotation: {
-                            annotations: maxViolationTime > 0 ? {
-                                consentLine: {
-                                    type: 'line',
-                                    xMin: maxViolationTime,
-                                    xMax: maxViolationTime,
-                                    borderColor: '#9333ea',
-                                    borderWidth: 3,
-                                    borderDash: [6, 4],
-                                    label: {
-                                        content: 'Consent Given',
-                                        enabled: true,
-                                        position: 'start',
-                                        backgroundColor: '#9333ea',
-                                        color: '#fff',
-                                        font: { size: 11, weight: 'bold' }
-                                    }
-                                }
-                            } : {}
-                        }
-                    },
-                    interaction: {
-                        mode: 'point',
-                        intersect: true
-                    }
-                }
-            });
-        } else if (ctx) {
-            // No timeline data - display message
-            ctx.getContext('2d').font = '14px sans-serif';
-            ctx.getContext('2d').fillStyle = '#6b7280';
-            ctx.getContext('2d').textAlign = 'center';
-            ctx.getContext('2d').fillText('No timeline data available', ctx.width / 2, ctx.height / 2);
         }
 
         // Initialize: Keep all sections expanded by default

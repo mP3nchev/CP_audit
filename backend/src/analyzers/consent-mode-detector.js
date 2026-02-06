@@ -511,39 +511,74 @@ async function auditConsentMode(page, monitoringData = null) {
       call.type === 'consent' && call.args && call.args[1] === 'default'
     );
 
+    // ALSO check dataLayer events for consent commands (some sites use dataLayer.push instead of gtag)
+    const dataLayerConsentDefaults = monitoringData.dataLayerEvents.filter(event => {
+      return Array.isArray(event.data) &&
+             event.data[0] === 'consent' &&
+             event.data[1] === 'default';
+    });
+
+    let defaultValues = null;
+
+    // Try gtag calls first
     if (consentDefaultCalls.length > 0) {
       const latestDefault = consentDefaultCalls[consentDefaultCalls.length - 1];
-      const defaultValues = latestDefault.args[2] || {};
+      defaultValues = latestDefault.args[2] || {};
+    }
+    // Fallback to dataLayer events
+    else if (dataLayerConsentDefaults.length > 0) {
+      const latestDefault = dataLayerConsentDefaults[dataLayerConsentDefaults.length - 1];
+      defaultValues = latestDefault.data[2] || {};
+    }
 
+    if (defaultValues) {
       // Check for V2 parameters
       const v2Params = ['ad_user_data', 'ad_personalization'];
       const hasV2Params = v2Params.every(param => defaultValues.hasOwnProperty(param));
 
-      if (hasV2Params && detection.version === 'v1_or_incomplete') {
-        console.log('   ✅ Monitoring data confirms V2 parameters present (upgrading detection)');
-        audit.version = 'v2';
-        audit.confidence = Math.max(audit.confidence, 97);
-        audit.detectionMethod = 'gtag monitoring (V2 confirmed)';
+      if (hasV2Params) {
+        if (detection.version === 'v1_or_incomplete' || !detection.detected) {
+          console.log('   ✅ Monitoring data confirms V2 parameters present (upgrading detection)');
+          audit.version = 'v2';
+          audit.detected = true;
+          audit.confidence = Math.max(audit.confidence, 97);
+          audit.detectionMethod = 'Real-time monitoring (V2 confirmed)';
 
-        // Remove the "missing V2 params" issue if present
-        audit.issues = audit.issues.filter(issue =>
-          !issue.toLowerCase().includes('missing') && !issue.toLowerCase().includes('ad_user_data')
-        );
+          // Remove the "missing V2 params" issue if present
+          audit.issues = audit.issues.filter(issue =>
+            !issue.toLowerCase().includes('missing') && !issue.toLowerCase().includes('ad_user_data') &&
+            !issue.toLowerCase().includes('ad_personalization')
+          );
+
+          // Update consent states with monitored data
+          audit.defaultStates = {
+            ...audit.defaultStates,
+            ...defaultValues
+          };
+        }
       }
 
-      // Update consent states with monitored data
+      // Update monitored states for reference
       audit.monitoredDefaultStates = defaultValues;
     }
 
-    // Check for consent update calls
+    // Check for consent update calls (both gtag and dataLayer)
     const consentUpdateCalls = monitoringData.gtagCalls.filter(call =>
       call.type === 'consent' && call.args && call.args[1] === 'update'
     );
 
-    if (consentUpdateCalls.length > 0) {
-      audit.monitoredUpdates = consentUpdateCalls.length;
+    const dataLayerConsentUpdates = monitoringData.dataLayerEvents.filter(event => {
+      return Array.isArray(event.data) &&
+             event.data[0] === 'consent' &&
+             event.data[1] === 'update';
+    });
+
+    const totalUpdates = consentUpdateCalls.length + dataLayerConsentUpdates.length;
+
+    if (totalUpdates > 0) {
+      audit.monitoredUpdates = totalUpdates;
       audit.hasUpdates = true;
-      console.log(`   ✅ Detected ${consentUpdateCalls.length} consent update(s) via monitoring`);
+      console.log(`   ✅ Detected ${totalUpdates} consent update(s) via monitoring`);
     }
 
     // Add monitoring evidence to audit

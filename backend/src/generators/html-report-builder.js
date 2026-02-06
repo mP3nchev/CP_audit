@@ -277,6 +277,7 @@ function transformDataForTemplate(data) {
   // 2. Scan Results
   const trackingBeforeConsent = data.scanResults?.tracking_before_consent ? 'YES' : 'NO';
   const preConsentRequests = networkRequests.filter(r => r.beforeConsent && r.isTracking);
+  const postConsentRequests = networkRequests.filter(r => !r.beforeConsent && r.isTracking);
   const preConsentCookies = cookies.filter(c =>
     c.detectedAt && c.detectedAt < (data.timelineData?.zones?.find(z => z.name === 'Cookie Banner Appeared')?.start || Infinity)
   );
@@ -446,6 +447,7 @@ function transformDataForTemplate(data) {
     cookies_declared: cookieComparison?.declared.length || 0,
     tracking_before_consent: trackingBeforeConsent,
     tracking_before_consent_count: trackingBeforeConsentCount,
+    tracking_after_consent_count: postConsentRequests.length,
     tracking_before_consent_items: trackingBeforeConsentDetails,
     fine_min: formatNumber(riskAssessment?.total_risk_min || 0),
     fine_max: formatNumber(riskAssessment?.total_risk_max || 0),
@@ -545,7 +547,7 @@ function transformDataForTemplate(data) {
     consent_simulation_reject_cookies: consentSimulation?.reject?.cookiesAfterConsent || 0,
     consent_simulation_accept_cookies: consentSimulation?.accept?.cookiesAfterConsent || 0,
     consent_simulation_new_cookies: consentSimulation?.comparison?.cookieDifference || 0,
-    consent_simulation_new_cookies_list: [], // TODO: Add cookie list from comparison
+    consent_simulation_new_cookies_list: consentSimulation?.comparison?.newCookies || [],
     consent_simulation_reject_requests: consentSimulation?.reject?.networkRequests || 0,
     consent_simulation_accept_requests: consentSimulation?.accept?.networkRequests || 0,
     consent_simulation_new_domains: [], // TODO: Extract from comparison

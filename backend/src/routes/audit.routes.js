@@ -899,6 +899,13 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
     // Click count comparison (from tracking data if available)
     const clickImbalance = 0; // TODO: Extract from trackingData if implemented
 
+    // Calculate new cookies (present in accept but not in reject)
+    const newCookiesAfterAccept = cookiesAfterAccept.filter(acceptCookie => {
+      return !cookiesAfterReject.some(rejectCookie =>
+        rejectCookie.name === acceptCookie.name && rejectCookie.domain === acceptCookie.domain
+      );
+    });
+
     // Build consent simulation results
     const consentSimulation = {
       reject: {
@@ -923,6 +930,12 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
         cookiesAfterAccept: cookiesAfterAccept.length,
         trackingCookiesInReject: trackingCookiesInReject.length,
         cookieDifference: cookiesAfterAccept.length - cookiesAfterReject.length,
+        newCookies: newCookiesAfterAccept.map(c => ({
+          name: c.name,
+          domain: c.domain || 'N/A',
+          category: c.category || 'unknown',
+          purpose: c.purpose || 'Not specified'
+        })),
         violations: []
       }
     };

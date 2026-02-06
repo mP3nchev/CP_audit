@@ -131,29 +131,6 @@ async function savePolicyAnalysis(auditId, policyType, analysis, policyText, usa
       Math.round(duration)
     );
 
-    // Log API cost
-    const costStmt = db.prepare(`
-      INSERT INTO api_costs (
-        audit_id,
-        operation,
-        input_tokens,
-        output_tokens,
-        cached_tokens,
-        cost_usd,
-        model
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    costStmt.run(
-      auditId,
-      `${policyType}_policy_analysis`,
-      usage.input_tokens,
-      usage.output_tokens,
-      usage.cached_tokens,
-      usage.cost_usd,
-      usage.model
-    );
-
     console.log('✅ Policy analysis saved to database');
 
     // Check for cost alerts
