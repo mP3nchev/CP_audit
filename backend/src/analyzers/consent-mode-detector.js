@@ -536,30 +536,45 @@ async function auditConsentMode(page, monitoringData = null) {
       const v2Params = ['ad_user_data', 'ad_personalization'];
       const hasV2Params = v2Params.every(param => defaultValues.hasOwnProperty(param));
 
+      console.log(`   🔬 V2 params check: ad_user_data=${defaultValues.ad_user_data}, ad_personalization=${defaultValues.ad_personalization}`);
+
       if (hasV2Params) {
-        if (detection.version === 'v1_or_incomplete' || !detection.detected) {
-          console.log('   ✅ Monitoring data confirms V2 parameters present (upgrading detection)');
-          audit.version = 'v2';
-          audit.detected = true;
-          audit.confidence = Math.max(audit.confidence, 97);
-          audit.detectionMethod = 'Real-time monitoring (V2 confirmed)';
+        console.log('   ✅ Monitoring data confirms V2 parameters present');
 
-          // Remove the "missing V2 params" issue if present
-          audit.issues = audit.issues.filter(issue =>
-            !issue.toLowerCase().includes('missing') && !issue.toLowerCase().includes('ad_user_data') &&
-            !issue.toLowerCase().includes('ad_personalization')
-          );
+        // ALWAYS upgrade to v2 if V2 params are present
+        audit.version = 'v2';
+        audit.detected = true;
+        audit.confidence = Math.max(audit.confidence || 0, 97);
+        audit.detectionMethod = 'Real-time monitoring (V2 confirmed)';
 
-          // Update consent states with monitored data
-          audit.defaultStates = {
-            ...audit.defaultStates,
-            ...defaultValues
-          };
+        // ALWAYS remove the "missing V2 params" issue if present (even if previously detected as v2)
+        if (audit.issues && Array.isArray(audit.issues)) {
+          const beforeFilter = audit.issues.length;
+          audit.issues = audit.issues.filter(issue => {
+            const issueText = typeof issue === 'string' ? issue.toLowerCase() : '';
+            return !issueText.includes('missing') &&
+                   !issueText.includes('ad_user_data') &&
+                   !issueText.includes('ad_personalization');
+          });
+          const afterFilter = audit.issues.length;
+          if (beforeFilter !== afterFilter) {
+            console.log(`   🗑️  Removed ${beforeFilter - afterFilter} V2 param warning(s) from issues`);
+          }
         }
+
+        // Update consent states with monitored data
+        audit.defaultStates = {
+          ...audit.defaultStates,
+          ...defaultValues
+        };
+      } else {
+        console.log(`   ⚠️  V2 params incomplete: ${Object.keys(defaultValues).join(', ')}`);
       }
 
       // Update monitored states for reference
       audit.monitoredDefaultStates = defaultValues;
+    } else {
+      console.log('   ⚠️  No consent default values found in monitoring data');
     }
 
     // Check for consent update calls (both gtag and dataLayer)

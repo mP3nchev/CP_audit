@@ -616,21 +616,57 @@ async function main() {
       console.log(`📤 Uploading results to API: ${API_URL}/api/audit/manual-consent/upload`);
 
       const fetch = (await import('node-fetch')).default;
-      const response = await fetch(`${API_URL}/api/audit/manual-consent/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalResults)
-      });
+      const AbortController = globalThis.AbortController || (await import('abort-controller')).default;
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`✅ Upload successful: ${data.message || 'OK'}`);
-        if (data.audit_id) {
-          console.log(`   Audit ID: ${data.audit_id}`);
-          console.log(`   Report URL: ${API_URL}/api/audit/${data.audit_id}/report`);
+      // Retry logic with exponential backoff
+      const maxRetries = 3;
+      let lastError = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 120000); // 120 second timeout
+
+          console.log(`   Attempt ${attempt}/${maxRetries}...`);
+
+          const response = await fetch(`${API_URL}/api/audit/manual-consent/upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(finalResults),
+            signal: controller.signal
+          });
+
+          clearTimeout(timeout);
+
+          if (response.ok) {
+            const data = await response.json();
+            console.log(`✅ Upload successful: ${data.message || 'OK'}`);
+            if (data.audit_id) {
+              console.log(`   Audit ID: ${data.audit_id}`);
+              console.log(`   Report URL: ${API_URL}/api/audit/${data.audit_id}/report`);
+            }
+            lastError = null;
+            break; // Success, exit retry loop
+          } else {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+          }
+        } catch (error) {
+          lastError = error;
+          console.error(`   ⚠️  Attempt ${attempt} failed: ${error.message}`);
+
+          if (attempt < maxRetries) {
+            const backoff = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+            console.log(`   ⏳ Retrying in ${backoff/1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, backoff));
+          }
         }
-      } else {
-        console.error(`❌ Upload failed: ${response.status} ${response.statusText}`);
+      }
+
+      if (lastError) {
+        console.error(`❌ Upload failed after ${maxRetries} attempts: ${lastError.message}`);
+        console.error(`   The audit data was captured successfully but could not be uploaded.`);
+        console.error(`   You can manually copy the results from the console above.`);
       }
     }
 
