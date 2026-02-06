@@ -93,15 +93,25 @@ async function detectConsentMode(page) {
             };
 
             // Validate V2 required parameters
+            // NOTE: 'not_set' is a VALID value for V2 parameters!
+            // We only check if the parameter EXISTS, not its value
             const v2_required = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage'];
             const hasAllV2Params = v2_required.every(param =>
-              results.consentStates[param] && results.consentStates[param] !== 'not_set'
+              results.consentStates.hasOwnProperty(param) && results.consentStates[param] !== undefined
             );
 
             if (!hasAllV2Params) {
+              // Find which params are actually missing
+              const missingParams = v2_required.filter(param =>
+                !results.consentStates.hasOwnProperty(param) || results.consentStates[param] === undefined
+              );
+
               results.version = 'v1_or_incomplete';
               results.confidence = 85;
-              results.issues.push('Missing some V2 parameters (ad_user_data or ad_personalization)');
+              results.issues.push(`Missing V2 parameters: ${missingParams.join(', ')}`);
+              console.log(`   ⚠️  Missing V2 params in static detection: ${missingParams.join(', ')}`);
+            } else {
+              console.log(`   ✅ All V2 params present in static detection (including not_set values)`);
             }
 
             // GDPR Compliance Check (default should be 'denied')
@@ -168,16 +178,19 @@ async function detectConsentMode(page) {
           }
 
           // Determine version
+          // NOTE: 'not_set' is a VALID value for V2 parameters!
           const requiredV2Params = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage'];
           const missingParams = requiredV2Params.filter(param =>
-            !results.consentStates[param] || results.consentStates[param] === 'not_set'
+            !results.consentStates.hasOwnProperty(param) || results.consentStates[param] === undefined
           );
 
           if (missingParams.length > 0) {
             results.version = 'v1_or_incomplete';
             results.issues.push(`Missing V2 parameters: ${missingParams.join(', ')}`);
+            console.log(`   ⚠️  Missing V2 params (gtag path): ${missingParams.join(', ')}`);
           } else {
             results.version = 'v2';
+            console.log(`   ✅ All V2 params present (gtag path, including not_set values)`);
           }
 
           // GDPR compliance check
@@ -605,15 +618,30 @@ async function auditConsentMode(page, monitoringData = null) {
     };
   }
 
-  // Generate recommendations
-  if (!detection.detected) {
+  // Final cleanup: Remove obsolete V2 parameter warnings if version is v2
+  if (audit.version === 'v2' && audit.issues && Array.isArray(audit.issues)) {
+    const beforeCleanup = audit.issues.length;
+    audit.issues = audit.issues.filter(issue => {
+      const issueText = typeof issue === 'string' ? issue.toLowerCase() : '';
+      return !issueText.includes('missing') &&
+             !issueText.includes('v2 param') &&
+             !issueText.includes('ad_user_data') &&
+             !issueText.includes('ad_personalization');
+    });
+    if (beforeCleanup !== audit.issues.length) {
+      console.log(`   🧹 Cleaned up ${beforeCleanup - audit.issues.length} obsolete V2 warning(s)`);
+    }
+  }
+
+  // Generate recommendations (use audit.version NOT detection.version after monitoring enhancement!)
+  if (!audit.detected) {
     audit.recommendations.push('Implement Google Consent Mode v2 for GDPR compliance');
     audit.recommendations.push('Add gtag.js with consent initialization before any tracking');
     audit.severity = 'high';
-  } else if (detection.version === 'v1_or_incomplete') {
+  } else if (audit.version === 'v1_or_incomplete') {
     audit.recommendations.push('Upgrade to Consent Mode v2 by adding ad_user_data and ad_personalization parameters');
     audit.severity = 'medium';
-  } else if (!detection.compliant) {
+  } else if (!audit.compliant) {
     audit.recommendations.push('Change default consent states to "denied" for GDPR compliance');
     audit.recommendations.push('Only update to "granted" after explicit user consent');
     audit.severity = 'critical';
@@ -622,8 +650,14 @@ async function auditConsentMode(page, monitoringData = null) {
     audit.severity = 'none';
   }
 
-  if (detection.detected && !detection.hasUpdates && !audit.hasUpdates) {
+  if (audit.detected && !audit.hasUpdates) {
     audit.recommendations.push('Ensure consent "update" commands are fired when user interacts with cookie banner');
+  }
+
+  // Final debug logging
+  console.log(`   📋 Final audit result: version=${audit.version}, detected=${audit.detected}, issues=${audit.issues?.length || 0}`);
+  if (audit.issues && audit.issues.length > 0) {
+    console.log(`   📋 Issues: ${audit.issues.join(', ')}`);
   }
 
   return audit;
