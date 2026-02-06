@@ -196,28 +196,32 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     console.log('═══════════════════════════════════════════════════════');
     console.log('');
 
-    // Step 1: Launch browser
+    // Step 1: Initialize and Load Target (consolidated infrastructure setup)
+    const initStartTime = Date.now();
+    console.log('🚀 Step 1: Initialize and Load Target...');
+    updateProgress(auditId, 1, 17, 'Initializing browser and loading website...', startTime);
+
+    // Launch browser
     stepStartTime = Date.now();
-    console.log('📦 Step 1: Launching browser...');
+    console.log('   📦 Launching browser...');
     browser = await launchBrowser();
     console.log(`   ✅ Browser launched in ${Date.now() - stepStartTime}ms`);
 
-    // Step 2: Create page with monitoring
+    // Create page with monitoring
     stepStartTime = Date.now();
-    console.log('📄 Step 2: Creating page with monitoring...');
+    console.log('   📄 Creating page with monitoring...');
     const page = await createPage(browser);
     console.log(`   ✅ Page created in ${Date.now() - stepStartTime}ms`);
 
-    // Step 3: Setup network monitoring
+    // Setup network monitoring
     stepStartTime = Date.now();
-    console.log('🌐 Step 3: Setting up network monitoring...');
-    updateProgress(auditId, 3, 17, 'Setting up network monitoring...', startTime);
+    console.log('   🌐 Setting up network monitoring...');
     const networkMonitor = setupNetworkMonitoring(page);
     console.log(`   ✅ Network monitoring setup in ${Date.now() - stepStartTime}ms`);
 
-    // Step 3.5: Inject consent monitor wrappers BEFORE any scripts load
+    // Inject consent monitor wrappers BEFORE any scripts load
     stepStartTime = Date.now();
-    console.log('🛡️  Step 3.5: Injecting consent monitor wrappers...');
+    console.log('   🛡️  Injecting consent monitor wrappers...');
     try {
       const wrapperScript = getWrapperInjectionScript();
       await page.evaluateOnNewDocument(wrapperScript);
@@ -229,19 +233,20 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     }
     console.log(`   ✅ Consent monitoring setup in ${Date.now() - stepStartTime}ms`);
 
-    // Step 4: Inject tracking detector BEFORE navigation
+    // Inject tracking detector BEFORE navigation
     stepStartTime = Date.now();
-    console.log('🔍 Step 4: Injecting tracking detector...');
+    console.log('   🔍 Injecting tracking detector...');
     await injectTrackingDetector(page);
     console.log(`   ✅ Tracking detector injected in ${Date.now() - stepStartTime}ms`);
 
-    // Step 5: Navigate to URL
+    // Navigate to URL
     stepStartTime = Date.now();
-    console.log('🌐 Step 5: Navigating to URL...');
-    updateProgress(auditId, 5, 17, `Loading website: ${websiteUrl}`, startTime);
+    console.log('   🌐 Navigating to URL...');
     await navigateToUrl(page, websiteUrl);
     networkMonitor.markPageLoaded();
     console.log(`   ✅ Navigation completed in ${Date.now() - stepStartTime}ms`);
+
+    console.log(`✅ Step 1 completed in ${Date.now() - initStartTime}ms`);
 
     // Step 5.5: IMMEDIATE cookie snapshot (NO delay) - captures already loaded cookies
     stepStartTime = Date.now();

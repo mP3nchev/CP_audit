@@ -76,19 +76,20 @@ CREATE TABLE IF NOT EXISTS risk_assessments (
     FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
 );
 
--- API cost tracking table
-CREATE TABLE IF NOT EXISTS api_costs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_id INTEGER,
-    operation TEXT NOT NULL,
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    cached_tokens INTEGER DEFAULT 0,
-    cost_usd REAL,
-    model TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
-);
+-- API cost tracking table (REMOVED per product audit recommendation 2.5)
+-- Reason: API costs negligible ($0.40-0.75/audit), tracked via Anthropic dashboard
+-- CREATE TABLE IF NOT EXISTS api_costs (
+--     id INTEGER PRIMARY KEY AUTOINCREMENT,
+--     audit_id INTEGER,
+--     operation TEXT NOT NULL,
+--     input_tokens INTEGER,
+--     output_tokens INTEGER,
+--     cached_tokens INTEGER DEFAULT 0,
+--     cost_usd REAL,
+--     model TEXT,
+--     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--     FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
+-- );
 
 -- GDPR Precedents table
 CREATE TABLE IF NOT EXISTS gdpr_precedents (
@@ -106,7 +107,7 @@ CREATE TABLE IF NOT EXISTS gdpr_precedents (
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_audits_status ON audits(status);
 CREATE INDEX IF NOT EXISTS idx_audits_created ON audits(created_at);
-CREATE INDEX IF NOT EXISTS idx_api_costs_audit ON api_costs(audit_id);
+-- CREATE INDEX IF NOT EXISTS idx_api_costs_audit ON api_costs(audit_id); -- Removed with api_costs table
 CREATE INDEX IF NOT EXISTS idx_precedents_articles ON gdpr_precedents(relevant_articles);
 CREATE INDEX IF NOT EXISTS idx_precedents_jurisdiction ON gdpr_precedents(jurisdiction);
 CREATE INDEX IF NOT EXISTS idx_precedents_fine ON gdpr_precedents(fine_eur);
