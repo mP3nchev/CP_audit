@@ -1166,6 +1166,9 @@
                                     {{#if status_undeclared}}
                                     <span class="badge badge-fail">Undeclared</span>
                                     {{/if}}
+                                    {{#if status_not_checked}}
+                                    <span class="badge" style="background: #cbd5e1; color: #475569;">Not Checked</span>
+                                    {{/if}}
                                 </td>
                             </tr>
                             {{/detected_cookies}}
@@ -1223,6 +1226,12 @@
                         </tbody>
                     </table>
                 </div>
+                <div style="margin-top: 1rem; padding: 1rem; background: #f8fafc; border-left: 4px solid #3b82f6; border-radius: 4px;">
+                    <p style="font-size: 0.875rem; color: #475569; margin: 0;">
+                        <strong>Note:</strong> This checklist includes both banner design violations (items 2-7) and technical implementation checks (item 1: tracking before consent).
+                        The "Cookie Banner Compliance" score reflects only banner design/UX violations per the noyb checklist.
+                    </p>
+                </div>
             </div>
         </div>
 
@@ -1269,14 +1278,14 @@
                         <div class="risk-description">{{consent_simulation_accept_requests}} tracking requests detected</div>
                     </div>
 
-                    <div class="risk-card {{#if consent_simulation_new_cookies}}risk-card-critical{{else}}risk-card-low{{/if}}">
+                    <div class="risk-card {{#if consent_simulation_new_cookies}}risk-card-medium{{else}}risk-card-low{{/if}}">
                         <div class="risk-card-header">
                             <div class="risk-category">New After Accept</div>
                             <div class="risk-percentage">+{{consent_simulation_new_cookies}}</div>
                         </div>
                         <div class="risk-description">
                             {{#if consent_simulation_new_cookies}}
-                                Additional cookies loaded after accepting consent
+                                Additional cookies loaded after accepting consent (expected behavior)
                             {{else}}
                                 No additional cookies detected
                             {{/if}}

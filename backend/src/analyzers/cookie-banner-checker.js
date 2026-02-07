@@ -15,10 +15,10 @@ const DEBUG_VIOLATIONS = process.env.DEBUG_VIOLATIONS === 'true';
  * Multi-language keyword sets for cookie banner detection
  */
 const BUTTON_KEYWORDS = {
-  accept: ['accept', 'agree', 'allow', 'ok', 'yes', 'akzeptieren', 'zustimmen', 'accepter', 'aceptar', 'accetto', 'aceitar', 'приемам', 'acceptuj', 'souhlasím'],
-  reject: ['reject', 'decline', 'deny', 'refuse', 'ablehnen', 'refuser', 'rechazar', 'rifiuto', 'rejeitar', 'отказвам', 'odrzuć', 'odmítnout'],
-  settings: ['settings', 'customize', 'preferences', 'manage', 'options', 'einstellungen', 'anpassen', 'préférences', 'configuración', 'impostazioni', 'configurações', 'настройки', 'ustawienia', 'nastavení'],
-  cookieSettings: ['cookie settings', 'privacy settings', 'manage cookies', 'cookie preferences', 'cookie-einstellungen', 'cookies verwalten', 'gestion des cookies', 'configuración de cookies', 'gestione cookie', 'configurações de cookies', 'настройки за бисквитки', 'zarządzaj cookie']
+  accept: ['accept', 'agree', 'allow', 'ok', 'yes', 'akzeptieren', 'zustimmen', 'accepter', 'aceptar', 'accetto', 'aceitar', 'приемам', 'acceptuj', 'souhlasím', 'приема', 'съгласен', 'разрешавам'],
+  reject: ['reject', 'decline', 'deny', 'refuse', 'ablehnen', 'refuser', 'rechazar', 'rifiuto', 'rejeitar', 'отказвам', 'odrzuć', 'odmítnout', 'отхвърлям', 'отказ', 'не приемам', 'отхвърляне'],
+  settings: ['settings', 'customize', 'preferences', 'manage', 'options', 'einstellungen', 'anpassen', 'préférences', 'configuración', 'impostazioni', 'configurações', 'настройки', 'ustawienia', 'nastavení', 'персонализиране'],
+  cookieSettings: ['cookie settings', 'privacy settings', 'manage cookies', 'cookie preferences', 'cookie-einstellungen', 'cookies verwalten', 'gestion des cookies', 'configuración de cookies', 'gestione cookie', 'configurações de cookies', 'настройки за бисквитки', 'zarządzaj cookie', 'управление на бисквитки']
 };
 
 /**
