@@ -272,6 +272,7 @@ function transformDataForTemplate(data) {
   const allCriticalViolations = aggregateCriticalViolations(data);
   const criticalViolations = bannerViolations.filter(v => v.severity === 'critical');
   const undeclaredCookies = cookieComparison?.undeclared || [];
+  const hasCookiePolicy = cookieComparison && cookieComparison.declared !== null;
   const passedCriteria = privacyAnalysis?.criteria?.filter(c => c.score >= c.weight) || [];
 
   // 2. Scan Results
@@ -343,7 +344,7 @@ function transformDataForTemplate(data) {
 
   // 4. Cookie Comparison
   const detectedCookies = cookies.map(cookie => {
-    const isDeclared = cookieComparison?.declared.some(d =>
+    const isDeclared = hasCookiePolicy && cookieComparison?.declared.some(d =>
       d.name.toLowerCase() === cookie.name.toLowerCase()
     );
 
@@ -353,7 +354,8 @@ function transformDataForTemplate(data) {
       purpose: cookie.purpose || 'Not specified',
       lifespan: cookie.expiry || 'Session',
       status_declared: isDeclared,
-      status_undeclared: !isDeclared
+      status_undeclared: hasCookiePolicy && !isDeclared,
+      status_not_checked: !hasCookiePolicy
     };
   });
 
@@ -381,7 +383,7 @@ function transformDataForTemplate(data) {
     {
       category: 'Cookie Banner Compliance',
       percentage: Math.round(((8 - bannerViolations.length) / 8) * 100),
-      description: `${bannerViolations.length} violations found in cookie banner implementation`,
+      description: `${bannerViolations.length} banner design/UX violations (noyb checklist)`,
       severity: bannerViolations.length > 3 ? 'critical' : bannerViolations.length > 0 ? 'high' : 'low'
     },
     {
@@ -392,11 +394,17 @@ function transformDataForTemplate(data) {
     },
     {
       category: 'Cookie Declaration Accuracy',
-      percentage: cookieComparison ? Math.round((cookieComparison.declared.length / Math.max(cookies.length, 1)) * 100) : 0,
-      description: undeclaredCookies.length > 0 ?
-        `${undeclaredCookies.length} undeclared cookies found` :
-        'All cookies properly declared',
-      severity: undeclaredCookies.length > 10 ? 'high' : undeclaredCookies.length > 0 ? 'medium' : 'low'
+      percentage: hasCookiePolicy ?
+        Math.round((cookieComparison.declared.length / Math.max(cookies.length, 1)) * 100) :
+        0,
+      description: !hasCookiePolicy ?
+        'Cookie Policy not provided for comparison' :
+        (undeclaredCookies.length > 0 ?
+          `${undeclaredCookies.length} undeclared cookies found` :
+          'All cookies properly declared'),
+      severity: !hasCookiePolicy ? 'high' :
+        (undeclaredCookies.length > 10 ? 'high' :
+         undeclaredCookies.length > 0 ? 'medium' : 'low')
     }
   ];
 
@@ -431,12 +439,16 @@ function transformDataForTemplate(data) {
     critical_violations_description: allCriticalViolations.length > 0 ?
       `Your website has ${allCriticalViolations.length} critical GDPR violations requiring immediate attention.` :
       'Great! No critical violations detected.',
-    undeclared_cookies_title: undeclaredCookies.length > 0 ?
-      `${undeclaredCookies.length} Undeclared Cookies Found` :
-      'All Cookies Declared',
-    undeclared_cookies_description: undeclaredCookies.length > 0 ?
-      `${undeclaredCookies.length} cookies are active on your website but not listed in your Cookie Policy.` :
-      'All detected cookies are properly declared in your Cookie Policy.',
+    undeclared_cookies_title: !hasCookiePolicy ?
+      'No Cookie Policy Provided' :
+      (undeclaredCookies.length > 0 ?
+        `${undeclaredCookies.length} Undeclared Cookies Found` :
+        'All Cookies Declared'),
+    undeclared_cookies_description: !hasCookiePolicy ?
+      'Cookie Policy was not provided for comparison. Upload your Cookie Policy to verify cookie declarations.' :
+      (undeclaredCookies.length > 0 ?
+        `${undeclaredCookies.length} cookies are active on your website but not listed in your Cookie Policy.` :
+        'All detected cookies are properly declared in your Cookie Policy.'),
     passed_criteria_title: `${passedCriteria.length} Criteria Passed`,
     passed_criteria_description: `Your Privacy Policy meets ${passedCriteria.length} out of 37 GDPR compliance criteria.`,
     fine_min_eur: formatNumber(riskAssessment?.total_risk_min || 0),
