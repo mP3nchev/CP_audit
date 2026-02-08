@@ -54,6 +54,7 @@ async function adaptAuditDataToReportModel(auditUid) {
     finding1: buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests),
     finding2: buildFinding2RejectButton(bannerViolations),
     mediumFindings: buildMediumFindings(consentModeStatus, privacyAnalysis, cookieComparisonData, cookies),
+    consentMode: consentModeStatus,
     cookies: buildCookieInventory(cookies, cookieComparisonData),
     consentChecklist: buildConsentChecklist(scanResults, bannerViolations),
     complianceMatrix: buildComplianceMatrix(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, consentModeStatus),
@@ -149,8 +150,8 @@ function buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRe
   const trackingCount = violations.length;
   const preConsentRequests = networkRequests.filter(r => r.beforeConsent);
 
-  // Extract top 5 evidence items
-  const topEvidence = preConsentRequests.slice(0, 5).map(req => ({
+  // Extract ALL evidence items (show all tracking requests)
+  const topEvidence = preConsentRequests.map(req => ({
     type: 'Network Request',
     domain: new URL(req.url).hostname,
     url: req.url,

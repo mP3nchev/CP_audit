@@ -11,6 +11,7 @@ import { ExecutiveSummary } from '@/components/report/executive-summary';
 import { ScopeMethodology } from '@/components/report/scope-methodology';
 import { HighRiskFinding } from '@/components/report/high-risk-finding';
 import { MediumFindings } from '@/components/report/medium-findings';
+import { ConsentModeV2 } from '@/components/report/consent-mode-v2';
 import { PrivacyPolicyAnalysis } from '@/components/report/privacy-policy-analysis';
 import { CookieInventory } from '@/components/report/cookie-inventory';
 import { ComplianceMatrix } from '@/components/report/compliance-matrix';
@@ -151,6 +152,12 @@ export default function ReportV2Page() {
             )}
 
             <MediumFindings mediumFindings={reportData.mediumFindings} />
+
+            {/* Google Consent Mode V2 Section */}
+            {reportData.consentMode && (
+              <ConsentModeV2 consentMode={reportData.consentMode} />
+            )}
+
             <PrivacyPolicyAnalysis privacyPolicyAnalysis={reportData.privacyPolicyAnalysis} />
             <CookieInventory cookies={reportData.cookies} />
             <ComplianceMatrix complianceMatrix={reportData.complianceMatrix} />

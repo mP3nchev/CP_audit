@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import StatusBadge from './StatusBadge';
 import LoadingSpinner from './LoadingSpinner';
 
@@ -9,6 +9,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
   const [isResuming, setIsResuming] = useState(false);
   const [resumed, setResumed] = useState(false);
   const [pollingForCompletion, setPollingForCompletion] = useState(false);
+  const [shareableUrl, setShareableUrl] = useState(null);
 
   // Normalize API URL - ensure it starts with protocol
   let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -16,11 +17,23 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     apiUrl = 'https://' + apiUrl;
   }
 
-  const reportUrl = `${apiUrl}/api/audit/${auditId}/report`;
-  const shareUrl = `${apiUrl}/api/audit/${auditId}/share`;
+  // v2 Premium Report URL (Vercel-hosted)
+  const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL || 'https://cp-audit.vercel.app';
+  const reportUrl = `${vercelUrl}/report-v2/${auditId}`;
+
+  // Fetch shareable link from API
+  useEffect(() => {
+    if (status === 'completed') {
+      fetch(`${apiUrl}/api/audit/${auditId}/share`)
+        .then(res => res.json())
+        .then(data => setShareableUrl(data.share_url))
+        .catch(err => console.error('Failed to fetch shareable link:', err));
+    }
+  }, [status, auditId, apiUrl]);
 
   const copyShareLink = () => {
-    navigator.clipboard.writeText(shareUrl);
+    const linkToCopy = shareableUrl || reportUrl;
+    navigator.clipboard.writeText(linkToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -280,12 +293,12 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       {/* Share Link Display */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Shareable Link:
+          Shareable Link (v2 Premium Report):
         </label>
         <div className="flex items-center space-x-2">
           <input
             type="text"
-            value={shareUrl}
+            value={shareableUrl || reportUrl}
             readOnly
             className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-gray-50"
           />

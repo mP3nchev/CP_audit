@@ -1,5 +1,6 @@
 import React from "react"
-import { Shield, Globe, Calendar, User, Building2, ScanLine } from "lucide-react";
+import Image from "next/image";
+import { Globe, Calendar, User, Building2, ScanLine } from "lucide-react";
 
 export function CoverPage({ meta }) {
   return (
@@ -8,20 +9,25 @@ export function CoverPage({ meta }) {
       className="scroll-mt-24 print-break-before"
     >
       <div className="rounded-2xl border border-[var(--cp-neutral-40)] bg-[var(--cp-white)] shadow-sm overflow-hidden">
-        {/* Top band */}
-        <div className="bg-[var(--cp-neutral-100)] px-8 py-10 text-[var(--cp-white)]">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--cp-blue-100)]">
-              <Shield className="h-6 w-6 text-[var(--cp-white)]" />
-            </div>
-            <span className="text-xl font-bold tracking-tight">CraftPolicy</span>
+        {/* Top band with gradient background */}
+        <div style={{background: 'linear-gradient(-133deg, #accef7, #e7edf5)'}} className="px-8 py-10">
+          {/* Logo */}
+          <div className="mb-6">
+            <Image
+              src="/craftpolicy-logo.svg"
+              alt="CraftPolicy"
+              width={180}
+              height={40}
+              className="h-10 w-auto"
+              style={{filter: 'brightness(0) invert(1)'}}
+            />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-balance leading-tight lg:text-4xl">
+          <h1 className="text-3xl font-bold tracking-tight text-balance leading-tight lg:text-4xl" style={{color: 'rgb(1, 117, 255)'}}>
             GDPR & Cookie Consent
             <br />
             Compliance Audit
           </h1>
-          <p className="mt-3 text-base text-[var(--cp-neutral-60)]">
+          <p className="mt-3 text-base text-[var(--cp-neutral-80)]">
             Executive-level compliance assessment with actionable recommendations
           </p>
         </div>

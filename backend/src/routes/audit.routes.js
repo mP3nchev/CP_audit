@@ -752,7 +752,7 @@ router.get('/api/audit/:audit_id/report', async (req, res) => {
 });
 
 /**
- * Generate shareable report link (upload to Vercel Blob)
+ * Generate shareable report link (v2 premium template)
  * GET /api/audit/:audit_id/share
  */
 router.get('/api/audit/:audit_id/share', async (req, res) => {
@@ -783,19 +783,16 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
       });
     }
 
-    // Generate HTML report
-    const html = await generateReport(audit_id);
+    // Generate v2 report URL (Vercel-hosted React app)
+    const vercelUrl = process.env.VERCEL_FRONTEND_URL || 'https://cp-audit.vercel.app';
+    const shareUrl = `${vercelUrl}/report-v2/${audit_id}`;
 
-    // Upload to Vercel Blob
-    const filename = `report-${audit_id}-${Date.now()}.html`;
-    const blobUrl = await uploadBlob(Buffer.from(html, 'utf8'), filename);
-
-    console.log(`✅ Report uploaded: ${blobUrl}`);
+    console.log(`✅ v2 Report shareable link: ${shareUrl}`);
 
     res.json({
       audit_id: audit_id,
-      share_url: blobUrl,
-      filename: filename,
+      share_url: shareUrl,
+      report_type: 'v2-premium',
       generated_at: new Date().toISOString()
     });
 

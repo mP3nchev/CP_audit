@@ -56,7 +56,7 @@ export function HighRiskFinding({
   evidence,
   totalEvidenceCount,
 }: FindingProps) {
-  const [showAllEvidence, setShowAllEvidence] = useState(false);
+  const [showAllEvidence, setShowAllEvidence] = useState(true);
 
   const effortColors = {
     Small: "bg-[var(--cp-success-light)] text-[var(--cp-success)]",
