@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { reportData } from "@/lib/report-data";
 import { ReportSection } from "./report-section";
 import { SeverityBadge } from "./severity-badge";
 import {
@@ -100,8 +99,7 @@ function TierSection({
   );
 }
 
-export function PrivacyPolicyAnalysis() {
-  const { privacyPolicyAnalysis } = reportData;
+export function PrivacyPolicyAnalysis({ privacyPolicyAnalysis }) {
   const { tiers, finalScore, finalTotal } = privacyPolicyAnalysis;
 
   const totalCriteria = tiers.reduce((acc, t) => acc + t.criteria.length, 0);

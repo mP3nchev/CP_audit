@@ -1,11 +1,8 @@
-import { reportData } from "@/lib/report-data";
 import { ReportSection } from "./report-section";
 import { SeverityBadge } from "./severity-badge";
 import { ListChecks, TrendingDown, Wrench } from "lucide-react";
 
-export function MediumFindings() {
-  const { mediumFindings } = reportData;
-
+export function MediumFindings({ mediumFindings }) {
   return (
     <ReportSection
       id="medium-findings"

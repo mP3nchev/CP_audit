@@ -1,5 +1,4 @@
 import React from "react"
-import { reportData } from "@/lib/report-data";
 import { ReportSection } from "./report-section";
 import { SeverityBadge } from "./severity-badge";
 import {
@@ -12,9 +11,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 
-export function ExecutiveSummary() {
-  const { executive } = reportData;
-
+export function ExecutiveSummary({ executive }) {
   return (
     <ReportSection
       id="executive-summary"

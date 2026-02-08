@@ -1,11 +1,9 @@
 import React from "react"
-import { reportData } from "@/lib/report-data";
 import { ReportSection } from "./report-section";
 import { SeverityBadge } from "./severity-badge";
 import { Cookie, AlertTriangle, CheckCircle2 } from "lucide-react";
 
-export function CookieInventory() {
-  const { cookies } = reportData;
+export function CookieInventory({ cookies }) {
 
   // Group by vendor
   const byVendor: Record<string, typeof cookies> = {};

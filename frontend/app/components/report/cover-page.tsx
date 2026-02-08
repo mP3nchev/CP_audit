@@ -1,9 +1,7 @@
 import React from "react"
-import { reportData } from "@/lib/report-data";
 import { Shield, Globe, Calendar, User, Building2, ScanLine } from "lucide-react";
 
-export function CoverPage() {
-  const { meta } = reportData;
+export function CoverPage({ meta }) {
   return (
     <section
       id="cover"

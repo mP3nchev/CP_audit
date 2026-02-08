@@ -1,10 +1,8 @@
-import { reportData } from "@/lib/report-data";
 import { ReportSection } from "./report-section";
 import { SeverityBadge } from "./severity-badge";
 import { Scale, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 
-export function ComplianceMatrix() {
-  const { complianceMatrix } = reportData;
+export function ComplianceMatrix({ complianceMatrix }) {
 
   const passed = complianceMatrix.filter((r) => r.status === "pass").length;
   const failed = complianceMatrix.filter((r) => r.status === "fail").length;

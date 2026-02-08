@@ -1,4 +1,3 @@
-import { reportData } from "@/lib/report-data";
 import { ReportSection } from "./report-section";
 import {
   Microscope,
@@ -7,9 +6,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-export function ScopeMethodology() {
-  const { scope } = reportData;
-
+export function ScopeMethodology({ scope }) {
   return (
     <ReportSection
       id="scope"
