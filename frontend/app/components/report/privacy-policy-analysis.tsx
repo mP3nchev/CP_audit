@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { ReportSection } from "./report-section";
 import { SeverityBadge } from "./severity-badge";
+import type { PolicyTier, PrivacyPolicyAnalysis } from "@/types/report";
 import {
   FileText,
   ChevronDown,
@@ -23,11 +24,8 @@ function StatusIcon({ status }: { status: "pass" | "fail" | "warning" }) {
   }
 }
 
-function TierSection({
-  tier,
-}: {
-  tier: (typeof reportData.privacyPolicyAnalysis.tiers)[number];
-}) {
+function TierSection({ tier }: { tier: PolicyTier }) {
+  const [expanded, setExpanded] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   return (
