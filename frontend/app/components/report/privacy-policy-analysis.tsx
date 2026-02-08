@@ -26,7 +26,6 @@ function StatusIcon({ status }: { status: "pass" | "fail" | "warning" }) {
 
 function TierSection({ tier }: { tier: PolicyTier }) {
   const [expanded, setExpanded] = useState(false);
-  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="rounded-xl border border-[var(--cp-neutral-40)] overflow-hidden print-avoid-break">
