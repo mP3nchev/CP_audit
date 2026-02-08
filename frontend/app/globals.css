@@ -86,3 +86,147 @@ a {
 a:hover {
   text-decoration: underline;
 }
+
+/* ============================================================
+   CraftPolicy Premium Report v2 — Brand Colors & Print Styles
+   ============================================================ */
+
+/* CraftPolicy Brand Colors (for v2 report template) */
+:root {
+  --cp-blue-100: #0175ff;
+  --cp-blue-150: #0155b9;
+  --cp-blue-200: #004699;
+  --cp-blue-80: #449aff;
+  --cp-blue-60: #accef7;
+  --cp-blue-40: #c6e0ff;
+  --cp-blue-30: #d2e2f5;
+  --cp-blue-20: #d6e9ff;
+  --cp-blue-15: #e7f2ff;
+  --cp-blue-10: #e2e8f1;
+  --cp-blue-5: #edf0f4;
+
+  --cp-black: #000000;
+  --cp-neutral-100: #1c1c1c;
+  --cp-neutral-90: #4d4d4d;
+  --cp-neutral-80: #5a5a5a;
+  --cp-neutral-60: #d2d2d2;
+  --cp-neutral-40: #d8dbde;
+  --cp-neutral-30: #aaaaaa;
+  --cp-neutral-20: #f4f4f4;
+  --cp-white: #ffffff;
+
+  --cp-success: #027a48;
+  --cp-success-light: #ecfdf3;
+  --cp-error: #b42318;
+  --cp-error-light: #fef3f2;
+  --cp-warning: #b54708;
+  --cp-warning-light: #fffaeb;
+}
+
+/* Print styles for A4 PDF export */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm 14mm;
+  }
+
+  html, body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    font-size: 11px !important;
+  }
+
+  /* Hide sidebar and non-print elements */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Force full width when sidebar hidden */
+  .print-full-width {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  /* Remove all overflow scroll — tables must render fully */
+  .overflow-x-auto,
+  .overflow-y-auto {
+    overflow: visible !important;
+  }
+
+  /* Remove scroll containers */
+  [class*="overflow-x"] {
+    overflow: visible !important;
+  }
+
+  /* Force all collapsible content visible */
+  [data-print-expand] {
+    display: block !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Page break controls */
+  .print-break-before {
+    page-break-before: always;
+    break-before: page;
+  }
+
+  .print-avoid-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Section-level page breaks — each major section starts on new page */
+  section {
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+
+  /* Tables should NOT break inside rows */
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  /* Cards and finding blocks should avoid breaking */
+  .print-avoid-break,
+  [class*="rounded-xl"][class*="border"] {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Remove shadows and rounded corners for cleaner print */
+  [class*="shadow"] {
+    box-shadow: none !important;
+  }
+
+  /* Keep table widths in check */
+  table {
+    width: 100% !important;
+    table-layout: fixed;
+  }
+
+  td, th {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  /* Tier sections should be fully visible */
+  .tier-content-print {
+    display: block !important;
+  }
+
+  /* Remove fixed/sticky positioning */
+  .sticky {
+    position: static !important;
+  }
+
+  /* Remove the bg color for lighter print */
+  .min-h-screen {
+    background: white !important;
+  }
+}

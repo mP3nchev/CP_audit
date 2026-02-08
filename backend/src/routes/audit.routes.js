@@ -809,6 +809,61 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
 });
 
 /**
+ * Generate v2 report data (JSON format for React template)
+ * GET /api/audit/:audit_id/report-v2
+ *
+ * Purpose: Provide structured JSON data for the premium v2 report template
+ * This route runs in parallel to the existing /report route (non-breaking)
+ */
+router.get('/api/audit/:audit_id/report-v2', async (req, res) => {
+  try {
+    const { audit_id } = req.params;
+
+    console.log(`📊 Generating v2 report data for audit ${audit_id}...`);
+
+    // Verify audit exists
+    const db = getDatabase();
+    const audit = db.prepare(`
+      SELECT * FROM audits WHERE audit_uid = ?
+    `).get(audit_id);
+
+    if (!audit) {
+      return res.status(404).json({
+        error: 'Audit not found',
+        code: 'E404'
+      });
+    }
+
+    // Check if audit is completed
+    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
+      return res.status(400).json({
+        error: 'Audit not completed',
+        message: 'Report data cannot be generated until audit is complete',
+        status: audit.status
+      });
+    }
+
+    // Import data adapter
+    const { adaptAuditDataToReportModel } = require('../generators/report-data-adapter');
+
+    // Generate structured report data
+    const reportData = await adaptAuditDataToReportModel(audit_id);
+
+    console.log(`✅ v2 Report data generated successfully`);
+
+    // Return JSON
+    res.json(reportData);
+
+  } catch (error) {
+    console.error('❌ Failed to generate v2 report data:', error);
+    res.status(500).json({
+      error: 'Failed to generate v2 report data',
+      message: error.message
+    });
+  }
+});
+
+/**
  * Manual Consent Data Upload
  * POST /api/audit/manual-consent/upload
  * Body: { websiteUrl, scenarios: { reject, accept }, metadata }
