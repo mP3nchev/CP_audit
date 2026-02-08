@@ -5,17 +5,17 @@ import { useParams } from 'next/navigation';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
 // Report components
-import { SidebarNav } from '../../components/report/sidebar-nav';
-import { CoverPage } from '../../components/report/cover-page';
-import { ExecutiveSummary } from '../../components/report/executive-summary';
-import { ScopeMethodology } from '../../components/report/scope-methodology';
-import { HighRiskFinding } from '../../components/report/high-risk-finding';
-import { MediumFindings } from '../../components/report/medium-findings';
-import { PrivacyPolicyAnalysis } from '../../components/report/privacy-policy-analysis';
-import { CookieInventory } from '../../components/report/cookie-inventory';
-import { ComplianceMatrix } from '../../components/report/compliance-matrix';
-import { Roadmap } from '../../components/report/roadmap';
-import { NextSteps } from '../../components/report/next-steps';
+import { SidebarNav } from '@/components/report/sidebar-nav';
+import { CoverPage } from '@/components/report/cover-page';
+import { ExecutiveSummary } from '@/components/report/executive-summary';
+import { ScopeMethodology } from '@/components/report/scope-methodology';
+import { HighRiskFinding } from '@/components/report/high-risk-finding';
+import { MediumFindings } from '@/components/report/medium-findings';
+import { PrivacyPolicyAnalysis } from '@/components/report/privacy-policy-analysis';
+import { CookieInventory } from '@/components/report/cookie-inventory';
+import { ComplianceMatrix } from '@/components/report/compliance-matrix';
+import { Roadmap } from '@/components/report/roadmap';
+import { NextSteps } from '@/components/report/next-steps';
 
 export default function ReportV2Page() {
   const params = useParams();
