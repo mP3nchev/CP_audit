@@ -792,9 +792,13 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
 
     console.log(`✅ Report uploaded: ${blobUrl}`);
 
+    // Return v2 Vercel URL as primary, blob as fallback
+    const v2Url = `https://cp-audit.vercel.app/report-v2/${audit_id}`;
+
     res.json({
       audit_id: audit_id,
-      share_url: blobUrl,
+      share_url: v2Url,
+      blob_url: blobUrl,
       filename: filename,
       generated_at: new Date().toISOString()
     });

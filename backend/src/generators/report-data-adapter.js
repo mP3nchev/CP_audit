@@ -150,8 +150,8 @@ function buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRe
   const trackingCount = violations.length;
   const preConsentRequests = networkRequests.filter(r => r.beforeConsent);
 
-  // Extract top 5 evidence items
-  const topEvidence = preConsentRequests.slice(0, 5).map(req => ({
+  // Extract ALL evidence items (no limit)
+  const topEvidence = preConsentRequests.map(req => ({
     type: 'Network Request',
     domain: new URL(req.url).hostname,
     url: req.url,

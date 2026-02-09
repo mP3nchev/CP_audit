@@ -16,10 +16,28 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     apiUrl = 'https://' + apiUrl;
   }
 
-  const reportUrl = `${apiUrl}/api/audit/${auditId}/report`;
-  const shareUrl = `${apiUrl}/api/audit/${auditId}/share`;
+  const reportUrl = `https://cp-audit.vercel.app/report-v2/${auditId}`;
+  const [shareUrl, setShareUrl] = useState(reportUrl);
 
-  const copyShareLink = () => {
+  const copyShareLink = async () => {
+    // Fetch shareable link on first copy if not already fetched
+    if (shareUrl === reportUrl) {
+      try {
+        const res = await fetch(`${apiUrl}/api/audit/${auditId}/share`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.share_url) {
+            setShareUrl(data.share_url);
+            navigator.clipboard.writeText(data.share_url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch share link:', e);
+      }
+    }
     navigator.clipboard.writeText(shareUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
