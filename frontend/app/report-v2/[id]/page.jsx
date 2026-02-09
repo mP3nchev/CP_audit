@@ -14,6 +14,7 @@ import { MediumFindings } from '@/components/report/medium-findings';
 import { PrivacyPolicyAnalysis } from '@/components/report/privacy-policy-analysis';
 import { CookieInventory } from '@/components/report/cookie-inventory';
 import { ComplianceMatrix } from '@/components/report/compliance-matrix';
+import { ConsentModeV2 } from '@/components/report/consent-mode-v2';
 import { Roadmap } from '@/components/report/roadmap';
 import { NextSteps } from '@/components/report/next-steps';
 
@@ -154,6 +155,7 @@ export default function ReportV2Page() {
             <PrivacyPolicyAnalysis privacyPolicyAnalysis={reportData.privacyPolicyAnalysis} />
             <CookieInventory cookies={reportData.cookies} />
             <ComplianceMatrix complianceMatrix={reportData.complianceMatrix} />
+            <ConsentModeV2 consentModeV2={reportData.consentModeV2} />
             <Roadmap
               executive={reportData.executive}
               consentChecklist={reportData.consentChecklist}
