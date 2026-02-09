@@ -122,6 +122,17 @@ export interface RiskBreakdownItem {
   description: string;
 }
 
+export interface ConsentModeV2Data {
+  detected: boolean;
+  version: string | null;
+  compliant: boolean;
+  confidence: number;
+  detectionMethod: string | null;
+  consentStates: Record<string, string>;
+  issues: string[];
+  ga4Present: boolean;
+}
+
 export interface ReportData {
   meta: ReportMeta;
   executive: ExecutiveSummary;
@@ -134,4 +145,5 @@ export interface ReportData {
   privacyPolicyAnalysis: PrivacyPolicyAnalysis;
   consentChecklist: ConsentChecklistItem[];
   riskBreakdown: RiskBreakdownItem[];
+  consentModeV2?: ConsentModeV2Data | null;
 }

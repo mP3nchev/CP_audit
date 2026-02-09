@@ -10,6 +10,7 @@ import {
   ListChecks,
   Cookie,
   Scale,
+  Fingerprint,
   Route,
   Handshake,
   Printer,
@@ -28,6 +29,7 @@ const sections = [
   { id: "privacy-policy", label: "Privacy Policy Analysis", icon: FileText },
   { id: "cookie-inventory", label: "Cookie Inventory", icon: Cookie },
   { id: "compliance-matrix", label: "Compliance Matrix", icon: Scale },
+  { id: "consent-mode-v2", label: "Consent Mode V2", icon: Fingerprint },
   { id: "roadmap", label: "Remediation Roadmap", icon: Route },
   { id: "next-steps", label: "Next Steps", icon: Handshake },
 ];

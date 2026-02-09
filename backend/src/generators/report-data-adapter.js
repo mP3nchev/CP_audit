@@ -58,6 +58,7 @@ async function adaptAuditDataToReportModel(auditUid) {
     consentChecklist: buildConsentChecklist(scanResults, bannerViolations),
     complianceMatrix: buildComplianceMatrix(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, consentModeStatus),
     privacyPolicyAnalysis: buildPrivacyPolicyAnalysis(privacyAnalysis),
+    consentModeV2: buildConsentModeV2Section(consentModeStatus),
     humanAssisted: buildHumanAssistedSection(consentSimulation),
     riskBreakdown: buildRiskBreakdown(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, cookies)
   };
@@ -532,6 +533,23 @@ function buildRiskBreakdown(scanResults, bannerViolations, privacyAnalysis, cook
   });
 
   return breakdown;
+}
+
+function buildConsentModeV2Section(consentModeStatus) {
+  if (!consentModeStatus) {
+    return null;
+  }
+
+  return {
+    detected: consentModeStatus.detected || false,
+    version: consentModeStatus.version || null,
+    compliant: consentModeStatus.compliant || false,
+    confidence: consentModeStatus.confidence || 0,
+    detectionMethod: consentModeStatus.detection_method || null,
+    consentStates: consentModeStatus.consentStates || {},
+    issues: consentModeStatus.issues || [],
+    ga4Present: consentModeStatus.ga4Present || false
+  };
 }
 
 // ============================================================
