@@ -56,7 +56,7 @@ export function HighRiskFinding({
   evidence,
   totalEvidenceCount,
 }: FindingProps) {
-  const [showAllEvidence, setShowAllEvidence] = useState(false);
+  const [showAllEvidence, setShowAllEvidence] = useState(true);
 
   const effortColors = {
     Small: "bg-[var(--cp-success-light)] text-[var(--cp-success)]",
@@ -142,7 +142,7 @@ export function HighRiskFinding({
                 <div className="flex items-center gap-2">
                   <Network className="h-4 w-4 text-[var(--cp-error)]" />
                   <h4 className="text-sm font-semibold text-[var(--cp-neutral-100)]">
-                    Evidence: Top Network Requests
+                    Evidence: Network Requests
                   </h4>
                   {totalEvidenceCount && (
                     <span className="text-xs text-[var(--cp-neutral-80)]">

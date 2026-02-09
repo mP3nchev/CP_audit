@@ -152,10 +152,10 @@ export default function ReportV2Page() {
             )}
 
             <MediumFindings mediumFindings={reportData.mediumFindings} />
+            <ConsentModeV2 consentModeV2={reportData.consentModeV2} />
             <PrivacyPolicyAnalysis privacyPolicyAnalysis={reportData.privacyPolicyAnalysis} />
             <CookieInventory cookies={reportData.cookies} />
             <ComplianceMatrix complianceMatrix={reportData.complianceMatrix} />
-            <ConsentModeV2 consentModeV2={reportData.consentModeV2} />
             <Roadmap
               executive={reportData.executive}
               consentChecklist={reportData.consentChecklist}

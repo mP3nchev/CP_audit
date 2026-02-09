@@ -167,9 +167,15 @@ export function NextSteps() {
                 <span className="text-[10px] font-medium text-[var(--cp-neutral-80)]">
                   {pkg.timeline}
                 </span>
-                <span className="flex items-center gap-1 text-xs font-semibold text-[var(--cp-blue-100)]">
+                <a
+                  href="https://meetings.hubspot.com/martin-penchev/martin-penchev-30-min-discovery-call"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-4 py-1.5 text-xs font-semibold text-white"
+                  style={{ background: 'rgb(1, 117, 255)', borderRadius: '6.25rem' }}
+                >
                   Learn more <ArrowRight className="h-3 w-3" />
-                </span>
+                </a>
               </div>
             </div>
           </div>

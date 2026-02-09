@@ -26,10 +26,10 @@ const sections = [
   { id: "finding-1", label: "Finding #1: Pre-Consent Tracking", icon: ShieldX },
   { id: "finding-2", label: "Finding #2: Missing Reject Button", icon: ShieldX },
   { id: "medium-findings", label: "Additional Findings", icon: ListChecks },
+  { id: "consent-mode-v2", label: "Consent Mode V2", icon: Fingerprint },
   { id: "privacy-policy", label: "Privacy Policy Analysis", icon: FileText },
   { id: "cookie-inventory", label: "Cookie Inventory", icon: Cookie },
   { id: "compliance-matrix", label: "Compliance Matrix", icon: Scale },
-  { id: "consent-mode-v2", label: "Consent Mode V2", icon: Fingerprint },
   { id: "roadmap", label: "Remediation Roadmap", icon: Route },
   { id: "next-steps", label: "Next Steps", icon: Handshake },
 ];
