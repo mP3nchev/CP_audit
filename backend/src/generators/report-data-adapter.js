@@ -39,6 +39,7 @@ async function adaptAuditDataToReportModel(auditUid) {
   const consentModeStatus = scanResults?.consent_mode_v2_status ? JSON.parse(scanResults.consent_mode_v2_status) : null;
   const timelineData = scanResults?.timeline_json ? JSON.parse(scanResults.timeline_json) : null;
   const consentSimulation = scanResults?.consent_simulation_json ? JSON.parse(scanResults.consent_simulation_json) : null;
+  const requestCategorization = scanResults?.request_categorization_json ? JSON.parse(scanResults.request_categorization_json) : null;
 
   const cookieComparisonData = cookieComparison ? {
     declared: JSON.parse(cookieComparison.declared_cookies_json || '[]'),
@@ -51,7 +52,7 @@ async function adaptAuditDataToReportModel(auditUid) {
     meta: buildMetaSection(audit, scanResults),
     executive: buildExecutiveSummary(audit, scanResults, bannerViolations, timelineData, cookieComparisonData),
     scope: buildScopeMethodology(audit),
-    finding1: buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests),
+    finding1: buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests, requestCategorization),
     finding2: buildFinding2RejectButton(bannerViolations),
     mediumFindings: buildMediumFindings(consentModeStatus, privacyAnalysis, cookieComparisonData, cookies),
     cookies: buildCookieInventory(cookies, cookieComparisonData),
@@ -141,29 +142,138 @@ function buildScopeMethodology(audit) {
   };
 }
 
-function buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests) {
+function buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests, requestCategorization) {
   if (!scanResults?.tracking_before_consent) {
     return null; // No violation found
   }
 
-  const violations = timelineData?.violations || [];
-  const trackingCount = violations.length;
-  const preConsentRequests = networkRequests.filter(r => r.beforeConsent);
+  // ──────────────────────────────────────────────────────────
+  // PROPER VIOLATION FILTERING
+  // Only include requests that are ACTUAL tracking violations:
+  //   1. Category A (Definite Tracking) or B (Suspicious) from categorizer
+  //   2. AND occurred before consent
+  //   3. EXCLUDE: images, fonts, CSS, media, UI scripts
+  // ──────────────────────────────────────────────────────────
 
-  // Extract ALL evidence items (no limit)
-  const topEvidence = preConsentRequests.map(req => ({
-    type: 'Network Request',
-    domain: new URL(req.url).hostname,
-    url: req.url,
-    timing: `${(req.timestamp / 1000).toFixed(2)}s`
-  }));
+  // Resource types that are NEVER violations (rendering resources)
+  const BENIGN_RESOURCE_TYPES = ['image', 'font', 'stylesheet', 'media',
+    'texttrack', 'manifest'];
+
+  // Static file extensions that are NEVER violations
+  const BENIGN_EXTENSIONS = ['.webp', '.svg', '.png', '.jpg', '.jpeg', '.gif',
+    '.ico', '.bmp', '.tiff', '.woff', '.woff2', '.ttf', '.eot', '.otf',
+    '.css', '.mp4', '.webm', '.mp3', '.ogg', '.wav', '.avif'];
+
+  // Build a lookup of categorized tracking requests (Category A + B)
+  const categorizedTracking = new Set();
+  if (requestCategorization) {
+    const catA = requestCategorization.categoryA?.requests || [];
+    const catB = requestCategorization.categoryB?.requests || [];
+    [...catA, ...catB].forEach(r => categorizedTracking.add(r.url));
+  }
+
+  // Filter violations: must be before consent AND actually tracking
+  const trackingViolations = networkRequests.filter(req => {
+    if (!req.beforeConsent) return false;
+
+    // Exclude benign resource types
+    if (req.resourceType && BENIGN_RESOURCE_TYPES.includes(req.resourceType)) {
+      // Exception: tracking pixels (images from tracking domains with payloads)
+      if (req.resourceType === 'image') {
+        try {
+          const u = new URL(req.url);
+          const isPixel = u.search.length > 10 &&
+            ['/tr', '/collect', '/pixel', '/track', '/beacon', '/t.gif',
+              '/p.gif', '/b.gif', '/c.gif', '/bat.gif', '/impression',
+              '/conversion', '/event'].some(p => u.pathname.includes(p));
+          if (!isPixel) return false;
+        } catch { return false; }
+      } else {
+        return false;
+      }
+    }
+
+    // Exclude static file extensions
+    try {
+      const pathname = new URL(req.url).pathname.toLowerCase();
+      const ext = pathname.substring(pathname.lastIndexOf('.'));
+      if (BENIGN_EXTENSIONS.includes(ext)) {
+        // Exception: .gif tracking pixels from tracking domains with query params
+        if (ext === '.gif') {
+          const u = new URL(req.url);
+          if (u.search.length <= 10) return false;
+          // Fall through to tracking check below
+        } else {
+          return false;
+        }
+      }
+    } catch { /* proceed with checks */ }
+
+    // If categorizer data exists, use it (most accurate)
+    if (categorizedTracking.size > 0) {
+      return categorizedTracking.has(req.url);
+    }
+
+    // Fallback: use isTracking flag from network monitor
+    return req.isTracking === true;
+  });
+
+  // Determine vendor names from evidence
+  const vendorDomains = new Set();
+  trackingViolations.forEach(req => {
+    try { vendorDomains.add(new URL(req.url).hostname); } catch {}
+  });
+
+  const trackingCount = trackingViolations.length;
+
+  if (trackingCount === 0) {
+    return null; // All requests were benign after filtering
+  }
+
+  // Build evidence with vendor attribution
+  const topEvidence = trackingViolations.map(req => {
+    let vendor = 'Unknown';
+    let category = 'Tracking Request';
+    try {
+      const hostname = new URL(req.url).hostname;
+      // Try to get vendor from categorization
+      if (requestCategorization) {
+        const allCategorized = [
+          ...(requestCategorization.categoryA?.requests || []),
+          ...(requestCategorization.categoryB?.requests || [])
+        ];
+        const match = allCategorized.find(r => r.url === req.url);
+        if (match?.categorization?.vendor) {
+          vendor = match.categorization.vendor;
+          category = match.categorization.categoryName || category;
+        } else {
+          vendor = hostname;
+        }
+      } else {
+        vendor = hostname;
+      }
+    } catch {}
+
+    return {
+      type: category,
+      domain: vendor,
+      url: req.url,
+      timing: `${(req.timestamp).toFixed(2)}s`
+    };
+  });
+
+  // Build dynamic vendor list for observation text
+  const vendorNames = [...new Set(topEvidence.map(e => e.domain))].slice(0, 4);
+  const vendorText = vendorNames.length > 0
+    ? `. These include ${vendorNames.join(', ')}.`
+    : '.';
 
   return {
     headline: 'Tracking Technologies Active Before User Consent',
     severity: 'critical',
     confidence: 'High',
     confidenceReason: 'Based on direct network request capture during initial page load, confirmed by human-assisted verification.',
-    observation: `${trackingCount} third-party tracking requests were detected during the initial page load, before any user interaction with the cookie consent banner. These include Google Tag Manager, Google Analytics, Facebook Pixel, and LinkedIn tracking.`,
+    observation: `${trackingCount} third-party tracking requests were detected during the initial page load, before any user interaction with the cookie consent banner${vendorText}`,
     legalContext: 'ePrivacy Directive Article 5(3) requires prior informed consent before storing or accessing information on a user\'s device. GDPR Article 6(1)(a) requires consent to be freely given, specific, informed, and unambiguous. The CJEU Planet49 ruling (C-673/17) confirmed that cookies require active opt-in consent.',
     businessRisk: 'Fines under GDPR can reach up to 4% of annual global turnover or EUR 20 million, whichever is greater. All advertising data collected without valid consent is legally tainted, potentially invalidating conversion data and audience segments used for ad spend optimization. Additionally, regulators increasingly focus on pre-consent tracking as a priority enforcement area.',
     recommendation: 'Implement a consent-first architecture: delay all non-essential script execution until after the user explicitly grants consent. Configure Google Consent Mode V2 with all default states set to \'denied\'. Use a tag management system that respects consent signals before firing any tags.',
