@@ -34,7 +34,7 @@ function setupNetworkMonitoring(page) {
       beforeConsent: firstUserInteraction === null || timestamp < firstUserInteraction,
       headers: request.headers(),
       isTracking: isTracking,
-      domain: isTracking ? new URL(request.url()).hostname : undefined
+      domain: isTracking ? (() => { try { return new URL(request.url()).hostname; } catch { return undefined; } })() : undefined
     };
 
     networkRequests.push(requestData);
@@ -118,37 +118,98 @@ function setupNetworkMonitoring(page) {
 /**
  * Check if URL is a tracking request
  * @param {string} url - Request URL
- * @param {string} resourceType - Resource type
+ * @param {string} resourceType - Puppeteer resource type (script, xhr, fetch, image, font, stylesheet, etc.)
  * @returns {boolean} True if tracking request
  */
+/**
+ * Proper domain suffix matching - prevents false positives from substring matching
+ * e.g. matchesDomain("ads.doubleclick.net", "doubleclick.net") = true
+ *      matchesDomain("notdoubleclick.net", "doubleclick.net") = false
+ */
+function matchesDomain(hostname, domain) {
+  return hostname === domain || hostname.endsWith('.' + domain);
+}
+
+/**
+ * Check if hostname belongs to any known tracking domain list
+ */
+function isKnownTrackingDomain(hostname) {
+  const allDomains = [
+    ...(TRACKING_DOMAINS.analytics || []),
+    ...(TRACKING_DOMAINS.advertising || []),
+    ...(TRACKING_DOMAINS.social_media || [])
+  ];
+  return allDomains.some(d => matchesDomain(hostname, d));
+}
+
 function isTrackingRequest(url, resourceType) {
   try {
-    const hostname = new URL(url).hostname.toLowerCase();
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const pathname = urlObj.pathname.toLowerCase();
 
-    // Check against known tracking domains
-    const isTracking = TRACKING_DOMAINS.analytics.some(domain => hostname.includes(domain)) ||
-                      TRACKING_DOMAINS.advertising.some(domain => hostname.includes(domain)) ||
-                      TRACKING_DOMAINS.social_media.some(domain => hostname.includes(domain));
+    // ──────────────────────────────────────────────────────────
+    // RULE 0: Resource types that are NEVER tracking violations
+    // Fonts, stylesheets, media assets = rendering resources
+    // ──────────────────────────────────────────────────────────
+    const ALWAYS_BENIGN_TYPES = ['font', 'stylesheet', 'media', 'texttrack', 'manifest'];
+    if (ALWAYS_BENIGN_TYPES.includes(resourceType)) {
+      return false;
+    }
 
-    // Also check for common tracking patterns in URL
+    // ──────────────────────────────────────────────────────────
+    // RULE 0b: Images are benign UNLESS they are tracking pixels
+    // Tracking pixel = image from tracking domain with tracking path + payload
+    // ──────────────────────────────────────────────────────────
+    if (resourceType === 'image') {
+      if (!isKnownTrackingDomain(hostname)) {
+        return false; // Regular content image
+      }
+
+      // From tracking domain - only flag if URL has tracking pixel patterns
+      const pixelPatterns = ['/tr', '/collect', '/pixel', '/track', '/beacon',
+        '/t.gif', '/p.gif', '/b.gif', '/c.gif', '/bat.gif', '/impression',
+        '/conversion', '/event'];
+      const hasPixelPath = pixelPatterns.some(p => pathname.includes(p));
+      const hasQueryPayload = urlObj.search.length > 10;
+
+      // Require both pixel path AND payload for image tracking (stricter)
+      return hasPixelPath && hasQueryPayload;
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // RULE 0c: Exclude content file extensions (static assets)
+    // ──────────────────────────────────────────────────────────
+    const STATIC_EXTENSIONS = ['.webp', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico',
+      '.bmp', '.tiff', '.woff', '.woff2', '.ttf', '.eot', '.otf',
+      '.css', '.mp4', '.webm', '.mp3', '.ogg', '.wav', '.avif'];
+    const lastDot = pathname.lastIndexOf('.');
+    const extension = lastDot !== -1 ? pathname.substring(lastDot) : '';
+    if (extension && STATIC_EXTENSIONS.includes(extension)) {
+      // Exception: .gif tracking pixels from tracking domains with payload
+      if (extension === '.gif' && isKnownTrackingDomain(hostname) && urlObj.search.length > 10) {
+        return true;
+      }
+      return false;
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // RULE 1-4: Check against known tracking domains + patterns
+    // ──────────────────────────────────────────────────────────
+    if (isKnownTrackingDomain(hostname)) {
+      return true;
+    }
+
+    // Check for common tracking patterns in URL path
     const trackingPatterns = [
-      '/analytics',
-      '/tracking',
-      '/pixel',
-      '/collect',
-      '/gtag',
-      '/ga.js',
-      '/analytics.js',
-      'facebook.com/tr',
-      'google-analytics.com',
-      'googletagmanager.com'
+      '/collect', '/g/collect', '/j/collect', '/r/collect',
+      '/analytics', '/tracking', '/pixel', '/beacon',
+      '/gtag', '/ga.js', '/analytics.js',
+      '/tr', '/track', '/event', '/conversion', '/impression',
+      '/measure', '/attribution', '/sync'
     ];
 
-    const hasTrackingPattern = trackingPatterns.some(pattern =>
-      url.toLowerCase().includes(pattern)
-    );
-
-    return isTracking || hasTrackingPattern;
+    return trackingPatterns.some(pattern => pathname.includes(pattern));
   } catch (error) {
     return false;
   }

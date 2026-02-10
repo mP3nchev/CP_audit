@@ -134,6 +134,9 @@ export function HighRiskFinding({
           </p>
         </FindingBlock>
 
+        {/* Print override: show all evidence without scroll in PDF */}
+        <style>{`@media print { [data-print-expand] { max-height: none !important; overflow: visible !important; } }`}</style>
+
         {/* Evidence block (collapsible) */}
         {evidence && evidence.length > 0 && (
           <div className="rounded-xl border border-[var(--cp-neutral-40)] bg-[var(--cp-neutral-20)] overflow-hidden">
@@ -164,10 +167,15 @@ export function HighRiskFinding({
                 </button>
               </div>
             </div>
-            <div className="divide-y divide-[var(--cp-neutral-40)]" data-print-expand>
+            {/* Scrollable in web (max 400px), full height in print/PDF */}
+            <div
+              className="divide-y divide-[var(--cp-neutral-40)] overflow-y-auto"
+              style={{ maxHeight: '400px' }}
+              data-print-expand
+            >
               {(showAllEvidence ? evidence : evidence.slice(0, 3)).map(
-                (item) => (
-                  <div key={item.url} className="flex items-center gap-4 px-4 py-3">
+                (item, idx) => (
+                  <div key={`${item.domain}-${item.timing}-${idx}`} className="flex items-center gap-4 px-4 py-3">
                     <span className="shrink-0 rounded bg-[var(--cp-error-light)] px-2 py-0.5 text-[10px] font-semibold uppercase text-[var(--cp-error)]">
                       {item.type}
                     </span>
