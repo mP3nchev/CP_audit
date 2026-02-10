@@ -12,6 +12,7 @@
 
 const { getDatabase } = require('../database/db');
 const { getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
+const { getRelevantPrecedents } = require('../analyzers/gdpr-precedents-search');
 
 /**
  * Main adapter function
@@ -47,6 +48,14 @@ async function adaptAuditDataToReportModel(auditUid) {
     missing: JSON.parse(cookieComparison.mismatched_retention_json || '[]')
   } : null;
 
+  // Search for GDPR precedents based on detected violations
+  const gdprPrecedents = await getRelevantPrecedents({
+    trackingBeforeConsent: scanResults?.tracking_before_consent,
+    bannerViolations,
+    consentModeStatus,
+    undeclaredCookies: cookieComparisonData?.undeclared || []
+  });
+
   // Build canonical report data
   return {
     meta: buildMetaSection(audit, scanResults),
@@ -61,7 +70,8 @@ async function adaptAuditDataToReportModel(auditUid) {
     privacyPolicyAnalysis: buildPrivacyPolicyAnalysis(privacyAnalysis),
     consentModeV2: buildConsentModeV2Section(consentModeStatus),
     humanAssisted: buildHumanAssistedSection(consentSimulation),
-    riskBreakdown: buildRiskBreakdown(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, cookies)
+    riskBreakdown: buildRiskBreakdown(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, cookies),
+    gdprPrecedents
   };
 }
 

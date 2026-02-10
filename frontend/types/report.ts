@@ -133,6 +133,24 @@ export interface ConsentModeV2Data {
   ga4Present: boolean;
 }
 
+export interface GdprPrecedent {
+  dpa: string;
+  case_number: string;
+  jurisdiction: string;
+  date: string;
+  articles: string;
+  fine_eur: number;
+  fine_formatted: string;
+  summary: string;
+  outcome: string;
+}
+
+export interface GdprPrecedentsData {
+  detected_violations: string[];
+  cases_found: number;
+  cases: GdprPrecedent[];
+}
+
 export interface ReportData {
   meta: ReportMeta;
   executive: ExecutiveSummary;
@@ -146,4 +164,5 @@ export interface ReportData {
   consentChecklist: ConsentChecklistItem[];
   riskBreakdown: RiskBreakdownItem[];
   consentModeV2?: ConsentModeV2Data | null;
+  gdprPrecedents?: GdprPrecedentsData | null;
 }

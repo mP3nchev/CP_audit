@@ -15,6 +15,7 @@ import { PrivacyPolicyAnalysis } from '@/components/report/privacy-policy-analys
 import { CookieInventory } from '@/components/report/cookie-inventory';
 import { ComplianceMatrix } from '@/components/report/compliance-matrix';
 import { ConsentModeV2 } from '@/components/report/consent-mode-v2';
+import { GdprPrecedents } from '@/components/report/gdpr-precedents';
 import { Roadmap } from '@/components/report/roadmap';
 import { NextSteps } from '@/components/report/next-steps';
 
@@ -156,6 +157,7 @@ export default function ReportV2Page() {
             <PrivacyPolicyAnalysis privacyPolicyAnalysis={reportData.privacyPolicyAnalysis} />
             <CookieInventory cookies={reportData.cookies} />
             <ComplianceMatrix complianceMatrix={reportData.complianceMatrix} />
+            <GdprPrecedents gdprPrecedents={reportData.gdprPrecedents} />
             <Roadmap
               executive={reportData.executive}
               consentChecklist={reportData.consentChecklist}

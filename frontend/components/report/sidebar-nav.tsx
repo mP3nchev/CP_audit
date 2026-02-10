@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  BookOpen,
 } from "lucide-react";
 
 const sections = [
@@ -30,6 +31,7 @@ const sections = [
   { id: "privacy-policy", label: "Privacy Policy Analysis", icon: FileText },
   { id: "cookie-inventory", label: "Cookie Inventory", icon: Cookie },
   { id: "compliance-matrix", label: "Compliance Matrix", icon: Scale },
+  { id: "gdpr-precedents", label: "GDPR Precedents", icon: BookOpen },
   { id: "roadmap", label: "Remediation Roadmap", icon: Route },
   { id: "next-steps", label: "Next Steps", icon: Handshake },
 ];
