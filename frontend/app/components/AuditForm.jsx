@@ -7,7 +7,16 @@ import { z } from 'zod';
 import FileUpload from './FileUpload';
 import LoadingSpinner from './LoadingSpinner';
 
+const INDUSTRY_OPTIONS = [
+  { value: 'ecommerce', label: 'eCommerce' },
+  { value: 'b2b',       label: 'B2B' },
+  { value: 'corporate', label: 'Corporate' },
+  { value: 'saas',      label: 'SaaS' },
+];
+
 const auditSchema = z.object({
+  clientName: z.string().min(1, 'Client name is required'),
+  industry: z.string().min(1, 'Please select an industry'),
   websiteUrl: z.string()
     .url('Please enter a valid URL')
     .min(1, 'Website URL is required')
@@ -47,7 +56,11 @@ export default function AuditForm({ onAuditComplete }) {
       const startResponse = await fetch(`${apiUrl}/api/audit/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ website_url: data.websiteUrl })
+        body: JSON.stringify({
+          website_url: data.websiteUrl,
+          client_name: data.clientName,
+          industry: data.industry
+        })
       });
 
       console.log('Response status:', startResponse.status);
@@ -211,6 +224,55 @@ export default function AuditForm({ onAuditComplete }) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {/* Client Name */}
+      <div>
+        <label htmlFor="clientName" className="block text-sm font-medium text-gray-700 mb-2">
+          Client Name *
+        </label>
+        <input
+          id="clientName"
+          type="text"
+          placeholder="e.g. Acme Ltd."
+          disabled={isSubmitting}
+          {...register('clientName')}
+          className={`
+            w-full px-4 py-3 border rounded-lg
+            focus:ring-2 focus:ring-blue-500 focus:border-transparent
+            disabled:bg-gray-100 disabled:cursor-not-allowed
+            ${errors.clientName ? 'border-red-500' : 'border-gray-300'}
+          `}
+        />
+        {errors.clientName && (
+          <p className="mt-1 text-sm text-red-600">{errors.clientName.message}</p>
+        )}
+      </div>
+
+      {/* Industry Dropdown */}
+      <div>
+        <label htmlFor="industry" className="block text-sm font-medium text-gray-700 mb-2">
+          Industry *
+        </label>
+        <select
+          id="industry"
+          disabled={isSubmitting}
+          {...register('industry')}
+          className={`
+            w-full px-4 py-3 border rounded-lg bg-white
+            focus:ring-2 focus:ring-blue-500 focus:border-transparent
+            disabled:bg-gray-100 disabled:cursor-not-allowed
+            ${errors.industry ? 'border-red-500' : 'border-gray-300'}
+          `}
+        >
+          <option value="">-- Select industry --</option>
+          {INDUSTRY_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        {errors.industry && (
+          <p className="mt-1 text-sm text-red-600">{errors.industry.message}</p>
+        )}
+      </div>
+
       {/* Website URL Input */}
       <div>
         <label htmlFor="websiteUrl" className="block text-sm font-medium text-gray-700 mb-2">

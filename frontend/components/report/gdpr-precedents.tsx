@@ -98,6 +98,7 @@ export function GdprPrecedents({
                 {c.fine_eur > 0 ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-bold text-red-700 border border-red-200">
                     <Euro className="h-3 w-3" />
+                    {/* fine_formatted contains amount only — no € symbol (Euro icon above is the symbol) */}
                     {c.fine_formatted}
                   </span>
                 ) : (
