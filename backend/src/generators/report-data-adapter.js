@@ -700,8 +700,15 @@ function buildConsentModeV2Section(consentModeStatus) {
 function mergePostConsentCookies(preConsentCookies, consentSimulation) {
   if (!consentSimulation) return preConsentCookies;
 
-  // Extract new cookies that appeared after Accept (v1 simulator path)
-  const newAfterAccept = consentSimulation.comparison?.cookies?.newAfterAccept || [];
+  // Check ALL possible paths where post-consent cookies might be stored:
+  // 1. Upload endpoint format: comparison.newCookies (audit.routes.js line 992)
+  // 2. V1 simulator format: comparison.cookies.newAfterAccept (consent-simulator-v1.js)
+  // 3. Accept scenario full list: acceptScenario.cookiesAfterConsent (fallback)
+  const newAfterAccept =
+    consentSimulation.comparison?.newCookies ||
+    consentSimulation.comparison?.cookies?.newAfterAccept ||
+    consentSimulation.acceptScenario?.cookiesAfterConsent ||
+    [];
 
   if (!Array.isArray(newAfterAccept) || newAfterAccept.length === 0) {
     return preConsentCookies;
