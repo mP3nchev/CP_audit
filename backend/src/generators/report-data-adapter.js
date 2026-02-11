@@ -34,13 +34,18 @@ async function adaptAuditDataToReportModel(auditUid) {
   const riskAssessment = db.prepare('SELECT * FROM risk_assessments WHERE audit_id = ?').get(audit.id);
 
   // Parse JSON fields
-  const cookies = scanResults ? JSON.parse(scanResults.cookies_json || '[]') : [];
+  const preConsentCookies = scanResults ? JSON.parse(scanResults.cookies_json || '[]') : [];
   const networkRequests = scanResults ? JSON.parse(scanResults.network_requests_json || '[]') : [];
   const bannerViolations = scanResults ? JSON.parse(scanResults.banner_violations_json || '[]') : [];
   const consentModeStatus = scanResults?.consent_mode_v2_status ? JSON.parse(scanResults.consent_mode_v2_status) : null;
   const timelineData = scanResults?.timeline_json ? JSON.parse(scanResults.timeline_json) : null;
   const consentSimulation = scanResults?.consent_simulation_json ? JSON.parse(scanResults.consent_simulation_json) : null;
   const requestCategorization = scanResults?.request_categorization_json ? JSON.parse(scanResults.request_categorization_json) : null;
+
+  // Merge post-consent cookies (from consent simulation Accept scenario) into main list
+  // Google Consent Mode V2 blocks _ga, _gcl_au, _gid until user accepts — these only
+  // appear in the consent simulation, not in the pre-consent scan
+  const cookies = mergePostConsentCookies(preConsentCookies, consentSimulation);
 
   const cookieComparisonData = cookieComparison ? {
     declared: JSON.parse(cookieComparison.declared_cookies_json || '[]'),
@@ -49,12 +54,19 @@ async function adaptAuditDataToReportModel(auditUid) {
   } : null;
 
   // Search for GDPR precedents based on detected violations
-  const gdprPrecedents = await getRelevantPrecedents({
-    trackingBeforeConsent: scanResults?.tracking_before_consent,
-    bannerViolations,
-    consentModeStatus,
-    undeclaredCookies: cookieComparisonData?.undeclared || []
-  });
+  // Wrapped in try/catch — precedents must never crash the report
+  let gdprPrecedents = null;
+  try {
+    gdprPrecedents = await getRelevantPrecedents({
+      trackingBeforeConsent: scanResults?.tracking_before_consent,
+      bannerViolations,
+      consentModeStatus,
+      undeclaredCookies: cookieComparisonData?.undeclared || []
+    });
+  } catch (err) {
+    console.error('⚠️  GDPR precedents search failed (non-fatal):', err.message);
+    gdprPrecedents = { detected_violations: [], cases_found: 0, cases: [] };
+  }
 
   // Build canonical report data
   return {
@@ -386,9 +398,9 @@ function buildCookieInventory(cookies, cookieComparison) {
     return {
       name: cookie.name,
       category: cookie.category || 'Unknown',
-      vendor: cookie.vendor || 'Unknown',
+      vendor: cookie.vendor || cookie.domain || 'Unknown',
       purpose: cookie.purpose || 'Unknown purpose — requires manual review',
-      lifespan: cookie.expiry || 'Session',
+      lifespan: cookie.expiresFormatted || cookie.expiry || 'Session',
       declared: isDeclared
     };
   });
@@ -575,7 +587,11 @@ function buildHumanAssistedSection(consentSimulation) {
     };
   }
 
-  const newCookies = consentSimulation.comparison?.newCookies || [];
+  // v1 simulator: comparison.cookies.newAfterAccept
+  // v2 simulator: comparison.newCookies (legacy path, kept for compatibility)
+  const newCookies = consentSimulation.comparison?.cookies?.newAfterAccept
+    || consentSimulation.comparison?.newCookies
+    || [];
 
   return {
     afterReject: {
@@ -675,6 +691,43 @@ function buildConsentModeV2Section(consentModeStatus) {
 // ============================================================
 // Utility Functions
 // ============================================================
+
+/**
+ * Merge post-consent cookies from consent simulation into the main cookie list.
+ * Google Consent Mode V2 blocks _ga, _gcl_au, _gid until user accepts.
+ * These cookies only appear in the consent simulation Accept scenario.
+ */
+function mergePostConsentCookies(preConsentCookies, consentSimulation) {
+  if (!consentSimulation) return preConsentCookies;
+
+  // Extract new cookies that appeared after Accept (v1 simulator path)
+  const newAfterAccept = consentSimulation.comparison?.cookies?.newAfterAccept || [];
+
+  if (!Array.isArray(newAfterAccept) || newAfterAccept.length === 0) {
+    return preConsentCookies;
+  }
+
+  // Build set of existing cookie names for deduplication
+  const existingNames = new Set(preConsentCookies.map(c => c.name));
+
+  // Add post-consent cookies that aren't already in the list
+  const merged = [...preConsentCookies];
+  for (const cookie of newAfterAccept) {
+    if (!existingNames.has(cookie.name)) {
+      merged.push({
+        ...cookie,
+        postConsent: true // Mark as discovered after consent
+      });
+      existingNames.add(cookie.name);
+    }
+  }
+
+  if (merged.length > preConsentCookies.length) {
+    console.log(`   🍪 Merged ${merged.length - preConsentCookies.length} post-consent cookies (e.g. _ga, _gcl_au) into inventory`);
+  }
+
+  return merged;
+}
 
 function extractTopFindings(scanResults, bannerViolations, timelineData, cookieComparison) {
   const findings = [];

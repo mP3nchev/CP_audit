@@ -22,23 +22,35 @@ export function GdprPrecedents({
 }: {
   gdprPrecedents?: GdprPrecedentsData | null;
 }) {
-  if (
-    !gdprPrecedents ||
-    !gdprPrecedents.cases ||
-    gdprPrecedents.cases.length === 0
-  ) {
-    return null;
-  }
+  const hasCases =
+    gdprPrecedents &&
+    gdprPrecedents.cases &&
+    gdprPrecedents.cases.length > 0;
 
-  const { detected_violations, cases_found, cases } = gdprPrecedents;
+  const detected_violations = gdprPrecedents?.detected_violations || [];
+  const cases_found = gdprPrecedents?.cases_found || 0;
+  const cases = gdprPrecedents?.cases || [];
 
   return (
     <ReportSection
       id="gdpr-precedents"
       title="GDPR Enforcement Precedents"
-      subtitle={`${cases_found} similar case${cases_found !== 1 ? "s" : ""} from DPA decisions database (2023-2025)`}
+      subtitle={
+        hasCases
+          ? `${cases_found} similar case${cases_found !== 1 ? "s" : ""} from DPA decisions database (2023\u20132025)`
+          : "DPA decisions database (2023\u20132025)"
+      }
       icon={<BookOpen className="h-5 w-5" />}
     >
+      {!hasCases && (
+        <p className="text-sm text-[var(--cp-neutral-70)]">
+          No matching enforcement precedents were found for the detected
+          violations in the current database of 2,300+ DPA decisions.
+        </p>
+      )}
+
+      {hasCases && (
+        <>
       {/* Matched violations summary */}
       <div className="mb-5">
         <p className="text-xs font-semibold text-[var(--cp-neutral-80)] uppercase tracking-wider mb-2">
@@ -125,6 +137,8 @@ export function GdprPrecedents({
           ))}
         </div>
       </div>
+      </>
+      )}
     </ReportSection>
   );
 }
