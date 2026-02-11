@@ -10,8 +10,15 @@ const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 
-// CSV file path
-const CSV_PATH = path.join(__dirname, '../../..', 'GDPR Decisions Database - 2023-2025.csv');
+// CSV file path — check multiple locations for deployment compatibility
+const CSV_FILENAME = 'GDPR Decisions Database - 2023-2025.csv';
+const CSV_CANDIDATES = [
+  path.join(__dirname, '../../data', CSV_FILENAME),    // backend/data/ (Railway)
+  path.join(__dirname, '../../..', CSV_FILENAME),       // project root (local dev)
+  path.join(process.cwd(), CSV_FILENAME),               // working directory fallback
+  path.join(process.cwd(), 'data', CSV_FILENAME),       // cwd/data/ fallback
+];
+const CSV_PATH = CSV_CANDIDATES.find(p => fs.existsSync(p)) || CSV_CANDIDATES[0];
 
 /**
  * Violation keywords mapping
