@@ -49,12 +49,19 @@ async function adaptAuditDataToReportModel(auditUid) {
   } : null;
 
   // Search for GDPR precedents based on detected violations
-  const gdprPrecedents = await getRelevantPrecedents({
-    trackingBeforeConsent: scanResults?.tracking_before_consent,
-    bannerViolations,
-    consentModeStatus,
-    undeclaredCookies: cookieComparisonData?.undeclared || []
-  });
+  // Wrapped in try/catch — precedents must never crash the report
+  let gdprPrecedents = null;
+  try {
+    gdprPrecedents = await getRelevantPrecedents({
+      trackingBeforeConsent: scanResults?.tracking_before_consent,
+      bannerViolations,
+      consentModeStatus,
+      undeclaredCookies: cookieComparisonData?.undeclared || []
+    });
+  } catch (err) {
+    console.error('⚠️  GDPR precedents search failed (non-fatal):', err.message);
+    gdprPrecedents = { detected_violations: [], cases_found: 0, cases: [] };
+  }
 
   // Build canonical report data
   return {

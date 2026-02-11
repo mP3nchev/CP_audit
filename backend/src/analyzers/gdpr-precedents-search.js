@@ -96,7 +96,7 @@ async function loadDecisions() {
     }
 
     fs.createReadStream(CSV_PATH, { encoding: 'utf8' })
-      .pipe(csv())
+      .pipe(csv({ skipLines: 1 }))
       .on('data', (row) => {
         decisions.push(row);
       })
