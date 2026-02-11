@@ -423,14 +423,50 @@ async function searchPrecedents(detectedViolations, options = {}) {
   // Sort: industry-matched first, then by fine amount descending
   finalCases.sort((a, b) => {
     if (industry) {
-      // Industry-matched cases come first
       if (a.industry_matched && !b.industry_matched) return -1;
       if (!a.industry_matched && b.industry_matched) return 1;
     }
     return b.fine_eur - a.fine_eur;
   });
 
-  // Limit results
+  // Deduplicate by case_number (fallback: DPA + date)
+  const seenKeys = new Set();
+  finalCases = finalCases.filter(c => {
+    const caseNum = (c['Case number/name'] || '').trim();
+    const key = (caseNum && caseNum !== 'N/A')
+      ? caseNum.toLowerCase()
+      : `${(c['Decision by'] || '').trim().toLowerCase()}|${(c['Date of decision'] || '').trim()}`;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
+
+  // Minimum 3 cases: if industry filter applied and not enough, add cases from other sectors
+  const MIN_CASES = 3;
+  if (industry && finalCases.length < MIN_CASES) {
+    console.log(`   ⚠️  Only ${finalCases.length} industry-matched cases. Adding cross-sector fallbacks...`);
+
+    // Collect all matched cases (with fines preferred) without the industry restriction
+    const allMatched = matchedWithFines.length > 0
+      ? [...matchedWithFines]
+      : [...matchedWithoutFines];
+
+    allMatched.sort((a, b) => b.fine_eur - a.fine_eur);
+
+    for (const c of allMatched) {
+      if (finalCases.length >= MIN_CASES) break;
+      const caseNum = (c['Case number/name'] || '').trim();
+      const key = (caseNum && caseNum !== 'N/A')
+        ? caseNum.toLowerCase()
+        : `${(c['Decision by'] || '').trim().toLowerCase()}|${(c['Date of decision'] || '').trim()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        finalCases.push(c);
+      }
+    }
+  }
+
+  // Limit to maxResults
   finalCases = finalCases.slice(0, maxResults);
 
   console.log(`   ✅ Found ${finalCases.length} matching cases`);

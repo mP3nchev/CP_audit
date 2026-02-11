@@ -677,13 +677,31 @@ function buildConsentModeV2Section(consentModeStatus) {
     return null;
   }
 
+  // The detector (consent-mode-detector.js) returns states as 'defaultStates' (camelCase).
+  // Some older records may use 'consentStates'. Handle both.
+  const rawStates = consentModeStatus.defaultStates || consentModeStatus.consentStates || {};
+
+  // Always include the 4 core V2 parameters required by Google Consent Mode v2.
+  // Display 'not_set' for any parameter that was not detected — this makes the
+  // compliance gap visible instead of silently hiding an empty section.
+  const CORE_V2_PARAMS = ['ad_storage', 'analytics_storage', 'ad_user_data', 'ad_personalization'];
+  const consentStates = {};
+  CORE_V2_PARAMS.forEach(param => {
+    consentStates[param] = rawStates[param] || 'not_set';
+  });
+  // Also include any additional params that were detected (functionality_storage, etc.)
+  Object.entries(rawStates).forEach(([key, val]) => {
+    if (!consentStates[key]) consentStates[key] = val;
+  });
+
   return {
     detected: consentModeStatus.detected || false,
     version: consentModeStatus.version || null,
     compliant: consentModeStatus.compliant || false,
     confidence: consentModeStatus.confidence || 0,
-    detectionMethod: consentModeStatus.detection_method || null,
-    consentStates: consentModeStatus.consentStates || {},
+    // Detector stores as 'detectionMethod' (camelCase); fallback to snake_case for old records
+    detectionMethod: consentModeStatus.detectionMethod || consentModeStatus.detection_method || null,
+    consentStates,
     issues: consentModeStatus.issues || [],
     ga4Present: consentModeStatus.ga4Present || false
   };
