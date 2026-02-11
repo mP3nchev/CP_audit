@@ -1,5 +1,6 @@
 import csv
 import json
+import re
 
 INPUT_CSV = "decisions.csv"
 OUTPUT_JSON = "similar_cases.json"
@@ -11,22 +12,181 @@ DETECTED_VIOLATIONS = [
     "invalid_reject_mechanism"
 ]
 
+# отрасъл от формата — може да е: ecommerce, b2b, corporate, saas
+INDUSTRY = "ecommerce"
+
+# Максимална глоба за показване (над това SMB клиентите не вярват)
+MAX_FINE_EUR = 20_000_000
+
+# Компании, чиито решения са нерелевантни за SMB аудита
+EXCLUDED_COMPANIES = [
+    "google", "alphabet", "facebook", "meta", "instagram", "whatsapp",
+    "tiktok", "bytedance", "shein", "amazon", "apple", "microsoft",
+    "twitter", "x corp", "linkedin", "youtube", "snapchat", "uber",
+    "airbnb", "booking.com", "spotify"
+]
+
+# Приблизителни курсове за конвертиране в евро (извъневрозонни страни)
+NON_EURO_RATES = {
+    "HUF": 400,   # унгарски форинт
+    "SEK": 11.5,  # шведска крона
+    "PLN": 4.3,   # полска злота
+    "CZK": 25.0,  # чешка крона
+    "RON": 5.0,   # румънска лея
+    "DKK": 7.46,  # датска крона
+    "GBP": 0.85,
+    "CHF": 0.93,
+    "NOK": 11.7,
+}
+
 VIOLATION_KEYWORDS = {
     "tracking_without_consent": [
-        "tracking", "analytics", "cookies", "without consent"
+        "tracking", "analytics", "cookies", "without consent", "before consent",
+        "prior consent", "no consent", "eprivacy"
     ],
     "analytics_before_consent": [
-        "analytics", "google analytics", "prior consent"
+        "analytics", "google analytics", "prior consent", "before consent",
+        "tracking before", "measurement"
     ],
     "invalid_reject_mechanism": [
-        "reject", "consent banner", "ineffective"
-    ]
+        "reject", "consent banner", "ineffective", "withdrawal", "dark pattern",
+        "not equally prominent", "difficult to refuse"
+    ],
+    "pre_ticked_boxes": [
+        "pre-ticked", "pre-checked", "default", "opt-out", "checkbox"
+    ],
+    "no_reject_button": [
+        "reject button", "first layer", "decline", "banner design", "equally prominent"
+    ],
+    "consent_mode_missing": [
+        "google consent mode", "consent management", "tag manager", "google analytics"
+    ],
+    "tracking_cookies": [
+        "tracking cookies", "_ga", "_gid", "facebook pixel", "advertising cookies",
+        "marketing cookies", "analytics cookies"
+    ],
 }
+
+INDUSTRY_KEYWORDS = {
+    "ecommerce": [
+        "e-commerce", "ecommerce", "online shop", "online store", "retail", "webshop",
+        "marketplace", "shopping", "purchase", "order", "customer data",
+        "loyalty program", "newsletter", "promotional email", "direct marketing",
+        "advertising", "remarketing", "tracking pixel", "cookies", "analytics",
+        "payment", "checkout", "cart", "consumer", "buyer"
+    ],
+    "b2b": [
+        "b2b", "business to business", "crm", "lead generation", "sales",
+        "marketing automation", "prospecting", "cold email", "outreach",
+        "linkedin", "professional", "corporate client", "enterprise",
+        "service provider", "supplier", "vendor"
+    ],
+    "corporate": [
+        "corporate", "employee", "hr", "human resources", "payroll", "workforce",
+        "staff", "personnel", "recruitment", "hiring", "applicant",
+        "monitoring", "cctv", "surveillance", "workplace", "data breach"
+    ],
+    "saas": [
+        "saas", "software", "platform", "app", "application", "api", "cloud",
+        "subscription", "user account", "login", "analytics", "tracking",
+        "cookies", "consent", "data processor", "data controller"
+    ],
+}
+
 
 def text_matches_violation(text, violation):
     keywords = VIOLATION_KEYWORDS.get(violation, [])
     text = text.lower()
     return any(k in text for k in keywords)
+
+
+def is_excluded_company(row):
+    combined = (
+        row.get("Decision by", "") + " " +
+        row.get("Case number/name", "") + " " +
+        row.get("Summary", "")
+    ).lower()
+    return any(company in combined for company in EXCLUDED_COMPANIES)
+
+
+def extract_eur_from_text(text):
+    """Търси явно споменато евро-равностойностно (equivalent to €X,XXX)"""
+    patterns = [
+        r"equivalent\s+to[^€]*€\s*([\d,\.]+)",
+        r"approx(?:imately)?\s*€\s*([\d,\.]+)",
+        r"\(€\s*([\d,\.]+)\)",
+        r"EUR\s+([\d,\.]+)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            try:
+                amount = float(m.group(1).replace(",", ""))
+                if amount > 0:
+                    return amount
+            except ValueError:
+                pass
+    return None
+
+
+def parse_fine(fine_text, summary_text=""):
+    """Връща евро-стойност на глобата. Конвертира ако е в нееврова валута."""
+    if not fine_text or fine_text.strip() in ("", "0", "N/A"):
+        return 0
+
+    fine_str = fine_text.strip()
+
+    # 1. Провери за нееврова валута
+    for currency, rate in NON_EURO_RATES.items():
+        pattern = re.compile(
+            r"([\d\s,\.]+)\s*" + currency + r"|" + currency + r"\s*([\d\s,\.]+)",
+            re.IGNORECASE
+        )
+        m = pattern.search(fine_str)
+        if m:
+            raw = (m.group(1) or m.group(2) or "").replace(" ", "").replace(",", "")
+            try:
+                amount = float(raw)
+                if amount > 0:
+                    # Предпочитаме изрично споменато EUR равностойност
+                    eur_from_summary = extract_eur_from_text(summary_text)
+                    if eur_from_summary and eur_from_summary > 0:
+                        return eur_from_summary
+                    return round(amount / rate)
+            except ValueError:
+                pass
+
+    # 2. Парсираме като EUR — само първото число (преди & или +)
+    cleaned = fine_str.replace("€", "").replace("EUR", "").strip()
+    first_part = re.split(r"[&+/]", cleaned)[0].strip().replace(" ", "")
+    try:
+        amount = float(first_part)
+    except ValueError:
+        return 0
+
+    if amount <= 0:
+        return 0
+
+    # 3. Прекалено голяма сума — опит за извличане от summary
+    if amount > MAX_FINE_EUR and summary_text:
+        eur_from_summary = extract_eur_from_text(summary_text)
+        if eur_from_summary and 0 < eur_from_summary <= MAX_FINE_EUR:
+            return eur_from_summary
+        return 0  # Отхвърляме — над лимита
+
+    return amount
+
+
+def matches_industry(text, industry):
+    """Проверява дали текстът е релевантен за избрания отрасъл."""
+    if not industry:
+        return True
+    keywords = INDUSTRY_KEYWORDS.get(industry.lower(), [])
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in keywords)
+
+
+# ── Основна логика ──────────────────────────────────────────────────────────
 
 with open(INPUT_CSV, newline="", encoding="utf-8") as f:
     reader = csv.DictReader(f)
@@ -36,32 +196,56 @@ matched_with_fines = []
 matched_without_fines = []
 
 for r in rows:
-    summary = r["Summary"].lower()
-    articles = r["Relevant GDPR articles"].lower()
-    combined_text = summary + " " + articles
+    summary = r.get("Summary", "")
+    articles = r.get("Relevant GDPR articles", "")
+    laws = r.get("Relevant EU laws", "")
+    combined_text = f"{summary} {articles} {laws}"
 
+    # Изключи известни мега-корпорации
+    if is_excluded_company(r):
+        continue
+
+    # Провери дали съвпада с нарушение
     matches = any(
         text_matches_violation(combined_text, v)
         for v in DETECTED_VIOLATIONS
     )
-
     if not matches:
         continue
 
-    has_fine = r["Fine"] and r["Fine"].strip() not in ["", "0", "N/A"]
+    # Парсирай глобата
+    fine_eur = parse_fine(r.get("Fine", ""), summary)
 
-    if has_fine:
-        matched_with_fines.append(r)
+    # Изключи глоби над лимита
+    if fine_eur > MAX_FINE_EUR:
+        continue
+
+    # Маркирай съответствие с отрасъл
+    industry_matched = matches_industry(combined_text, INDUSTRY)
+
+    case_data = dict(r)
+    case_data["fine_eur"] = fine_eur
+    case_data["industry_matched"] = industry_matched
+
+    if fine_eur > 0:
+        matched_with_fines.append(case_data)
     else:
-        matched_without_fines.append(r)
+        matched_without_fines.append(case_data)
 
-# приоритет: с глоби
+# Приоритет: с глоби > без глоби
 final_cases = matched_with_fines or matched_without_fines
 
-final_cases = final_cases[:10]
+# Сортиране: отрасъл-съвпадащи първо, после по глоба низходящо
+final_cases.sort(key=lambda c: (
+    0 if c.get("industry_matched") else 1,
+    -c.get("fine_eur", 0)
+))
+
+final_cases = final_cases[:8]
 
 output = {
     "detected_violations": DETECTED_VIOLATIONS,
+    "industry": INDUSTRY,
     "cases_found": len(final_cases),
     "cases": final_cases
 }
@@ -69,4 +253,4 @@ output = {
 with open(OUTPUT_JSON, "w", encoding="utf-8") as out:
     json.dump(output, out, indent=2, ensure_ascii=False)
 
-print(f"Exported {len(final_cases)} similar cases")
+print(f"Exported {len(final_cases)} similar cases for industry={INDUSTRY}")

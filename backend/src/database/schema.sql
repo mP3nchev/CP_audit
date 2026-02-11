@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS audits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     audit_uid TEXT UNIQUE NOT NULL,
     website_url TEXT NOT NULL,
+    client_name TEXT,
+    industry TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     error_message TEXT,
     overall_score INTEGER,

@@ -61,7 +61,8 @@ async function adaptAuditDataToReportModel(auditUid) {
       trackingBeforeConsent: scanResults?.tracking_before_consent,
       bannerViolations,
       consentModeStatus,
-      undeclaredCookies: cookieComparisonData?.undeclared || []
+      undeclaredCookies: cookieComparisonData?.undeclared || [],
+      industry: audit.industry || null
     });
   } catch (err) {
     console.error('⚠️  GDPR precedents search failed (non-fatal):', err.message);
@@ -100,7 +101,7 @@ function buildMetaSection(audit, scanResults) {
     targetUrl: audit.website_url,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     auditType: 'Automated Scan + Human-Assisted Verification',
-    preparedFor: extractDomainName(audit.website_url),
+    preparedFor: audit.client_name || extractDomainName(audit.website_url),
     preparedBy: 'CraftPolicy Compliance Team'
   };
 }
