@@ -173,8 +173,8 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
           <h4 className="font-semibold text-yellow-900">📋 Instructions:</h4>
           <ol className="text-sm text-yellow-800 space-y-2 list-decimal list-inside">
             <li>Open <strong>Git Bash</strong> (NOT regular CMD) on your <strong>LOCAL machine</strong> (Windows/Mac/Linux with GUI)</li>
-            <li>Navigate to your project folder. Example: <code className="bg-yellow-100 px-1 rounded">cd C:/Users/YourUser/Downloads/CP_audit/backend</code></li>
-            <li className="ml-6 text-xs text-yellow-700">⚠️ Replace <code>C:/Users/YourUser</code> with your actual user path</li>
+            <li>Navigate to your project folder. Example: <code className="bg-yellow-100 px-1 rounded">cd C:/Users/pench/Downloads/CP_audit/backend</code></li>
+            <li className="ml-6 text-xs text-yellow-700">⚠️ Replace <code>C:/Users/pench</code> with your actual user path if different</li>
             <li className="ml-6 text-xs text-yellow-700">💡 Tip: Use forward slashes (/) not backslashes (\) in Git Bash</li>
             <li>Run the command below to start the manual consent simulation</li>
             <li>A visible Chrome window will open - interact with the cookie banner as instructed</li>
