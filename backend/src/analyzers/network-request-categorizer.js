@@ -242,6 +242,28 @@ function categorizeRequest(request, allRequests = []) {
     };
   }
 
+  // ── Step 5.5: Hard override — blocked/failed requests ──
+  // Blocked requests: browser/extension blocked the request before data transmission.
+  // Puppeteer behavior: blocked requests don't trigger 'response' event → responseStatus = undefined
+  // Status 0 = NO bytes transmitted = NOT a GDPR violation (attempt ≠ violation).
+  // Critical fix: prevents false positives from ad-blocker/privacy-extension blocked requests.
+  //
+  // Note: We check status === 0 explicitly (not undefined) to avoid false negatives
+  // from legitimate requests that are still pending. Status 0 is set by browser
+  // for explicitly blocked/failed requests (CORS, ad-blocker, network error).
+  if (request.responseStatus === 0 || request.failed === true) {
+    return {
+      category: 'C',
+      categoryName: 'Benign',
+      reason: 'Request blocked or failed before data transmission (0 bytes sent) — not a violation',
+      confidence: 0,
+      scores: analysis.scores,
+      vendor: vendorName,
+      isTracking: false,
+      isBlocked: true
+    };
+  }
+
   // ── Step 6: Unknown vendor with no tracking signals → benign ──
   if (!vendorName) {
     // Check for suspicious TLD fragment heuristic (weak signal)

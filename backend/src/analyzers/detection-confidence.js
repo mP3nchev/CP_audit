@@ -290,11 +290,20 @@ function scoreL1Protocol(request) {
 
   // Response status: only successful requests constitute data transmission evidence
   if (typeof request.responseStatus === 'number') {
-    if (request.responseStatus >= 200 && request.responseStatus < 400) {
+    if (request.responseStatus === 0) {
+      // Blocked/failed request — browser/extension prevented data transmission
+      // Status 0 = no network activity, NOT a GDPR violation
+      score -= 50;  // Heavy penalty to force benign classification
+    } else if (request.responseStatus >= 200 && request.responseStatus < 400) {
       score += 15;  // Confirmed delivery
     } else if (request.responseStatus >= 400) {
       score -= 20;  // Failed request — data not received, weaker evidence
     }
+  }
+
+  // Also check explicit failed flag (from Puppeteer request.failure())
+  if (request.failed === true) {
+    score -= 50;
   }
 
   // Tiny image resource (common for pixels)

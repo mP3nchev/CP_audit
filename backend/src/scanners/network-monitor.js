@@ -57,6 +57,18 @@ function setupNetworkMonitoring(page) {
     }
   });
 
+  // Track failed/blocked requests
+  // These are requests that were blocked by browser (CORS, ad-blocker, network error)
+  // and never received a response. Set status = 0 to indicate no data transmission.
+  page.on('requestfailed', failedRequest => {
+    const request = networkRequests.find(r => r.url === failedRequest.url());
+    if (request) {
+      request.responseStatus = 0;  // Explicitly mark as blocked/failed
+      request.failed = true;
+      request.failureText = failedRequest.failure()?.errorText || 'Request failed';
+    }
+  });
+
   return {
     /**
      * Mark that page has finished loading
