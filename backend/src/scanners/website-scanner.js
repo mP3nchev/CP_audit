@@ -442,17 +442,28 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         const params = ['ad_storage', 'analytics_storage', 'ad_user_data', 'ad_personalization'];
 
         // Check if at least ONE critical param has a REAL value (not undefined, not 'not_set')
-        // CRITICAL: Reject 'not_set' as it's a transitional state used by CMPs during initialization
-        // Only accept 'denied' or 'granted' as valid consent states
+        // CRITICAL FIX: CookieScript uses BOOLEAN values (false='denied', true='granted')
+        // Other CMPs use strings ('denied', 'granted')
         const hasAtLeastOneParam = params.some(param => {
           const entry = entries[param];
-          if (!entry || entry.default === undefined) return false;
+          if (!entry) return false;
 
-          // ❌ REJECT transitional 'not_set' (CookieScript initialization marker)
-          if (entry.default === 'not_set') return false;
+          const value = entry.default;
 
-          // ✅ ACCEPT real values: 'denied' or 'granted'
-          return true;
+          // Value must be defined (not undefined, not null)
+          if (value === undefined || value === null) return false;
+
+          // ❌ REJECT transitional 'not_set' (initialization marker)
+          if (value === 'not_set') return false;
+
+          // ✅ ACCEPT boolean values: false (denied) or true (granted)
+          if (typeof value === 'boolean') return true;
+
+          // ✅ ACCEPT string values: 'denied' or 'granted'
+          if (value === 'denied' || value === 'granted') return true;
+
+          // Reject anything else
+          return false;
         });
 
         return hasAtLeastOneParam;

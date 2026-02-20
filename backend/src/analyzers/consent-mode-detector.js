@@ -115,7 +115,15 @@ async function detectConsentMode(page) {
             consentTypes.forEach(type => {
               if (entries[type]) {
                 // ics.entries stores both 'default' and 'update' values
-                results.consentStates[type] = entries[type].update || entries[type].default || 'not_set';
+                let value = entries[type].update || entries[type].default;
+
+                // ✅ CRITICAL FIX: CookieScript uses BOOLEAN values, not strings
+                // Convert boolean to string: false → 'denied', true → 'granted'
+                if (typeof value === 'boolean') {
+                  value = value ? 'granted' : 'denied';
+                }
+
+                results.consentStates[type] = value || 'not_set';
               } else {
                 results.consentStates[type] = 'not_set';
               }

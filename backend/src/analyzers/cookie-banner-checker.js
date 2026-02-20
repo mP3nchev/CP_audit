@@ -326,10 +326,12 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
 async function checkNoRejectButton(page, violation) {
   try {
     // STEP 1: Wait for cookie banner to be visible (universal approach)
-    const bannerVisible = await waitForBannerVisible(page, 10000);
+    const bannerResult = await waitForBannerVisible(page, 10000);
 
-    if (!bannerVisible) {
+    if (!bannerResult.visible) {
       console.log('   ⚠️  Cookie banner not visible after 10s - banner may not exist or be hidden');
+    } else {
+      console.log(`   ✅ Cookie banner found via ${bannerResult.method}`);
     }
 
     // STEP 2: Search for buttons in ALL contexts (main doc + iframes + shadow DOM)
@@ -412,6 +414,13 @@ async function checkNoRejectButton(page, violation) {
         }
       };
     }, BUTTON_KEYWORDS);
+
+    // DEBUG: Log button detection results
+    console.log(`   🔍 Button Detection Results:`);
+    console.log(`      Total buttons found: ${result.totalButtonsFound}`);
+    console.log(`      Accept button: found=${result.hasAcceptButton}, text="${result.acceptText}"`);
+    console.log(`      Reject button: found=${result.hasRejectButton}, text="${result.rejectText}"`);
+    console.log(`      Contexts searched: iframes=${result.contextsSearched.iframes}, shadowDoms=${result.contextsSearched.shadowDoms}`);
 
     // Violation detected if accept button exists but reject button doesn't
     const detected = result.hasAcceptButton && !result.hasRejectButton;
