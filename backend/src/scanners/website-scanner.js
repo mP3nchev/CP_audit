@@ -379,74 +379,47 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     await waitForPageStability(page, 3000);
     console.log(`   ✅ Page stable after ${Date.now() - stepStartTime}ms`);
 
-    // Step 6.6: Wait for CMP initialization (if detected)
+    // Step 6.6: Universal wait for Consent Mode initialization (CMP-agnostic)
     stepStartTime = Date.now();
-    const cmpDetected = await page.evaluate(() => {
-      return !!(
-        window.CookieScript ||
-        window.OneTrust ||
-        window.Cookiebot ||
-        window.getCkyConsent ||  // CookieYes
-        localStorage.getItem('gdprCache') ||  // Consentmo
-        window.UC_UI  // Usercentrics
-      );
-    });
+    console.log('   🎯 Waiting for Consent Mode data (google_tag_data.ics)...');
 
-    if (cmpDetected) {
-      console.log('   🍪 CMP detected - waiting for initialization...');
+    let consentReady = false;
+    let attempts = 0;
+    const maxAttempts = 30; // 15s max wait (500ms * 30)
 
-      let cmpReady = false;
-      let attempts = 0;
-      const maxAttempts = 20; // 10s max wait (500ms * 20)
+    while (!consentReady && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      while (!cmpReady && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+      consentReady = await page.evaluate(() => {
+        // UNIVERSAL check: Wait for google_tag_data.ics to be populated
+        // This works for ALL CMPs (CookieScript, OneTrust, Cookiebot, etc.)
+        if (!window.google_tag_data?.ics?.entries) {
+          return false; // ics not initialized yet
+        }
 
-        cmpReady = await page.evaluate(() => {
-          // Check if google_tag_data.ics has been populated
-          if (window.google_tag_data?.ics?.entries) {
-            const entries = window.google_tag_data.ics.entries;
-            const hasEntries = Object.keys(entries).length > 0;
-            const hasDefaults = Object.values(entries).some(e => e.default !== undefined);
-            return hasEntries && hasDefaults;
-          }
+        const entries = window.google_tag_data.ics.entries;
+        const params = ['ad_storage', 'analytics_storage', 'ad_user_data', 'ad_personalization'];
 
-          // Fallback: Check CMP-specific readiness
-          if (window.CookieScript?.instance) {
-            return window.CookieScript.instance.currentState() !== undefined;
-          }
-          if (window.Cookiebot) {
-            return window.Cookiebot.consent !== undefined;
-          }
-          if (window.OneTrust) {
-            return window.OneTrust.GetDomainData !== undefined;
-          }
-          if (typeof window.getCkyConsent === 'function') {
-            // CookieYes - check if banner loaded
-            return window.getCkyConsent() !== undefined;
-          }
-          if (localStorage.getItem('gdprCache')) {
-            // Consentmo - check if localStorage has consent data
-            try {
-              const gdprCache = JSON.parse(localStorage.getItem('gdprCache'));
-              return gdprCache.getCookieConsentSettings !== undefined;
-            } catch { return false; }
-          }
-
-          return false;
+        // Check if at least ONE critical param has an explicit value (not undefined)
+        // Value can be 'denied', 'granted', or even 'not_set' - we just need it to be SET
+        const hasAtLeastOneParam = params.some(param => {
+          return entries[param] && entries[param].default !== undefined;
         });
 
-        attempts++;
-      }
+        return hasAtLeastOneParam;
+      });
 
-      if (cmpReady) {
-        console.log(`   ✅ CMP initialized after ${attempts * 500}ms`);
-      } else {
-        console.log(`   ⚠️  CMP not ready after ${maxAttempts * 500}ms - proceeding with fallback detection`);
-      }
-
-      console.log(`   ✅ CMP wait completed in ${Date.now() - stepStartTime}ms`);
+      attempts++;
     }
+
+    if (consentReady) {
+      console.log(`   ✅ Consent Mode initialized after ${attempts * 500}ms`);
+    } else {
+      console.log(`   ⚠️  Consent Mode not initialized after ${maxAttempts * 500}ms - proceeding anyway`);
+      console.log(`   ℹ️  Note: This is normal if site doesn't use Consent Mode or uses non-standard implementation`);
+    }
+
+    console.log(`   ✅ Consent wait completed in ${Date.now() - stepStartTime}ms`);
 
     // Step 6.5: Detect cookie banner appearance time
     stepStartTime = Date.now();

@@ -35,6 +35,69 @@ function findElementByTextHybrid(elements, keywords) {
 }
 
 /**
+ * Wait for cookie banner to be visible (universal, CMP-agnostic)
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time in ms (default: 10000)
+ * @returns {Promise<boolean>} True if banner found, false if timeout
+ */
+async function waitForBannerVisible(page, timeout = 10000) {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    const visible = await page.evaluate(() => {
+      // Universal banner selectors (works for most CMPs)
+      const selectors = [
+        '[id*="cookie"]', '[class*="cookie"]',
+        '[id*="consent"]', '[class*="consent"]',
+        '[id*="banner"]', '[class*="banner"]',
+        '[role="dialog"]', '[role="alertdialog"]',
+        '[aria-label*="cookie" i]', '[aria-label*="consent" i]',
+        '[aria-describedby*="cookie" i]'
+      ];
+
+      for (const selector of selectors) {
+        try {
+          const el = document.querySelector(selector);
+          if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+            // Element exists and is visible
+            return true;
+          }
+        } catch (e) {
+          // Invalid selector, continue
+        }
+      }
+
+      // Also check iframes for banner
+      const iframes = document.querySelectorAll('iframe');
+      for (const iframe of iframes) {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (iframeDoc) {
+            for (const selector of selectors) {
+              const el = iframeDoc.querySelector(selector);
+              if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+                return true;
+              }
+            }
+          }
+        } catch (e) {
+          // Cross-origin or access denied
+        }
+      }
+
+      return false;
+    });
+
+    if (visible) return true;
+
+    // Wait 500ms before next check
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  return false; // Timeout
+}
+
+/**
  * Analyze cookie banner for noyb 8-point checklist violations
  * @param {Page} page - Puppeteer page
  * @param {string} auditId - Audit ID for debug logging
@@ -240,9 +303,38 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
  */
 async function checkNoRejectButton(page, violation) {
   try {
+    // STEP 1: Wait for cookie banner to be visible (universal approach)
+    const bannerVisible = await waitForBannerVisible(page, 10000);
+
+    if (!bannerVisible) {
+      console.log('   ⚠️  Cookie banner not visible after 10s - banner may not exist or be hidden');
+    }
+
+    // STEP 2: Search for buttons in ALL contexts (main doc + iframes + shadow DOM)
     const result = await page.evaluate((keywords) => {
-      // Hybrid approach: Try CSS selectors first, then text matching
-      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
+      const buttons = [];
+
+      // Context 1: Main document
+      buttons.push(...Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]')));
+
+      // Context 2: All accessible iframes (same-origin only)
+      document.querySelectorAll('iframe').forEach(iframe => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (iframeDoc) {
+            buttons.push(...Array.from(iframeDoc.querySelectorAll('button, a, div[role="button"], span[role="button"]')));
+          }
+        } catch (e) {
+          // Cross-origin iframe, cannot access (expected for some cases)
+        }
+      });
+
+      // Context 3: Shadow DOM elements
+      document.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) {
+          buttons.push(...Array.from(el.shadowRoot.querySelectorAll('button, a, div[role="button"], span[role="button"]')));
+        }
+      });
 
       // Find accept button using multiple strategies
       let acceptButton = null;
@@ -257,7 +349,7 @@ async function checkNoRejectButton(page, violation) {
       // Strategy 2: Text content matching (multi-language)
       if (!acceptButton) {
         acceptButton = buttons.find(b => {
-          const text = b.textContent.toLowerCase().trim();
+          const text = b.textContent?.toLowerCase().trim() || '';
           return keywords.accept.some(keyword => text.includes(keyword.toLowerCase()));
         });
       }
@@ -265,19 +357,22 @@ async function checkNoRejectButton(page, violation) {
       // Find reject button using multiple strategies
       let rejectButton = null;
 
-      // Strategy 1: CSS attribute/class selectors (only valid selectors from noyb config)
+      // Strategy 1: CSS attribute/class selectors (expanded for better coverage)
       rejectButton = buttons.find(b =>
         b.getAttribute('data-action') === 'reject' ||
         b.getAttribute('data-action') === 'deny' ||
-        b.getAttribute('id')?.includes('reject') ||
-        b.className?.includes('reject') ||
-        b.className?.includes('decline')
+        b.getAttribute('id')?.toLowerCase().includes('reject') ||
+        b.getAttribute('id')?.toLowerCase().includes('decline') ||
+        b.getAttribute('id')?.toLowerCase().includes('deny') ||
+        b.className?.toLowerCase().includes('reject') ||
+        b.className?.toLowerCase().includes('decline') ||
+        b.className?.toLowerCase().includes('deny')
       );
 
-      // Strategy 2: Text content matching (multi-language)
+      // Strategy 2: Text content matching (multi-language, more flexible)
       if (!rejectButton) {
         rejectButton = buttons.find(b => {
-          const text = b.textContent.toLowerCase().trim();
+          const text = b.textContent?.toLowerCase().trim() || '';
           return keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
         });
       }
@@ -285,8 +380,14 @@ async function checkNoRejectButton(page, violation) {
       return {
         hasAcceptButton: !!acceptButton,
         hasRejectButton: !!rejectButton,
-        acceptText: acceptButton?.textContent.trim(),
-        rejectText: rejectButton?.textContent.trim()
+        acceptText: acceptButton?.textContent?.trim() || '',
+        rejectText: rejectButton?.textContent?.trim() || '',
+        totalButtonsFound: buttons.length,
+        contextsSearched: {
+          mainDoc: true,
+          iframes: document.querySelectorAll('iframe').length,
+          shadowDoms: Array.from(document.querySelectorAll('*')).filter(el => el.shadowRoot).length
+        }
       };
     }, BUTTON_KEYWORDS);
 
