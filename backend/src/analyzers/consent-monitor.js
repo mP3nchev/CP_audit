@@ -302,9 +302,165 @@ function getWrapperInjectionScript() {
     }
   })();
 
+  // ========================================
+  // WRAPPER 5: WebSocket — detect real-time tracking channels
+  // Tracking vendors (Hotjar, Clarity, custom analytics) use WebSocket
+  // to transmit session data. This monitors .send() calls before consent.
+  // ========================================
+  (function wrapWebSocket() {
+    try {
+      if (typeof WebSocket === 'undefined') return;
+
+      monitor.webSocketMessages = [];
+
+      const OriginalWebSocket = WebSocket;
+
+      function MonitoredWebSocket(url, protocols) {
+        const ws = protocols
+          ? new OriginalWebSocket(url, protocols)
+          : new OriginalWebSocket(url);
+
+        const wsEntry = {
+          url: url,
+          openedAt: getTimestamp(),
+          beforeConsent: !hasConsent(),
+          messages: []
+        };
+        monitor.webSocketMessages.push(wsEntry);
+
+        const originalSend = ws.send.bind(ws);
+        ws.send = function(data) {
+          const timestamp = getTimestamp();
+          const beforeConsent = !hasConsent();
+
+          // Detect possible obfuscated payload (Base64, compact JSON)
+          let payloadHint = null;
+          if (typeof data === 'string') {
+            if (data.length > 20 && /^[A-Za-z0-9+/]{20,}={0,2}$/.test(data.trim())) {
+              payloadHint = 'base64_encoded';
+            } else if (data.startsWith('{') || data.startsWith('[')) {
+              payloadHint = 'json';
+            }
+          }
+
+          wsEntry.messages.push({
+            direction:    'send',
+            dataLength:   typeof data === 'string' ? data.length : (data?.byteLength || 0),
+            payloadHint:  payloadHint,
+            timestamp:    timestamp,
+            beforeConsent: beforeConsent,
+            consentState: { ...monitor.consentState }
+          });
+
+          return originalSend(data);
+        };
+
+        return ws;
+      }
+
+      // Copy static properties
+      MonitoredWebSocket.prototype = OriginalWebSocket.prototype;
+      MonitoredWebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+      MonitoredWebSocket.OPEN       = OriginalWebSocket.OPEN;
+      MonitoredWebSocket.CLOSING    = OriginalWebSocket.CLOSING;
+      MonitoredWebSocket.CLOSED     = OriginalWebSocket.CLOSED;
+
+      window.WebSocket = MonitoredWebSocket;
+
+    } catch (error) {
+      monitor.errors.push({
+        wrapper: 'WebSocket',
+        error: error.message,
+        timestamp: getTimestamp()
+      });
+    }
+  })();
+
+  // ========================================
+  // WRAPPER 6: fetch() + XMLHttpRequest — obfuscation detection
+  // Detects Base64-encoded or minified tracking payloads sent via
+  // fetch/XHR BEFORE consent. These are often used to bypass
+  // network-level request inspection.
+  // ========================================
+  (function wrapFetchAndXHR() {
+    try {
+      monitor.obfuscatedRequests = [];
+
+      // ── fetch() wrapper ──
+      const originalFetch = window.fetch;
+      window.fetch = function(resource, init) {
+        try {
+          const url   = typeof resource === 'string' ? resource : resource?.url || '';
+          const body  = init?.body;
+          const timestamp = getTimestamp();
+          const beforeConsent = !hasConsent();
+
+          if (body && typeof body === 'string' && body.length > 30) {
+            const isBase64 = /^[A-Za-z0-9+/]{30,}={0,2}$/.test(body.trim());
+            const isMinifiedJson = body.startsWith('{') && body.length > 100 && !body.includes(' ');
+
+            if (isBase64 || isMinifiedJson) {
+              monitor.obfuscatedRequests.push({
+                type:          'fetch',
+                url:           url,
+                obfuscationType: isBase64 ? 'base64' : 'minified_json',
+                bodyLength:    body.length,
+                timestamp:     timestamp,
+                beforeConsent: beforeConsent,
+                consentState:  { ...monitor.consentState }
+              });
+            }
+          }
+        } catch (_) { /* non-blocking */ }
+
+        return originalFetch.apply(this, arguments);
+      };
+
+      // ── XMLHttpRequest wrapper ──
+      const originalXHRSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function(body) {
+        try {
+          if (body && typeof body === 'string' && body.length > 30) {
+            const timestamp = getTimestamp();
+            const beforeConsent = !hasConsent();
+            const isBase64 = /^[A-Za-z0-9+/]{30,}={0,2}$/.test(body.trim());
+
+            if (isBase64) {
+              monitor.obfuscatedRequests.push({
+                type:            'xhr',
+                url:             this._url || 'unknown',
+                obfuscationType: 'base64',
+                bodyLength:      body.length,
+                timestamp:       timestamp,
+                beforeConsent:   beforeConsent,
+                consentState:    { ...monitor.consentState }
+              });
+            }
+          }
+        } catch (_) { /* non-blocking */ }
+
+        return originalXHRSend.apply(this, arguments);
+      };
+
+      // Track XHR URL for correlation with send()
+      const originalXHROpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this._url = url;
+        return originalXHROpen.apply(this, arguments);
+      };
+
+    } catch (error) {
+      monitor.errors.push({
+        wrapper: 'fetch_xhr_obfuscation',
+        error: error.message,
+        timestamp: getTimestamp()
+      });
+    }
+  })();
+
   // Success marker
   monitor._initialized = true;
-  console.log('[ConsentMonitor] Wrappers initialized successfully');
+  console.log('[ConsentMonitor] Wrappers initialized successfully (v2: +WebSocket, +obfuscation)');
 
 })();
   `.trim();
@@ -326,25 +482,29 @@ async function extractMonitoringData(page) {
       }
 
       return {
-        gtagCalls: window.__consentMonitor.gtagCalls || [],
-        dataLayerEvents: window.__consentMonitor.dataLayerEvents || [],
-        storageWrites: window.__consentMonitor.storageWrites || [],
-        errors: window.__consentMonitor.errors || [],
-        consentState: window.__consentMonitor.consentState || {},
-        consentGiven: window.__consentMonitor.consentGiven || false,
-        consentTimestamp: window.__consentMonitor.consentTimestamp,
-        initialized: window.__consentMonitor._initialized || false
+        gtagCalls:           window.__consentMonitor.gtagCalls || [],
+        dataLayerEvents:     window.__consentMonitor.dataLayerEvents || [],
+        storageWrites:       window.__consentMonitor.storageWrites || [],
+        webSocketMessages:   window.__consentMonitor.webSocketMessages || [],
+        obfuscatedRequests:  window.__consentMonitor.obfuscatedRequests || [],
+        errors:              window.__consentMonitor.errors || [],
+        consentState:        window.__consentMonitor.consentState || {},
+        consentGiven:        window.__consentMonitor.consentGiven || false,
+        consentTimestamp:    window.__consentMonitor.consentTimestamp,
+        initialized:         window.__consentMonitor._initialized || false
       };
     });
 
     if (!data) {
       console.warn('[ConsentMonitor] No monitoring data found - wrappers may not have initialized');
       return {
-        gtagCalls: [],
-        dataLayerEvents: [],
-        storageWrites: [],
-        errors: [],
-        initialized: false
+        gtagCalls:          [],
+        dataLayerEvents:    [],
+        storageWrites:      [],
+        webSocketMessages:  [],
+        obfuscatedRequests: [],
+        errors:             [],
+        initialized:        false
       };
     }
 
@@ -353,11 +513,13 @@ async function extractMonitoringData(page) {
   } catch (error) {
     console.error('[ConsentMonitor] Failed to extract data:', error.message);
     return {
-      gtagCalls: [],
-      dataLayerEvents: [],
-      storageWrites: [],
-      errors: [{ message: error.message }],
-      initialized: false
+      gtagCalls:          [],
+      dataLayerEvents:    [],
+      storageWrites:      [],
+      webSocketMessages:  [],
+      obfuscatedRequests: [],
+      errors:             [{ message: error.message }],
+      initialized:        false
     };
   }
 }
@@ -441,16 +603,67 @@ function analyzeMonitoringData(monitorData) {
     }
   }
 
+  // Check WebSocket messages before consent
+  for (const ws of monitorData.webSocketMessages || []) {
+    if (ws.beforeConsent) {
+      warnings.push({
+        type: 'websocket_before_consent',
+        severity: 'high',
+        message: `WebSocket connection opened to ${ws.url} at ${ws.openedAt}ms BEFORE consent`,
+        evidence: { url: ws.url, timestamp: ws.openedAt }
+      });
+    }
+
+    // Check messages sent via WebSocket before consent
+    for (const msg of ws.messages || []) {
+      if (msg.beforeConsent && msg.dataLength > 20) {
+        violations.push({
+          type: 'websocket_data_before_consent',
+          severity: 'critical',
+          message: `WebSocket .send() of ${msg.dataLength} bytes (${msg.payloadHint || 'unknown'}) to ${ws.url} at ${msg.timestamp}ms BEFORE consent`,
+          evidence: {
+            url:             ws.url,
+            dataLength:      msg.dataLength,
+            payloadHint:     msg.payloadHint,
+            timestamp:       msg.timestamp
+          },
+          gdprArticle: 'ePrivacy Directive Article 5(3) — real-time data transmission without consent'
+        });
+      }
+    }
+  }
+
+  // Check obfuscated requests before consent
+  for (const req of monitorData.obfuscatedRequests || []) {
+    if (req.beforeConsent) {
+      warnings.push({
+        type: 'obfuscated_request_before_consent',
+        severity: 'high',
+        message: `${req.type.toUpperCase()} request with ${req.obfuscationType} payload (${req.bodyLength} bytes) to ${req.url} at ${req.timestamp}ms BEFORE consent`,
+        evidence: {
+          type:            req.type,
+          url:             req.url,
+          obfuscationType: req.obfuscationType,
+          bodyLength:      req.bodyLength,
+          timestamp:       req.timestamp
+        },
+        note: 'Obfuscated payloads may indicate deliberate evasion — flag for manual review'
+      });
+    }
+  }
+
   return {
     violations: violations,
     warnings: warnings,
     summary: {
-      totalViolations: violations.length,
-      totalWarnings: warnings.length,
-      criticalViolations: violations.filter(v => v.severity === 'critical').length,
-      gtagCallsBeforeConsent: (monitorData.gtagCalls || []).filter(c => c.beforeConsent).length,
-      dataLayerEventsBeforeConsent: (monitorData.dataLayerEvents || []).filter(e => e.beforeConsent).length,
-      storageWritesBeforeConsent: (monitorData.storageWrites || []).filter(w => w.beforeConsent).length
+      totalViolations:                  violations.length,
+      totalWarnings:                    warnings.length,
+      criticalViolations:               violations.filter(v => v.severity === 'critical').length,
+      gtagCallsBeforeConsent:           (monitorData.gtagCalls || []).filter(c => c.beforeConsent).length,
+      dataLayerEventsBeforeConsent:     (monitorData.dataLayerEvents || []).filter(e => e.beforeConsent).length,
+      storageWritesBeforeConsent:       (monitorData.storageWrites || []).filter(w => w.beforeConsent).length,
+      webSocketConnectionsBeforeConsent:(monitorData.webSocketMessages || []).filter(w => w.beforeConsent).length,
+      obfuscatedRequestsBeforeConsent:  (monitorData.obfuscatedRequests || []).filter(r => r.beforeConsent).length
     }
   };
 }

@@ -1,0 +1,129 @@
+{
+  "_comment": "Vendor payload parameter signatures for L2 Entropy and L4 Semantic detection layers. Used by detection-confidence.js to classify request payloads without hardcoding full endpoint lists.",
+
+  "google_analytics_4": {
+    "vendor": "Google Analytics 4",
+    "category": "analytics",
+    "identity_params": ["cid", "_fid", "uid", "_ga", "dclid"],
+    "session_params": ["sid", "_s", "seg"],
+    "event_params": ["en", "ep.*", "_et", "ev", "dl", "dt", "dp"],
+    "fingerprint_params": ["sr", "sd", "ul", "je", "de", "vp"],
+    "consent_mode_params": ["gcs", "gcd", "npa", "dma", "dma_cps", "are", "pst"],
+    "consent_denied_gcs_values": ["G100", "G110", "G101", "G111"],
+    "required_any_for_tracking": ["cid", "_fid", "uid", "en", "_ga"],
+    "notes": "If only consent_mode_params present (gcs/gcd) with no identity/event params → consent ping, NOT violation"
+  },
+
+  "google_ads": {
+    "vendor": "Google Ads / Conversion Tracking",
+    "category": "advertising",
+    "identity_params": ["gclid", "wbraid", "gbraid", "gclaw"],
+    "session_params": [],
+    "event_params": ["value", "currency", "transaction_id", "label"],
+    "required_any_for_tracking": ["gclid", "wbraid", "gbraid", "conversion_id", "label"]
+  },
+
+  "meta_pixel": {
+    "vendor": "Meta / Facebook Pixel",
+    "category": "advertising",
+    "identity_params": ["fbp", "fbc", "anon_id", "hashed_email"],
+    "session_params": ["ts", "if"],
+    "event_params": ["ev", "dl", "rl", "cd"],
+    "fingerprint_params": ["ud"],
+    "standard_events": ["PageView", "Purchase", "Lead", "CompleteRegistration", "ViewContent", "AddToCart", "InitiateCheckout"],
+    "required_any_for_tracking": ["ev", "fbp", "fbc"]
+  },
+
+  "microsoft_clarity": {
+    "vendor": "Microsoft Clarity",
+    "category": "analytics",
+    "identity_params": ["c", "ClarityID", "u"],
+    "session_params": ["s", "n", "t"],
+    "required_any_for_tracking": ["c", "ClarityID", "id"]
+  },
+
+  "bing_ads": {
+    "vendor": "Microsoft Bing Ads",
+    "category": "advertising",
+    "identity_params": ["msclkid", "mid"],
+    "event_params": ["evt", "ec", "rv", "currency"],
+    "required_any_for_tracking": ["msclkid", "mid", "evt"]
+  },
+
+  "linkedin_insight": {
+    "vendor": "LinkedIn Insight Tag",
+    "category": "advertising",
+    "identity_params": ["pid"],
+    "event_params": ["conversionId", "v", "url"],
+    "required_any_for_tracking": ["pid", "conversionId"]
+  },
+
+  "tiktok_pixel": {
+    "vendor": "TikTok Pixel",
+    "category": "advertising",
+    "identity_params": ["ttclid", "ttp"],
+    "event_params": ["event", "timestamp", "context.user"],
+    "required_any_for_tracking": ["ttclid", "ttp", "event"]
+  },
+
+  "hotjar": {
+    "vendor": "Hotjar",
+    "category": "analytics",
+    "identity_params": ["hjid", "site_id", "_hjid"],
+    "session_params": ["sv", "_hjSessionUser"],
+    "required_any_for_tracking": ["hjid", "_hjid", "site_id"]
+  },
+
+  "adobe_analytics": {
+    "vendor": "Adobe Analytics / SiteCatalyst",
+    "category": "analytics",
+    "identity_params": ["fid", "s_vi", "aid", "mid", "AMCV_*"],
+    "event_params": ["t", "pev1", "pev2", "events", "pe"],
+    "fingerprint_params": ["s_resolution", "s_colorDepth", "s_jvr"],
+    "required_any_for_tracking": ["fid", "s_vi", "aid", "mid", "pev1"]
+  },
+
+  "hubspot": {
+    "vendor": "HubSpot",
+    "category": "marketing",
+    "identity_params": ["hutk", "hsfp"],
+    "session_params": ["hs_ctx"],
+    "required_any_for_tracking": ["hutk", "hsfp"]
+  },
+
+  "pinterest": {
+    "vendor": "Pinterest Tag",
+    "category": "advertising",
+    "identity_params": ["epik", "pin_unauth"],
+    "event_params": ["event", "ed", "custom_data"],
+    "required_any_for_tracking": ["epik", "pin_unauth", "event"]
+  },
+
+  "snapchat": {
+    "vendor": "Snapchat Pixel",
+    "category": "advertising",
+    "identity_params": ["scid", "uuid_c1"],
+    "event_params": ["e", "t"],
+    "required_any_for_tracking": ["scid", "uuid_c1"]
+  },
+
+  "yandex_metrica": {
+    "vendor": "Yandex Metrica",
+    "category": "analytics",
+    "identity_params": ["_ym_uid", "_ym_d", "yandexuid"],
+    "session_params": ["wmode"],
+    "required_any_for_tracking": ["_ym_uid", "yandexuid"]
+  },
+
+  "_generic_high_confidence": {
+    "vendor": "Generic Tracking (Unknown Vendor)",
+    "notes": "Apply when no vendor match. Parameters below indicate tracking regardless of vendor.",
+    "universal_identity_params": [
+      "uid", "user_id", "client_id", "visitor_id", "session_id",
+      "device_id", "anon_id", "distinct_id", "uuid", "guid",
+      "tracking_id", "tid", "pid", "vid"
+    ],
+    "high_entropy_min_length": 20,
+    "high_entropy_min_shannon": 3.8
+  }
+}

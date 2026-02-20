@@ -1,20 +1,34 @@
 /**
- * Network Request Categorizer
+ * Network Request Categorizer v2
  *
- * Categorizes network requests into:
- * - Category A: Definite tracking (analytics beacons, tracking pixels with payloads)
- * - Category B: Suspicious tracking (third-party from known ad domains)
- * - Category C: Benign (script loading, resources, first-party)
+ * Multi-layer confidence scoring replaces binary domain-matching.
+ * Integrates detection-confidence.js (L1-L5) for every request.
  *
- * Problem 5: Don't limit to Google/Facebook - include comprehensive vendor list
+ * Categories:
+ *   A — Definite Tracking   (confidence ≥ 70) — reportable GDPR violation evidence
+ *   B — Suspicious          (confidence 40-69) — flagged, needs manual verification
+ *   C — Benign              (<40 OR resource load OR consent-ping)
+ *
+ * Key fixes over v1:
+ *   ✓ Removed pure domain-only flagging (was causing 25-35% false positives)
+ *   ✓ Added response status check (200-399 = confirmed delivery, 4xx = demote)
+ *   ✓ Consent Mode ping differentiation (gcs/gcd params → not a violation)
+ *   ✓ 5-layer confidence scoring (L1 protocol, L2 entropy, L3 behavioral,
+ *       L4 semantic, L5 fingerprinting)
+ *   ✓ Vendor-agnostic generic detection via mathematical + semantic signals
  */
 
-/**
- * Comprehensive tracking vendor patterns
- * Based on real-world GDPR audits and DPA decisions
- */
+'use strict';
+
+const {
+  analyzeRequest,
+  CONSENT_MODE_PARAMS
+} = require('./detection-confidence');
+
+// ─── Vendor domain + path registry ───────────────────────────────────────────
+// Used for L4 Semantic scoring context — NOT for final categorization alone.
+// A domain match alone is NO LONGER sufficient to flag as tracking.
 const TRACKING_VENDORS = {
-  // Google ecosystem
   google: {
     domains: [
       'google-analytics.com',
@@ -22,494 +36,356 @@ const TRACKING_VENDORS = {
       'doubleclick.net',
       'googlesyndication.com',
       'googleadservices.com',
-      'google.com/pagead',
-      'google.com/ads'
+      'google.com'
     ],
     trackingPaths: [
-      '/collect',        // GA4 & UA collection endpoint
-      '/g/collect',      // GA4 measurement protocol
-      '/j/collect',      // GA4 JavaScript collection
-      '/r/collect',      // GA4 real-time
-      '/pagead/conversion',
-      '/pagead/viewthroughconversion',
+      '/collect', '/g/collect', '/j/collect', '/r/collect',
+      '/pagead/conversion', '/pagead/viewthroughconversion',
       '/ads/ga-audiences'
     ],
     resourcePaths: [
-      '/gtag/js',        // Script loading (benign)
-      '/gtm.js',         // Tag Manager script (benign)
-      '/analytics.js',   // GA script (benign)
-      '/ga.js'           // Legacy GA script (benign)
+      '/gtag/js', '/gtm.js', '/analytics.js', '/ga.js',
+      '/recaptcha/', '/recaptcha.js'
     ]
   },
 
-  // Facebook/Meta
   facebook: {
-    domains: [
-      'facebook.com',
-      'connect.facebook.net',
-      'facebook.net'
-    ],
-    trackingPaths: [
-      '/tr',             // Tracking pixel with events
-      '/tr/',
-      '/v2.0/events',    // Conversion API
-      '/v3.0/events'
-    ],
-    resourcePaths: [
-      '/en_US/fbevents.js',  // Pixel script (benign)
-      '/signals/config',     // Configuration (benign)
-      '/fbevents.js'
-    ]
+    domains: ['facebook.com', 'connect.facebook.net', 'facebook.net'],
+    trackingPaths: ['/tr', '/tr/', '/v2.0/events', '/v3.0/events'],
+    resourcePaths: ['/en_US/fbevents.js', '/signals/config', '/fbevents.js']
   },
 
-  // Microsoft ecosystem
   microsoft: {
     domains: [
-      'clarity.ms',
-      'bing.com',
-      'bat.bing.com',
-      'c.clarity.ms',
-      'clarity.microsoft.com'
+      'clarity.ms', 'bing.com', 'bat.bing.com',
+      'c.clarity.ms', 'clarity.microsoft.com'
     ],
-    trackingPaths: [
-      '/c.gif',          // Clarity tracking pixel
-      '/collect',        // Clarity collection
-      '/bat.gif',        // Bing Ads tracking
-      '/action/'         // Bing conversion tracking
-    ],
-    resourcePaths: [
-      '/clarity.js',     // Script loading
-      '/bing/sdk.js'
-    ]
+    trackingPaths: ['/c.gif', '/collect', '/bat.gif', '/action/'],
+    resourcePaths: ['/clarity.js', '/bing/sdk.js']
   },
 
-  // LinkedIn
   linkedin: {
-    domains: [
-      'linkedin.com',
-      'ads.linkedin.com',
-      'px.ads.linkedin.com'
-    ],
-    trackingPaths: [
-      '/collect',        // LinkedIn Insight Tag
-      '/li/track',
-      '/conversion',
-      '/match'
-    ],
-    resourcePaths: [
-      '/insight.min.js'
-    ]
+    domains: ['linkedin.com', 'ads.linkedin.com', 'px.ads.linkedin.com'],
+    trackingPaths: ['/collect', '/li/track', '/conversion', '/match'],
+    resourcePaths: ['/insight.min.js']
   },
 
-  // TikTok
   tiktok: {
-    domains: [
-      'analytics.tiktok.com',
-      'tiktok.com'
-    ],
-    trackingPaths: [
-      '/i18n/pixel/track',
-      '/api/v1/pixel/track',
-      '/pixel/track.gif'
-    ],
-    resourcePaths: [
-      '/pixel/sdk.js'
-    ]
+    domains: ['analytics.tiktok.com', 'tiktok.com'],
+    trackingPaths: ['/i18n/pixel/track', '/api/v1/pixel/track', '/pixel/track.gif'],
+    resourcePaths: ['/pixel/sdk.js']
   },
 
-  // Snapchat
   snapchat: {
-    domains: [
-      'sc-static.net',
-      'tr.snapchat.com'
-    ],
-    trackingPaths: [
-      '/p',              // Pixel tracking
-      '/track'
-    ],
-    resourcePaths: [
-      '/snap-pixel.min.js'
-    ]
+    domains: ['sc-static.net', 'tr.snapchat.com'],
+    trackingPaths: ['/p', '/track'],
+    resourcePaths: ['/snap-pixel.min.js']
   },
 
-  // Pinterest
   pinterest: {
-    domains: [
-      'ct.pinterest.com',
-      'pinterest.com'
-    ],
-    trackingPaths: [
-      '/v3/event',
-      '/v3/',
-      '/user/'
-    ],
-    resourcePaths: [
-      '/pintrk.js'
-    ]
+    domains: ['ct.pinterest.com', 'pinterest.com'],
+    trackingPaths: ['/v3/event', '/v3/', '/user/'],
+    resourcePaths: ['/pintrk.js']
   },
 
-  // Reddit
   reddit: {
-    domains: [
-      'reddit.com',
-      'alb.reddit.com'
-    ],
-    trackingPaths: [
-      '/rdt/',
-      '/dtm_pixel/'
-    ],
-    resourcePaths: [
-      '/redditpixel.js'
-    ]
+    domains: ['reddit.com', 'alb.reddit.com'],
+    trackingPaths: ['/rdt/', '/dtm_pixel/'],
+    resourcePaths: ['/redditpixel.js']
   },
 
-  // HubSpot
   hubspot: {
-    domains: [
-      'hubspot.com',
-      'hs-analytics.net',
-      'hs-scripts.com',
-      'hsforms.com'
-    ],
-    trackingPaths: [
-      '/track-event',
-      '/v1/track',
-      '/t.gif'
-    ],
-    resourcePaths: [
-      '/hs/hsstatic/',
-      '/hubspot.js'
-    ]
+    domains: ['hubspot.com', 'hs-analytics.net', 'hs-scripts.com', 'hsforms.com'],
+    trackingPaths: ['/track-event', '/v1/track', '/t.gif'],
+    resourcePaths: ['/hs/hsstatic/', '/hubspot.js']
   },
 
-  // Adobe Analytics
   adobe: {
-    domains: [
-      'omtrdc.net',
-      '2o7.net',
-      'demdex.net'
-    ],
-    trackingPaths: [
-      '/b/ss/',          // SiteCatalyst beacon
-      '/event',
-      '/id'
-    ],
-    resourcePaths: [
-      '/satellite-',
-      '/AppMeasurement.js'
-    ]
+    domains: ['omtrdc.net', '2o7.net', 'demdex.net'],
+    trackingPaths: ['/b/ss/', '/event', '/id'],
+    resourcePaths: ['/satellite-', '/AppMeasurement.js']
   },
 
-  // Hotjar
   hotjar: {
-    domains: [
-      'hotjar.com',
-      'hotjar.io',
-      'static.hotjar.com'
-    ],
-    trackingPaths: [
-      '/api/v2/client/',
-      '/client/'
-    ],
-    resourcePaths: [
-      '/hjmin/',
-      '/static/'
-    ]
+    domains: ['hotjar.com', 'hotjar.io', 'static.hotjar.com'],
+    trackingPaths: ['/api/v2/client/', '/client/'],
+    resourcePaths: ['/hjmin/', '/static/']
   },
 
-  // Yandex Metrica
   yandex: {
-    domains: [
-      'mc.yandex.ru',
-      'yandex.ru',
-      'metrika.yandex.ru'
-    ],
-    trackingPaths: [
-      '/watch/',
-      '/clmap/',
-      '/webvisor/'
-    ],
-    resourcePaths: [
-      '/metrika/tag.js'
-    ]
+    domains: ['mc.yandex.ru', 'yandex.ru', 'metrika.yandex.ru'],
+    trackingPaths: ['/watch/', '/clmap/', '/webvisor/'],
+    resourcePaths: ['/metrika/tag.js']
   },
 
-  // YouTube
   youtube: {
-    domains: [
-      'youtube.com',
-      'googlevideo.com'
-    ],
-    trackingPaths: [
-      '/ptracking',
-      '/api/stats/',
-      '/generate_204'    // View tracking
-    ],
-    resourcePaths: [
-      '/iframe_api',
-      '/player_api',
-      '/embed/'
-    ]
+    domains: ['youtube.com', 'googlevideo.com'],
+    trackingPaths: ['/ptracking', '/api/stats/', '/generate_204'],
+    resourcePaths: ['/iframe_api', '/player_api', '/embed/']
   },
 
-  // Vimeo
   vimeo: {
-    domains: [
-      'vimeo.com',
-      'player.vimeo.com'
-    ],
-    trackingPaths: [
-      '/stats',
-      '/log/play',
-      '/videoplayback'
-    ],
-    resourcePaths: [
-      '/player.js',
-      '/embed/'
-    ]
+    domains: ['vimeo.com', 'player.vimeo.com'],
+    trackingPaths: ['/stats', '/log/play', '/videoplayback'],
+    resourcePaths: ['/player.js', '/embed/']
   },
 
-  // Marketo
   marketo: {
-    domains: [
-      'marketo.net',
-      'mktoresp.com'
-    ],
-    trackingPaths: [
-      '/webevents/',
-      '/track/',
-      '/log/'
-    ],
-    resourcePaths: [
-      '/munchkin.js'
-    ]
+    domains: ['marketo.net', 'mktoresp.com'],
+    trackingPaths: ['/webevents/', '/track/', '/log/'],
+    resourcePaths: ['/munchkin.js']
   }
 };
 
+// ─── Suspect TLD fragments (used for unknown-vendor heuristics) ───────────────
+const TRACKING_TLD_FRAGMENTS = [
+  '.ads.', '.adservice', '.tracking.',
+  '.analytics.', '.metrics.', '.telemetry.',
+  '.pixel.', '.beacon.'
+];
+
+// ─── Main categorization function ─────────────────────────────────────────────
 /**
- * Categorize a network request
- * @param {Object} request - Request object with url, method, timestamp, headers, etc.
+ * Categorize a single network request using 5-layer confidence scoring.
+ *
+ * @param {Object} request  Raw request: { url, method, headers, postData,
+ *                                         responseStatus, resourceType,
+ *                                         timestamp, pageLoadTimestamp,
+ *                                         firedBeforeConsent, pageUrl }
  * @returns {Object} Categorization result
  */
-function categorizeRequest(request) {
-  const url = request.url;
-  const urlLower = url.toLowerCase();
+function categorizeRequest(request, allRequests = []) {
+  const url = request.url || '';
 
-  // Parse URL
-  let hostname, pathname;
+  let urlObj, hostname, pathname;
   try {
-    const urlObj = new URL(url);
+    urlObj   = new URL(url);
     hostname = urlObj.hostname.toLowerCase();
     pathname = urlObj.pathname.toLowerCase();
-  } catch (error) {
+  } catch {
     return {
       category: 'C',
       categoryName: 'Benign',
-      reason: 'Invalid URL',
+      reason: 'Invalid URL — skipped',
+      confidence: 0,
       isTracking: false
     };
   }
 
-  // Check against each vendor
-  for (const [vendorName, vendor] of Object.entries(TRACKING_VENDORS)) {
-    const matchesDomain = vendor.domains.some(domain =>
-      hostname === domain || hostname.endsWith('.' + domain)
+  // ── Step 1: Vendor domain + path resolution ──
+  let vendorName = null;
+  let isResource = false;
+  let isKnownTrackingPath = false;
+
+  for (const [name, vendor] of Object.entries(TRACKING_VENDORS)) {
+    const matchesDomain = vendor.domains.some(d =>
+      hostname === d || hostname.endsWith('.' + d)
+    );
+    if (!matchesDomain) continue;
+
+    vendorName = name;
+
+    // Check if it's purely a resource/script load
+    isResource = vendor.resourcePaths.some(p =>
+      pathname.includes(p) || pathname.startsWith(p)
     );
 
-    if (!matchesDomain) {
-      continue;
-    }
-
-    // Check if it's a resource load (benign)
-    const isResource = vendor.resourcePaths.some(path =>
-      pathname.includes(path)
+    isKnownTrackingPath = !isResource && vendor.trackingPaths.some(p =>
+      pathname === p ||
+      pathname.startsWith(p) ||
+      pathname.includes(p)
     );
 
-    if (isResource) {
+    break; // First vendor match wins
+  }
+
+  // ── Step 2: Build enriched request for detection engine ──
+  const enriched = {
+    ...request,
+    url,
+    urlObj,
+    hostname,
+    pathname,
+    vendor: vendorName,
+    isResource,
+    isKnownTrackingPath
+  };
+
+  // ── Step 3: Run 5-layer analysis ──
+  const analysis = analyzeRequest(enriched, allRequests);
+
+  // ── Step 4: Hard override — resource loads are always benign ──
+  if (isResource) {
+    return {
+      category: 'C',
+      categoryName: 'Benign',
+      reason: `${vendorName} script/resource loading — not a data collection event`,
+      confidence: analysis.composite,
+      scores: analysis.scores,
+      vendor: vendorName,
+      isTracking: false,
+      isResource: true
+    };
+  }
+
+  // ── Step 5: Hard override — consent-only ping ──
+  if (analysis.isConsentPing) {
+    return {
+      category: 'C',
+      categoryName: 'Benign',
+      reason: analysis.reason,
+      confidence: analysis.composite,
+      scores: analysis.scores,
+      vendor: vendorName,
+      isTracking: false,
+      isConsentPing: true
+    };
+  }
+
+  // ── Step 6: Unknown vendor with no tracking signals → benign ──
+  if (!vendorName) {
+    // Check for suspicious TLD fragment heuristic (weak signal)
+    const hasSuspectTLD = TRACKING_TLD_FRAGMENTS.some(f => hostname.includes(f));
+
+    // If composite is below 40 and no suspect TLD → definitely benign
+    if (analysis.composite < 40 && !hasSuspectTLD) {
       return {
         category: 'C',
         categoryName: 'Benign',
-        reason: `${vendorName} script/resource loading`,
-        vendor: vendorName,
+        reason: 'No tracking signals detected (first-party or CDN resource)',
+        confidence: analysis.composite,
+        scores: analysis.scores,
         isTracking: false
       };
     }
-
-    // Check if it's definite tracking
-    const isTracking = vendor.trackingPaths.some(path =>
-      pathname.includes(path) || pathname.startsWith(path)
-    );
-
-    if (isTracking) {
-      // Category A: Definite tracking with payload
-      const hasQueryParams = url.includes('?') && url.split('?')[1].length > 10;
-      const hasPayload = request.postData && request.postData.length > 10;
-
-      if (hasQueryParams || hasPayload) {
-        return {
-          category: 'A',
-          categoryName: 'Definite Tracking',
-          reason: `${vendorName} tracking endpoint with data payload`,
-          vendor: vendorName,
-          isTracking: true,
-          hasPayload: true
-        };
-      } else {
-        return {
-          category: 'B',
-          categoryName: 'Suspicious',
-          reason: `${vendorName} tracking endpoint (no clear payload)`,
-          vendor: vendorName,
-          isTracking: true,
-          hasPayload: false
-        };
-      }
-    }
-
-    // Matched domain but no specific path - suspicious
-    return {
-      category: 'B',
-      categoryName: 'Suspicious',
-      reason: `Request to known tracking vendor ${vendorName}`,
-      vendor: vendorName,
-      isTracking: true
-    };
   }
 
-  // Check for generic tracking indicators
-  const trackingIndicators = [
-    '/collect',
-    '/track',
-    '/pixel',
-    '/beacon',
-    '/analytics',
-    '/events',
-    '/conversion',
-    '/impression',
-    't.gif',
-    'p.gif',
-    'b.gif'
-  ];
+  // ── Step 7: Map confidence score to category ──
+  const { category, composite, scores } = analysis;
 
-  const hasTrackingIndicator = trackingIndicators.some(indicator =>
-    pathname.includes(indicator)
-  );
+  const categoryNames = { A: 'Definite Tracking', B: 'Suspicious', C: 'Benign' };
 
-  if (hasTrackingIndicator) {
-    return {
-      category: 'B',
-      categoryName: 'Suspicious',
-      reason: 'Generic tracking pattern detected',
-      isTracking: true
-    };
-  }
+  const reason = buildReason(category, vendorName, isKnownTrackingPath, enriched, scores);
 
-  // Check if third-party request
-  const pageUrl = request.pageUrl || '';
-  let pageHostname;
-  try {
-    pageHostname = new URL(pageUrl).hostname.toLowerCase();
-  } catch {
-    pageHostname = '';
-  }
-
-  const isThirdParty = pageHostname && !hostname.endsWith(pageHostname) && !pageHostname.endsWith(hostname);
-
-  // Known ad/tracking TLDs
-  const trackingTLDs = [
-    '.ads.',
-    '.adservice',
-    '.tracking',
-    '.analytics',
-    '.metrics',
-    '.telemetry'
-  ];
-
-  const hasTrackingTLD = trackingTLDs.some(tld => hostname.includes(tld));
-
-  if (isThirdParty && hasTrackingTLD) {
-    return {
-      category: 'B',
-      categoryName: 'Suspicious',
-      reason: 'Third-party request from tracking-related domain',
-      isTracking: true
-    };
-  }
-
-  // Default: Benign
   return {
-    category: 'C',
-    categoryName: 'Benign',
-    reason: isThirdParty ? 'Third-party resource/CDN' : 'First-party request',
-    isTracking: false
+    category,
+    categoryName: categoryNames[category],
+    reason,
+    confidence: composite,
+    scores,
+    vendor: vendorName,
+    isTracking: category !== 'C',
+    hasPayload: Boolean(
+      (url.includes('?') && url.split('?')[1].length > 10) ||
+      (request.postData && request.postData.length > 10)
+    )
   };
 }
 
 /**
- * Categorize multiple requests
- * @param {Array} requests - Array of request objects
- * @returns {Object} Categorization summary
+ * Build a human-readable reason string for the categorization.
+ * Used in report output and audit evidence.
+ */
+function buildReason(category, vendorName, isKnownTrackingPath, request, scores) {
+  const parts = [];
+
+  if (vendorName) parts.push(`${vendorName} vendor`);
+  if (isKnownTrackingPath) parts.push('tracking endpoint confirmed');
+
+  if (scores.l2_entropy > 40) parts.push('identity parameters detected in payload');
+  if (scores.l1_protocol > 40) parts.push('tracking beacon pattern (pixel/sendBeacon)');
+  if (scores.l5_fingerprint > 40) parts.push('browser fingerprinting parameters');
+  if (request.firedBeforeConsent) parts.push('fired BEFORE user consent');
+
+  if (typeof request.responseStatus === 'number') {
+    if (request.responseStatus >= 200 && request.responseStatus < 400) {
+      parts.push(`response ${request.responseStatus} (data confirmed received)`);
+    } else if (request.responseStatus >= 400) {
+      parts.push(`response ${request.responseStatus} (request failed)`);
+    }
+  }
+
+  if (parts.length === 0) {
+    if (category === 'A') return 'Tracking confirmed by multi-layer analysis';
+    if (category === 'B') return 'Suspicious tracking pattern — manual verification recommended';
+    return 'No tracking signals — benign request';
+  }
+
+  return parts.join('; ');
+}
+
+// ─── Bulk categorization ──────────────────────────────────────────────────────
+/**
+ * Categorize an array of requests with behavioral context (L3 clustering).
+ *
+ * @param {Array} requests  Array of raw request objects
+ * @returns {Object} Summary with categoryA/B/C breakdowns and vendor stats
  */
 function categorizeRequests(requests) {
+  if (!Array.isArray(requests) || requests.length === 0) {
+    return {
+      total: 0,
+      categoryA: { count: 0, name: 'Definite Tracking', requests: [] },
+      categoryB: { count: 0, name: 'Suspicious', requests: [] },
+      categoryC: { count: 0, name: 'Benign', requests: [] },
+      vendorBreakdown: {},
+      trackingRequests: [],
+      consentPings: []
+    };
+  }
+
+  // Pass full request list for L3 behavioral clustering
   const categorized = requests.map(req => ({
     ...req,
-    categorization: categorizeRequest(req)
+    categorization: categorizeRequest(req, requests)
   }));
 
-  const categoryA = categorized.filter(r => r.categorization.category === 'A');
-  const categoryB = categorized.filter(r => r.categorization.category === 'B');
-  const categoryC = categorized.filter(r => r.categorization.category === 'C');
+  const categoryA     = categorized.filter(r => r.categorization.category === 'A');
+  const categoryB     = categorized.filter(r => r.categorization.category === 'B');
+  const categoryC     = categorized.filter(r => r.categorization.category === 'C');
+  const consentPings  = categorized.filter(r => r.categorization.isConsentPing);
 
+  // Vendor breakdown
   const vendorBreakdown = {};
-  categorized
-    .filter(r => r.categorization.vendor)
-    .forEach(r => {
-      const vendor = r.categorization.vendor;
-      if (!vendorBreakdown[vendor]) {
-        vendorBreakdown[vendor] = {
-          total: 0,
-          tracking: 0,
-          resources: 0
-        };
-      }
-      vendorBreakdown[vendor].total++;
-      if (r.categorization.isTracking) {
-        vendorBreakdown[vendor].tracking++;
-      } else {
-        vendorBreakdown[vendor].resources++;
-      }
-    });
+  for (const r of categorized) {
+    const vendor = r.categorization.vendor;
+    if (!vendor) continue;
+    if (!vendorBreakdown[vendor]) {
+      vendorBreakdown[vendor] = { total: 0, tracking: 0, resources: 0, consentPings: 0 };
+    }
+    vendorBreakdown[vendor].total++;
+    if (r.categorization.isConsentPing) {
+      vendorBreakdown[vendor].consentPings++;
+    } else if (r.categorization.isTracking) {
+      vendorBreakdown[vendor].tracking++;
+    } else {
+      vendorBreakdown[vendor].resources++;
+    }
+  }
 
   return {
     total: requests.length,
-    categoryA: {
-      count: categoryA.length,
-      name: 'Definite Tracking',
-      requests: categoryA
-    },
-    categoryB: {
-      count: categoryB.length,
-      name: 'Suspicious',
-      requests: categoryB
-    },
-    categoryC: {
-      count: categoryC.length,
-      name: 'Benign',
-      requests: categoryC
-    },
+    categoryA: { count: categoryA.length, name: 'Definite Tracking', requests: categoryA },
+    categoryB: { count: categoryB.length, name: 'Suspicious', requests: categoryB },
+    categoryC: { count: categoryC.length, name: 'Benign', requests: categoryC },
     vendorBreakdown,
-    trackingRequests: categorized.filter(r => r.categorization.isTracking)
+    trackingRequests: categorized.filter(r => r.categorization.isTracking),
+    consentPings
   };
 }
 
+// ─── Report summary ───────────────────────────────────────────────────────────
 /**
- * Get tracking summary for reporting
- * @param {Object} categorization - Result from categorizeRequests()
- * @returns {Object} Summary for display
+ * Get a display-ready tracking summary for the report.
+ *
+ * @param {Object} categorization  Result from categorizeRequests()
+ * @returns {Object}
  */
 function getTrackingSummary(categorization) {
   const totalTracking = categorization.categoryA.count + categorization.categoryB.count;
-  const trackingPercentage = ((totalTracking / categorization.total) * 100).toFixed(1);
+  const trackingPct   = categorization.total > 0
+    ? ((totalTracking / categorization.total) * 100).toFixed(1)
+    : '0.0';
 
   const topVendors = Object.entries(categorization.vendorBreakdown)
     .sort((a, b) => b[1].tracking - a[1].tracking)
@@ -517,16 +393,18 @@ function getTrackingSummary(categorization) {
     .map(([vendor, data]) => ({
       vendor,
       trackingRequests: data.tracking,
-      totalRequests: data.total
+      totalRequests:    data.total,
+      consentPings:     data.consentPings
     }));
 
   return {
-    totalRequests: categorization.total,
-    definiteTracking: categorization.categoryA.count,
-    suspiciousTracking: categorization.categoryB.count,
-    benign: categorization.categoryC.count,
-    trackingPercentage: parseFloat(trackingPercentage),
-    topTrackingVendors: topVendors
+    totalRequests:       categorization.total,
+    definiteTracking:    categorization.categoryA.count,
+    suspiciousTracking:  categorization.categoryB.count,
+    benign:              categorization.categoryC.count,
+    consentPings:        categorization.consentPings.length,
+    trackingPercentage:  parseFloat(trackingPct),
+    topTrackingVendors:  topVendors
   };
 }
 

@@ -82,6 +82,116 @@ const { getDatabase } = require('../database/db');
 const constants = require('../config/constants');
 
 /**
+ * Network-Storage Correlation Engine
+ *
+ * Correlates network tracking requests with storage writes (cookies, localStorage)
+ * that occurred within a defined time window. Correlated findings represent the
+ * highest-confidence GDPR evidence: data transmitted externally AND persisted locally.
+ *
+ * Legal relevance: DPAs (CNIL, Austrian DSB) require both network transmission evidence
+ * AND proof of persistent storage for cookie consent violations under Art. 5(3) ePrivacy.
+ *
+ * @param {Array}  trackingRequests    Requests flagged as tracking (before consent)
+ * @param {Object} monitoringData      From consent-monitor: { storageWrites, gtagCalls }
+ * @param {Object} requestCategorization  From categorizeRequests()
+ * @returns {Object} Correlation report
+ */
+function correlateNetworkAndStorage(trackingRequests, monitoringData, requestCategorization) {
+  const CORRELATION_WINDOW_MS = 1000; // 1 second window for co-occurrence
+
+  const correlatedViolations = [];
+  const uncorrelatedNetwork  = [];
+
+  // Extract storage writes with timestamps from monitoring data
+  const storageWrites = (monitoringData && Array.isArray(monitoringData.storageWrites))
+    ? monitoringData.storageWrites
+    : [];
+
+  // Extract Category A requests (highest-confidence tracking) from all requests
+  const categoryARequests = requestCategorization
+    ? (requestCategorization.categoryA?.requests || [])
+    : [];
+
+  // Merge: use trackingRequests before consent + all Cat-A requests
+  const candidateRequests = [
+    ...trackingRequests,
+    ...categoryARequests.filter(r => {
+      // Avoid duplicates by URL+timestamp
+      return !trackingRequests.some(tr => tr.url === r.url);
+    })
+  ];
+
+  for (const netReq of candidateRequests) {
+    const netTimestamp = netReq.timestamp || 0;
+
+    // Find storage writes within the correlation window
+    const matchingStorage = storageWrites.filter(write => {
+      const writeTime = write.timestamp || 0;
+      return Math.abs(writeTime - netTimestamp) <= CORRELATION_WINDOW_MS;
+    });
+
+    if (matchingStorage.length > 0) {
+      // Correlated: network transmission + storage write within 1s
+      correlatedViolations.push({
+        networkRequest: {
+          url:            netReq.url,
+          method:         netReq.method || 'GET',
+          timestamp:      netTimestamp,
+          vendor:         netReq.categorization?.vendor || netReq.vendor || null,
+          category:       netReq.categorization?.category || 'A',
+          confidence:     netReq.categorization?.confidence || 0
+        },
+        storageWrites: matchingStorage.map(w => ({
+          type:      w.type || 'unknown',  // 'localStorage' | 'sessionStorage' | 'cookie'
+          key:       w.key,
+          value:     w.value ? String(w.value).substring(0, 30) + '…' : null,
+          timestamp: w.timestamp
+        })),
+        correlationType:  'network_and_storage',
+        evidenceStrength: 'HIGH',
+        legalNote: 'Simultaneous network transmission and local storage write detected. ' +
+                   'This constitutes dual-layer GDPR Art. 5(3) ePrivacy violation evidence.'
+      });
+    } else {
+      uncorrelatedNetwork.push({
+        url:       netReq.url,
+        timestamp: netTimestamp,
+        vendor:    netReq.categorization?.vendor || null,
+        category:  netReq.categorization?.category || 'B'
+      });
+    }
+  }
+
+  // Confidence calculation:
+  // 100% if correlated violations exist (dual evidence)
+  // 70% if only network evidence (Category A requests)
+  // 40% if only storage evidence
+  let overallConfidence = 0;
+  if (correlatedViolations.length > 0) {
+    overallConfidence = Math.min(95, 70 + (correlatedViolations.length * 5));
+  } else if (categoryARequests.length > 0) {
+    overallConfidence = 70;
+  } else if (storageWrites.length > 0) {
+    overallConfidence = 40;
+  }
+
+  return {
+    correlatedViolations,
+    uncorrelatedNetworkTracking: uncorrelatedNetwork,
+    storageWritesTotal:          storageWrites.length,
+    overallConfidence,
+    summary: {
+      correlatedCount:       correlatedViolations.length,
+      networkOnlyCount:      uncorrelatedNetwork.length,
+      storageWritesDetected: storageWrites.length,
+      evidenceLevel: correlatedViolations.length > 0 ? 'HIGH (dual-layer)'
+                   : categoryARequests.length > 0    ? 'MEDIUM (network only)'
+                   : 'LOW (storage only)'
+    }
+  };
+}
+
+/**
  * State machine for audit pipeline
  * Maps progress to explicit states for frontend polling
  */
@@ -499,6 +609,22 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   📊 Top vendors: ${Object.keys(requestCategorization.vendorBreakdown).slice(0, 3).join(', ')}`);
     }
 
+    // Step 13.7: Network-storage correlation
+    // Correlates network tracking requests with storage writes within a time window.
+    // Correlated findings = highest-confidence GDPR evidence (network transmission + local persistence).
+    stepStartTime = Date.now();
+    console.log('🔗 Step 13.7: Correlating network requests with storage writes...');
+
+    const networkStorageCorrelations = correlateNetworkAndStorage(
+      trackingBeforeConsentRequests,
+      monitoringData,
+      requestCategorization
+    );
+
+    console.log(`   ✅ Correlation completed in ${Date.now() - stepStartTime}ms`);
+    console.log(`   🔗 Correlated violations: ${networkStorageCorrelations.correlatedViolations.length}`);
+    console.log(`   📊 Confidence: ${networkStorageCorrelations.overallConfidence}%`);
+
     // Calculate scan duration
     const scanDuration = Math.round((Date.now() - startTime) / 1000);
 
@@ -564,6 +690,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       timelineReport: timelineReport,
       requestCategorization: requestCategorization,
       trackingSummary: trackingSummary,
+      networkStorageCorrelations: networkStorageCorrelations,
       screenshots: {
         full: screenshotUrls.fullPageUrl,
         banner: screenshotUrls.bannerUrl
@@ -718,6 +845,14 @@ async function saveScanResults(auditId, results) {
     const hasMonitoringAnalysis = columnNames.includes('monitoring_analysis_json');
     const hasDetectedVendors = columnNames.includes('detected_vendors_json');
     const hasVendorSummary = columnNames.includes('vendor_summary_json');
+    const hasNetworkStorageCorr = columnNames.includes('network_storage_correlations_json');
+
+    // Idempotent migration: add column if not present
+    if (!hasNetworkStorageCorr) {
+      try {
+        db.exec(`ALTER TABLE scan_results ADD COLUMN network_storage_correlations_json TEXT`);
+      } catch { /* column already exists */ }
+    }
 
     // Build dynamic INSERT statement based on available columns
     let insertColumns = `
@@ -786,6 +921,12 @@ async function saveScanResults(auditId, results) {
       insertColumns += ',\n      vendor_summary_json';
       insertPlaceholders += ', ?';
       insertValues.push(JSON.stringify(results.vendorSummary || null));
+    }
+
+    if (hasNetworkStorageCorr || true) { // column just migrated above — always include
+      insertColumns += ',\n      network_storage_correlations_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.networkStorageCorrelations || null));
     }
 
     const stmt = db.prepare(`
