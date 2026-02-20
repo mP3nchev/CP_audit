@@ -34,6 +34,45 @@ async function detectConsentMode(page) {
       };
 
       // ============================================
+      // DIAGNOSTIC LOGGING
+      // ============================================
+      const diagnostics = {
+        google_tag_data_exists: typeof window.google_tag_data !== 'undefined',
+        ics_exists: window.google_tag_data?.ics !== undefined,
+        ics_entries_count: window.google_tag_data?.ics?.entries ? Object.keys(window.google_tag_data.ics.entries).length : 0,
+        dataLayer_exists: typeof window.dataLayer !== 'undefined',
+        dataLayer_consent_commands: window.dataLayer ? window.dataLayer.filter(item =>
+          Array.isArray(item) && item[0] === 'consent'
+        ).length : 0,
+        cmps_detected: {
+          CookieScript: typeof window.CookieScript !== 'undefined',
+          OneTrust: typeof window.OneTrust !== 'undefined',
+          Cookiebot: typeof window.Cookiebot !== 'undefined',
+          CookieYes: typeof window.getCkyConsent === 'function',
+          Consentmo: localStorage.getItem('gdprCache') !== null,
+          Usercentrics: typeof window.UC_UI !== 'undefined'
+        }
+      };
+
+      console.log('   🔍 Consent Mode Detection Diagnostics:');
+      console.log(`      google_tag_data: ${diagnostics.google_tag_data_exists ? '✅' : '❌'}`);
+      console.log(`      ics object: ${diagnostics.ics_exists ? '✅' : '❌'}`);
+      console.log(`      ics.entries count: ${diagnostics.ics_entries_count}`);
+      console.log(`      dataLayer: ${diagnostics.dataLayer_exists ? '✅' : '❌'}`);
+      console.log(`      consent commands: ${diagnostics.dataLayer_consent_commands}`);
+      console.log(`      CMPs: ${Object.entries(diagnostics.cmps_detected).filter(([_, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
+
+      // Log ics.entries structure for debugging
+      if (window.google_tag_data?.ics?.entries) {
+        const entries = window.google_tag_data.ics.entries;
+        console.log('      ics.entries structure:');
+        Object.keys(entries).forEach(param => {
+          const entry = entries[param];
+          console.log(`         ${param}: default=${entry.default}, update=${entry.update}`);
+        });
+      }
+
+      // ============================================
       // DETECTION METHOD 1: V2 via window.google_tag_data.ics
       // Confidence: 99.5% (most reliable)
       // ============================================
@@ -114,12 +153,16 @@ async function detectConsentMode(page) {
               console.log(`   ✅ All V2 params present in static detection (including not_set values)`);
             }
 
-            // GDPR Compliance Check (default should be 'denied')
+            // GDPR Compliance Check
+            // NOTE: For GDPR compliance, parameters MUST be explicitly set to 'denied', not 'not_set'
             const gdprViolations = [];
             ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage'].forEach(param => {
               const defaultState = entries[param]?.default;
-              if (defaultState === 'granted') {
-                gdprViolations.push(`${param} defaults to "granted" (should be "denied")`);
+
+              // GDPR requires EXPLICIT 'denied' - anything else is non-compliant
+              if (defaultState !== 'denied') {
+                const actualState = defaultState || 'not_set';
+                gdprViolations.push(`${param} defaults to "${actualState}" but must be "denied" for GDPR compliance`);
               }
             });
 
@@ -129,6 +172,196 @@ async function detectConsentMode(page) {
             } else {
               results.compliant = true;
             }
+          }
+        }
+      }
+
+      // ============================================
+      // DETECTION METHOD 1.5: CMP Native APIs
+      // Confidence: 95% (direct CMP state reading)
+      // Only used if Method 1 failed or returned 'not_set'
+      // ============================================
+      if (!results.detected || Object.values(results.consentStates).every(v => v === 'not_set')) {
+
+        // CookieScript Integration
+        if (typeof window.CookieScript !== 'undefined' && window.CookieScript.instance) {
+          try {
+            const csState = window.CookieScript.instance.currentState();
+
+            if (csState && csState.categories) {
+              results.detected = true;
+              results.detection_method = 'CookieScript native API';
+              results.confidence = 95;
+              results.version = 'v2'; // CookieScript always uses V2
+
+              // Map CookieScript categories to Consent Mode params
+              const targeting = csState.categories.targeting || false;
+              const analytics = csState.categories.analytics || false;
+
+              results.consentStates = {
+                ad_storage: targeting ? 'granted' : 'denied',
+                ad_user_data: targeting ? 'granted' : 'denied',
+                ad_personalization: targeting ? 'granted' : 'denied',
+                analytics_storage: analytics ? 'granted' : 'denied',
+                functionality_storage: csState.categories.functionality ? 'granted' : 'denied',
+                personalization_storage: csState.categories.personalization ? 'granted' : 'denied',
+                security_storage: 'granted' // Always granted by CookieScript
+              };
+
+              // GDPR compliance check
+              const allDenied = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage']
+                .every(param => results.consentStates[param] === 'denied');
+              results.compliant = allDenied;
+            }
+          } catch (error) {
+            console.error('   ⚠️  Failed to read CookieScript state:', error.message);
+          }
+        }
+
+        // OneTrust Integration
+        else if (typeof window.OneTrust !== 'undefined' && window.OneTrust.GetDomainData) {
+          try {
+            const otData = window.OneTrust.GetDomainData();
+            const activeGroups = otData.Groups.filter(g => g.Status === 'active');
+
+            // OneTrust uses group IDs - common mappings:
+            // C0004 = Performance/Analytics
+            // C0002 = Targeting/Advertising
+            const hasAnalytics = activeGroups.some(g => g.CustomGroupId === 'C0004');
+            const hasTargeting = activeGroups.some(g => g.CustomGroupId === 'C0002');
+
+            results.detected = true;
+            results.detection_method = 'OneTrust native API';
+            results.confidence = 95;
+            results.version = 'v2';
+
+            results.consentStates = {
+              ad_storage: hasTargeting ? 'granted' : 'denied',
+              ad_user_data: hasTargeting ? 'granted' : 'denied',
+              ad_personalization: hasTargeting ? 'granted' : 'denied',
+              analytics_storage: hasAnalytics ? 'granted' : 'denied'
+            };
+
+            const allDenied = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage']
+              .every(param => results.consentStates[param] === 'denied');
+            results.compliant = allDenied;
+          } catch (error) {
+            console.error('   ⚠️  Failed to read OneTrust state:', error.message);
+          }
+        }
+
+        // Cookiebot Integration
+        else if (typeof window.Cookiebot !== 'undefined' && window.Cookiebot.consent) {
+          try {
+            const consent = window.Cookiebot.consent;
+
+            results.detected = true;
+            results.detection_method = 'Cookiebot native API';
+            results.confidence = 95;
+            results.version = 'v2';
+
+            results.consentStates = {
+              ad_storage: consent.marketing ? 'granted' : 'denied',
+              ad_user_data: consent.marketing ? 'granted' : 'denied',
+              ad_personalization: consent.marketing ? 'granted' : 'denied',
+              analytics_storage: consent.statistics ? 'granted' : 'denied',
+              functionality_storage: consent.preferences ? 'granted' : 'denied',
+              security_storage: consent.necessary ? 'granted' : 'denied'
+            };
+
+            const allDenied = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage']
+              .every(param => results.consentStates[param] === 'denied');
+            results.compliant = allDenied;
+          } catch (error) {
+            console.error('   ⚠️  Failed to read Cookiebot state:', error.message);
+          }
+        }
+
+        // CookieYes Integration
+        else if (typeof window.getCkyConsent === 'function') {
+          try {
+            const consent = window.getCkyConsent();
+
+            if (consent && consent.categories) {
+              results.detected = true;
+              results.detection_method = 'CookieYes native API';
+              results.confidence = 95;
+              results.version = 'v2';
+
+              // CookieYes categories: necessary, functional, analytics, advertisement
+              const categories = consent.categories;
+
+              results.consentStates = {
+                ad_storage: categories.advertisement ? 'granted' : 'denied',
+                ad_user_data: categories.advertisement ? 'granted' : 'denied',
+                ad_personalization: categories.advertisement ? 'granted' : 'denied',
+                analytics_storage: categories.analytics ? 'granted' : 'denied',
+                functionality_storage: categories.functional ? 'granted' : 'denied',
+                security_storage: categories.necessary ? 'granted' : 'denied'
+              };
+
+              const allDenied = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage']
+                .every(param => results.consentStates[param] === 'denied');
+              results.compliant = allDenied;
+            }
+          } catch (error) {
+            console.error('   ⚠️  Failed to read CookieYes state:', error.message);
+          }
+        }
+
+        // Consentmo Integration (Shopify)
+        else if (localStorage.getItem('gdprCache')) {
+          try {
+            const gdprCache = localStorage.getItem('gdprCache');
+            const parsed = JSON.parse(gdprCache);
+
+            if (parsed.getCookieConsentSettings) {
+              const settings = JSON.parse(parsed.getCookieConsentSettings);
+
+              // Check if this is actually Consentmo (look for characteristic structure)
+              if (settings && (settings.cookie_name !== undefined || settings.gcm_options !== undefined)) {
+                results.detected = true;
+                results.detection_method = 'Consentmo localStorage API';
+                results.confidence = 90; // Slightly lower since we're inferring from localStorage
+
+                // Consentmo uses gcm_options for Google Consent Mode integration
+                if (settings.gcm_options && settings.gcm_options.state) {
+                  results.version = 'v2';
+
+                  // Read from cookie: cookieconsent_status{cookie_name}
+                  const cookieName = `cookieconsent_status${settings.cookie_name || ''}`;
+                  const cookieValue = document.cookie.split('; ').find(row => row.startsWith(cookieName));
+
+                  if (cookieValue) {
+                    const consentData = cookieValue.split('=')[1];
+                    const decoded = decodeURIComponent(consentData);
+
+                    // Consentmo categories: necessary, statistics (analytics), marketing, preferences (functional)
+                    // Cookie format: {"necessary":true,"statistics":false,"marketing":false,"preferences":true}
+                    try {
+                      const categories = JSON.parse(decoded);
+
+                      results.consentStates = {
+                        ad_storage: categories.marketing ? 'granted' : 'denied',
+                        ad_user_data: categories.marketing ? 'granted' : 'denied',
+                        ad_personalization: categories.marketing ? 'granted' : 'denied',
+                        analytics_storage: categories.statistics ? 'granted' : 'denied',
+                        functionality_storage: categories.preferences ? 'granted' : 'denied',
+                        security_storage: categories.necessary ? 'granted' : 'denied'
+                      };
+
+                      const allDenied = ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage']
+                        .every(param => results.consentStates[param] === 'denied');
+                      results.compliant = allDenied;
+                    } catch (cookieParseError) {
+                      console.error('   ⚠️  Failed to parse Consentmo cookie:', cookieParseError.message);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.error('   ⚠️  Failed to read Consentmo state:', error.message);
           }
         }
       }
@@ -190,14 +423,19 @@ async function detectConsentMode(page) {
             console.log(`   ⚠️  Missing V2 params (gtag path): ${missingParams.join(', ')}`);
           } else {
             results.version = 'v2';
-            console.log(`   ✅ All V2 params present (gtag path, including not_set values)`);
+            console.log(`   ✅ All V2 params present (gtag path)`);
           }
 
           // GDPR compliance check
+          // NOTE: For GDPR compliance, parameters MUST be explicitly set to 'denied', not 'not_set'
           const gdprViolations = [];
           ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage'].forEach(param => {
-            if (results.consentStates[param] === 'granted') {
-              gdprViolations.push(`${param} defaults to "granted" (should be "denied")`);
+            const currentState = results.consentStates[param];
+
+            // GDPR requires EXPLICIT 'denied' - anything else is non-compliant
+            if (currentState !== 'denied') {
+              const actualState = currentState || 'not_set';
+              gdprViolations.push(`${param} defaults to "${actualState}" but must be "denied" for GDPR compliance`);
             }
           });
 
