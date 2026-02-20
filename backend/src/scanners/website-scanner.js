@@ -379,6 +379,75 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     await waitForPageStability(page, 3000);
     console.log(`   ✅ Page stable after ${Date.now() - stepStartTime}ms`);
 
+    // Step 6.6: Wait for CMP initialization (if detected)
+    stepStartTime = Date.now();
+    const cmpDetected = await page.evaluate(() => {
+      return !!(
+        window.CookieScript ||
+        window.OneTrust ||
+        window.Cookiebot ||
+        window.getCkyConsent ||  // CookieYes
+        localStorage.getItem('gdprCache') ||  // Consentmo
+        window.UC_UI  // Usercentrics
+      );
+    });
+
+    if (cmpDetected) {
+      console.log('   🍪 CMP detected - waiting for initialization...');
+
+      let cmpReady = false;
+      let attempts = 0;
+      const maxAttempts = 20; // 10s max wait (500ms * 20)
+
+      while (!cmpReady && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        cmpReady = await page.evaluate(() => {
+          // Check if google_tag_data.ics has been populated
+          if (window.google_tag_data?.ics?.entries) {
+            const entries = window.google_tag_data.ics.entries;
+            const hasEntries = Object.keys(entries).length > 0;
+            const hasDefaults = Object.values(entries).some(e => e.default !== undefined);
+            return hasEntries && hasDefaults;
+          }
+
+          // Fallback: Check CMP-specific readiness
+          if (window.CookieScript?.instance) {
+            return window.CookieScript.instance.currentState() !== undefined;
+          }
+          if (window.Cookiebot) {
+            return window.Cookiebot.consent !== undefined;
+          }
+          if (window.OneTrust) {
+            return window.OneTrust.GetDomainData !== undefined;
+          }
+          if (typeof window.getCkyConsent === 'function') {
+            // CookieYes - check if banner loaded
+            return window.getCkyConsent() !== undefined;
+          }
+          if (localStorage.getItem('gdprCache')) {
+            // Consentmo - check if localStorage has consent data
+            try {
+              const gdprCache = JSON.parse(localStorage.getItem('gdprCache'));
+              return gdprCache.getCookieConsentSettings !== undefined;
+            } catch { return false; }
+          }
+
+          return false;
+        });
+
+        attempts++;
+      }
+
+      if (cmpReady) {
+        console.log(`   ✅ CMP initialized after ${attempts * 500}ms`);
+      } else {
+        console.log(`   ⚠️  CMP not ready after ${maxAttempts * 500}ms - proceeding with fallback detection`);
+      }
+
+      console.log(`   ✅ CMP wait completed in ${Date.now() - stepStartTime}ms`);
+    }
+
     // Step 6.5: Detect cookie banner appearance time
     stepStartTime = Date.now();
     const bannerAppearTime = await detectBannerAppearTime(page);
