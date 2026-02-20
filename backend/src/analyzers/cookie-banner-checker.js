@@ -116,6 +116,7 @@ async function waitForBannerVisible(page, timeout = 10000) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
+  console.log(`   ⚠️  Banner wait timeout after ${timeout}ms - banner may be hidden or non-existent`);
   return { visible: false };
 }
 
