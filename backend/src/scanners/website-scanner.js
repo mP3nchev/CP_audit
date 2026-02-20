@@ -444,16 +444,17 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     }
     console.log(`   ✅ Cookie extraction completed in ${Date.now() - stepStartTime}ms`);
 
-    // Step 8: Get network requests
+    // Step 8: Get network requests (preliminary counts — will be re-categorized in Step 13.6)
     stepStartTime = Date.now();
-    console.log('📊 Step 8: Analyzing network requests...');
+    console.log('📊 Step 8: Analyzing network requests (preliminary)...');
     const networkStats = networkMonitor.getStats();
-    const trackingRequests = networkMonitor.getTrackingRequests();
-    const trackingBeforeConsentRequests = networkMonitor.getTrackingBeforeConsent();
+    let trackingRequests = networkMonitor.getTrackingRequests();
+    let trackingBeforeConsentRequests = networkMonitor.getTrackingBeforeConsent();
 
     console.log(`   Total requests: ${networkStats.totalRequests}`);
-    console.log(`   Tracking requests: ${networkStats.trackingRequests}`);
-    console.log(`   Tracking before consent: ${networkStats.trackingBeforeConsent}`);
+    console.log(`   Tracking requests (preliminary, domain-based): ${networkStats.trackingRequests}`);
+    console.log(`   Tracking before consent (preliminary): ${networkStats.trackingBeforeConsent}`);
+    console.log(`   ℹ️  Note: Final counts after re-categorization in Step 13.6 (excludes blocked requests)`);
     console.log(`   ✅ Network analysis completed in ${Date.now() - stepStartTime}ms`);
 
     // Step 9: Analyze tracking before consent
@@ -609,14 +610,29 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   📊 Top vendors: ${Object.keys(requestCategorization.vendorBreakdown).slice(0, 3).join(', ')}`);
     }
 
+    // ── CRITICAL FIX: Replace boolean-flagged tracking arrays with re-categorized data ──
+    // Problem: Step 8 used isTrackingRequest() which is a simple domain check BEFORE responseStatus is known.
+    // Solution: Use requestCategorization.trackingRequests which applies 5-layer detection + hard override for blocked requests.
+    // This ensures ANY blocked request (Facebook, Google, etc.) is excluded if responseStatus === 0 (Benign category).
+    //
+    // Re-assign trackingRequests to use final categorized data (excludes blocked requests via hard override)
+    trackingRequests = requestCategorization.trackingRequests;
+
+    // Re-assign trackingBeforeConsentRequests to use final categorized + beforeConsent filter
+    trackingBeforeConsentRequests = requestCategorization.trackingRequests.filter(r => r.beforeConsent);
+
+    console.log(`   🔄 Tracking requests (re-categorized): ${trackingRequests.length}`);
+    console.log(`   🔄 Tracking before consent (re-categorized): ${trackingBeforeConsentRequests.length}`);
+
     // Step 13.7: Network-storage correlation
     // Correlates network tracking requests with storage writes within a time window.
     // Correlated findings = highest-confidence GDPR evidence (network transmission + local persistence).
+    // NOTE: trackingBeforeConsentRequests now contains re-categorized data (blocked requests excluded).
     stepStartTime = Date.now();
     console.log('🔗 Step 13.7: Correlating network requests with storage writes...');
 
     const networkStorageCorrelations = correlateNetworkAndStorage(
-      trackingBeforeConsentRequests,
+      trackingBeforeConsentRequests,  // ← Re-categorized data (excludes blocked requests via hard override)
       monitoringData,
       requestCategorization
     );
