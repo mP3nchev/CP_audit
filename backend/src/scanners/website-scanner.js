@@ -323,6 +323,17 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     const page = await createPage(browser);
     console.log(`   ✅ Page created in ${Date.now() - stepStartTime}ms`);
 
+    // Capture browser console for CMP diagnostics
+    page.on('console', msg => {
+      const text = msg.text();
+
+      // Only log CMP/Consent Mode related messages
+      if (text.includes('consent') || text.includes('CookieScript') ||
+          text.includes('google_tag') || text.includes('ics')) {
+        console.log(`   🌐 [Browser ${msg.type()}] ${text}`);
+      }
+    });
+
     // Setup network monitoring
     stepStartTime = Date.now();
     console.log('   🌐 Setting up network monitoring...');
@@ -390,6 +401,36 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     while (!consentReady && attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      // Log raw google_tag_data structure for diagnostics
+      const debugData = await page.evaluate(() => {
+        if (!window.google_tag_data?.ics?.entries) return null;
+
+        const entries = window.google_tag_data.ics.entries;
+        const params = ['ad_storage', 'analytics_storage', 'ad_user_data', 'ad_personalization'];
+
+        const snapshot = {
+          timestamp: Date.now(),
+          perfTime: performance.now(),
+          entries: {}
+        };
+
+        params.forEach(param => {
+          if (entries[param]) {
+            snapshot.entries[param] = {
+              default: entries[param].default,
+              update: entries[param].update
+            };
+          }
+        });
+
+        return snapshot;
+      });
+
+      if (debugData && attempts % 4 === 0) {
+        // Log every 2s (every 4th attempt at 500ms intervals) to avoid spam
+        console.log(`   🔍 [Attempt ${attempts}] Consent Mode @ ${debugData.perfTime.toFixed(0)}ms:`, JSON.stringify(debugData.entries, null, 2));
+      }
+
       consentReady = await page.evaluate(() => {
         // UNIVERSAL check: Wait for google_tag_data.ics to be populated
         // This works for ALL CMPs (CookieScript, OneTrust, Cookiebot, etc.)
@@ -400,10 +441,18 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         const entries = window.google_tag_data.ics.entries;
         const params = ['ad_storage', 'analytics_storage', 'ad_user_data', 'ad_personalization'];
 
-        // Check if at least ONE critical param has an explicit value (not undefined)
-        // Value can be 'denied', 'granted', or even 'not_set' - we just need it to be SET
+        // Check if at least ONE critical param has a REAL value (not undefined, not 'not_set')
+        // CRITICAL: Reject 'not_set' as it's a transitional state used by CMPs during initialization
+        // Only accept 'denied' or 'granted' as valid consent states
         const hasAtLeastOneParam = params.some(param => {
-          return entries[param] && entries[param].default !== undefined;
+          const entry = entries[param];
+          if (!entry || entry.default === undefined) return false;
+
+          // ❌ REJECT transitional 'not_set' (CookieScript initialization marker)
+          if (entry.default === 'not_set') return false;
+
+          // ✅ ACCEPT real values: 'denied' or 'granted'
+          return true;
         });
 
         return hasAtLeastOneParam;

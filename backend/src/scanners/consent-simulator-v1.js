@@ -120,12 +120,29 @@ async function captureState(page, networkRequests) {
     req.timestamp > 0 // Only requests after page load
   );
 
+  // 4. Capture screenshot AFTER consent interaction (for evidence)
+  let screenshot = null;
+  try {
+    screenshot = await page.screenshot({ fullPage: false, type: 'png' });
+    console.log(`   📸 Screenshot captured (${screenshot.length} bytes)`);
+
+    // Save to /tmp for evidence
+    const fs = require('fs');
+    const timestamp = Date.now();
+    const screenshotPath = `/tmp/consent-${timestamp}.png`;
+    fs.writeFileSync(screenshotPath, screenshot);
+    console.log(`   💾 Saved: ${screenshotPath}`);
+  } catch (e) {
+    console.warn(`   ⚠️  Screenshot failed: ${e.message}`);
+  }
+
   console.log(`   ✅ Captured: ${cookies.length} cookies, ${trackingRequests.length} tracking requests, ${Object.keys(localStorage).length} localStorage items`);
 
   return {
     cookies: cookies,
     localStorage: localStorage,
-    networkRequests: trackingRequests
+    networkRequests: trackingRequests,
+    screenshot: screenshot  // NEW field
   };
 }
 
