@@ -165,7 +165,12 @@ async function detectConsentMode(page) {
             // NOTE: For GDPR compliance, parameters MUST be explicitly set to 'denied', not 'not_set'
             const gdprViolations = [];
             ['ad_storage', 'ad_user_data', 'ad_personalization', 'analytics_storage'].forEach(param => {
-              const defaultState = entries[param]?.default;
+              let defaultState = entries[param]?.default;
+
+              // CookieScript fix: Convert boolean to string
+              if (typeof defaultState === 'boolean') {
+                defaultState = defaultState ? 'granted' : 'denied';
+              }
 
               // GDPR requires EXPLICIT 'denied' - anything else is non-compliant
               if (defaultState !== 'denied') {
@@ -398,14 +403,21 @@ async function detectConsentMode(page) {
 
           // Extract consent states
           const consentConfig = defaultConsentCmd[2];
+
+          // Helper to convert boolean to string (CookieScript fix)
+          const normalizeState = (val) => {
+            if (typeof val === 'boolean') return val ? 'granted' : 'denied';
+            return val || 'not_set';
+          };
+
           results.consentStates = {
-            ad_storage: consentConfig.ad_storage || 'not_set',
-            ad_user_data: consentConfig.ad_user_data || 'not_set',
-            ad_personalization: consentConfig.ad_personalization || 'not_set',
-            analytics_storage: consentConfig.analytics_storage || 'not_set',
-            functionality_storage: consentConfig.functionality_storage || 'not_set',
-            personalization_storage: consentConfig.personalization_storage || 'not_set',
-            security_storage: consentConfig.security_storage || 'not_set'
+            ad_storage: normalizeState(consentConfig.ad_storage),
+            ad_user_data: normalizeState(consentConfig.ad_user_data),
+            ad_personalization: normalizeState(consentConfig.ad_personalization),
+            analytics_storage: normalizeState(consentConfig.analytics_storage),
+            functionality_storage: normalizeState(consentConfig.functionality_storage),
+            personalization_storage: normalizeState(consentConfig.personalization_storage),
+            security_storage: normalizeState(consentConfig.security_storage)
           };
 
           // Check for wait_for_update
