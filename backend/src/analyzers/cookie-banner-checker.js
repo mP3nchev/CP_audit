@@ -35,66 +35,88 @@ function findElementByTextHybrid(elements, keywords) {
 }
 
 /**
- * Wait for cookie banner to be visible (universal, CMP-agnostic)
+ * Wait for cookie banner to be visible (iframe-aware)
  * @param {Page} page - Puppeteer page
- * @param {number} timeout - Max wait time in ms (default: 10000)
- * @returns {Promise<boolean>} True if banner found, false if timeout
+ * @param {number} timeout - Max wait time (default: 10000ms)
+ * @returns {Promise<Object>} { visible, method, screenshot }
  */
 async function waitForBannerVisible(page, timeout = 10000) {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
-    const visible = await page.evaluate(() => {
-      // Universal banner selectors (works for most CMPs)
+    const result = await page.evaluate(() => {
       const selectors = [
         '[id*="cookie"]', '[class*="cookie"]',
         '[id*="consent"]', '[class*="consent"]',
-        '[id*="banner"]', '[class*="banner"]',
-        '[role="dialog"]', '[role="alertdialog"]',
-        '[aria-label*="cookie" i]', '[aria-label*="consent" i]',
-        '[aria-describedby*="cookie" i]'
+        '[role="dialog"]', '[role="alertdialog"]'
       ];
 
+      // STEP 1: Search main document
       for (const selector of selectors) {
         try {
           const el = document.querySelector(selector);
           if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-            // Element exists and is visible
-            return true;
+            const buttons = el.querySelectorAll('button, a, [role="button"]');
+            if (buttons.length > 0) {
+              return { visible: true, method: 'main_document', selector };
+            }
           }
-        } catch (e) {
-          // Invalid selector, continue
-        }
+        } catch (e) {}
       }
 
-      // Also check iframes for banner
+      // STEP 2: Search iframes (CookieScript, OneTrust)
       const iframes = document.querySelectorAll('iframe');
       for (const iframe of iframes) {
         try {
           const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            for (const selector of selectors) {
-              const el = iframeDoc.querySelector(selector);
-              if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-                return true;
+          if (!iframeDoc) continue;
+
+          // ✅ CRITICAL: Verify iframe has loaded content (not empty)
+          const bodyHasContent = iframeDoc.body && iframeDoc.body.children.length > 0;
+          if (!bodyHasContent) continue; // Skip empty iframe
+
+          for (const selector of selectors) {
+            const el = iframeDoc.querySelector(selector);
+            if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+              const buttons = iframeDoc.querySelectorAll('button, a, [role="button"]');
+              if (buttons.length > 0) {
+                return {
+                  visible: true,
+                  method: 'iframe',
+                  selector,
+                  iframeSrc: iframe.src || 'about:blank',
+                  buttonCount: buttons.length
+                };
               }
             }
           }
         } catch (e) {
-          // Cross-origin or access denied
+          // Cross-origin iframe - expected, skip
         }
       }
 
-      return false;
+      return { visible: false };
     });
 
-    if (visible) return true;
+    if (result.visible) {
+      console.log(`   ✅ Banner found via ${result.method}: ${result.selector}`);
+      if (result.method === 'iframe') {
+        console.log(`      Iframe: ${result.iframeSrc}, buttons: ${result.buttonCount}`);
+      }
 
-    // Wait 500ms before next check
+      // Capture screenshot for evidence (optional, may fail)
+      let screenshot = null;
+      try {
+        screenshot = await page.screenshot({ fullPage: false, type: 'png' });
+      } catch (e) {}
+
+      return { visible: true, method: result.method, screenshot };
+    }
+
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  return false; // Timeout
+  return { visible: false };
 }
 
 /**

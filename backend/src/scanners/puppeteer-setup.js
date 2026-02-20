@@ -55,9 +55,45 @@ function findChromiumExecutable() {
  * @param {Object} customOptions - Custom launch options (protocolTimeout, etc.)
  * @returns {Promise<Browser>} Puppeteer browser instance
  */
+
+/**
+ * Detect user's monitor resolution
+ * @returns {Object} { width, height }
+ */
+function getSystemResolution() {
+  const { execSync } = require('child_process');
+
+  try {
+    // Linux: xrandr
+    const output = execSync('xrandr | grep "*" | head -n1', { encoding: 'utf8' });
+    const match = output.match(/(\d+)x(\d+)/);
+    if (match) {
+      return { width: parseInt(match[1]), height: parseInt(match[2]) };
+    }
+  } catch (e) {}
+
+  try {
+    // macOS: system_profiler
+    const output = execSync('system_profiler SPDisplaysDataType | grep Resolution', { encoding: 'utf8' });
+    const match = output.match(/(\d+) x (\d+)/);
+    if (match) {
+      return { width: parseInt(match[1]), height: parseInt(match[2]) };
+    }
+  } catch (e) {}
+
+  // Fallback: env variable or default
+  const width = parseInt(process.env.BROWSER_WIDTH) || 1920;
+  const height = parseInt(process.env.BROWSER_HEIGHT) || 1080;
+  return { width, height };
+}
+
 async function launchBrowser(customOptions = {}) {
   try {
     const executablePath = findChromiumExecutable();
+
+    // Get dynamic viewport resolution (or use defaults)
+    const resolution = getSystemResolution();
+    console.log(`   🖥️  Viewport: ${resolution.width}x${resolution.height}`);
 
     const launchOptions = {
       headless: constants.PUPPETEER_HEADLESS,
@@ -69,11 +105,11 @@ async function launchBrowser(customOptions = {}) {
         '--disable-gpu',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
-        '--window-size=1920,1080'
+        `--window-size=${resolution.width},${resolution.height}`
       ],
       defaultViewport: {
-        width: 1920,
-        height: 1080
+        width: resolution.width,
+        height: resolution.height
       },
       ...customOptions
     };
@@ -107,14 +143,41 @@ async function launchBrowser(customOptions = {}) {
 async function createPage(browser) {
   const page = await browser.newPage();
 
-  // Set user agent
+  // Override Puppeteer detection markers BEFORE page loads
+  await page.evaluateOnNewDocument(() => {
+    // 1. Delete navigator.webdriver (primary Puppeteer flag)
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => false
+    });
+
+    // 2. Add chrome.runtime (advanced fingerprinting bypass)
+    window.chrome = {
+      runtime: {}
+    };
+
+    // 3. Fix permissions API (Puppeteer detection vector)
+    const originalQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) => (
+      parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters)
+    );
+  });
+
+  // Set user agent (real Chrome, no Bot identifier to avoid CMP detection)
   await page.setUserAgent(
-    'Mozilla/5.0 (GDPR-Auditor-Bot/1.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
 
-  // Set extra HTTP headers
+  // Set extra HTTP headers (real browser headers to avoid CMP bot detection)
   await page.setExtraHTTPHeaders({
-    'Accept-Language': 'en-US,en;q=0.9'
+    'Accept-Language': 'en-US,en;q=0.9,bg;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Upgrade-Insecure-Requests': '1'
   });
 
   // Set shorter timeout for faster failure detection (15s instead of 120s)
