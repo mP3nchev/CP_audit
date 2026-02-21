@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import StatusBadge from './StatusBadge';
 import LoadingSpinner from './LoadingSpinner';
 
@@ -9,14 +9,15 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
   const [isResuming, setIsResuming] = useState(false);
   const [resumed, setResumed] = useState(false);
   const [pollingForCompletion, setPollingForCompletion] = useState(false);
+  const [backendUrl, setBackendUrl] = useState('http://localhost:3001');
 
-  // Normalize API URL - ensure it starts with protocol
-  let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
-    apiUrl = 'https://' + apiUrl;
-  }
-
-  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
+  // Fetch backend URL for command display
+  useEffect(() => {
+    fetch('/api/backend-url')
+      .then(res => res.json())
+      .then(data => setBackendUrl(data.url))
+      .catch(err => console.error('Failed to fetch backend URL:', err));
+  }, []);
 
   const reportUrl = `https://cp-audit.vercel.app/report-v2/${auditId}`;
   const [shareUrl, setShareUrl] = useState(reportUrl);
@@ -25,7 +26,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     // Fetch shareable link on first copy if not already fetched
     if (shareUrl === reportUrl) {
       try {
-        const res = await fetch(`${apiUrl}/api/audit/${auditId}/share`, { headers: authHeaders });
+        const res = await fetch(`/api/proxy?path=/api/audit/${auditId}/share`);
         if (res.ok) {
           const data = await res.json();
           if (data.share_url) {
@@ -55,9 +56,9 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     try {
       setIsResuming(true);
 
-      const resumeResponse = await fetch(`${apiUrl}/api/audit/${auditId}/resume`, {
+      const resumeResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/resume`, {
         method: 'POST',
-        headers: authHeaders
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (!resumeResponse.ok) {
@@ -85,7 +86,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
 
     const poll = async () => {
       try {
-        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`, { headers: authHeaders });
+        const statusResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/status`);
         const statusData = await statusResponse.json();
 
         console.log(`📡 Poll #${attempts + 1}: status=${statusData.status}, state=${statusData.state}`);
@@ -151,14 +152,8 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       );
     }
 
-    // Determine the correct API URL for the command
-    // If we're on Vercel, use Railway backend URL
-    // If we're on localhost, use localhost
-    const railwayBackendUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.includes('vercel')
-      ? 'https://cpaudit-production.up.railway.app'
-      : apiUrl;
-
-    const commandLine = `node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayBackendUrl}`;
+    // Use the backend URL fetched from the server
+    const commandLine = `node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${backendUrl}`;
 
     return (
       <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6 space-y-6">

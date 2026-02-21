@@ -10,20 +10,11 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Normalize API URL - ensure it starts with protocol
-  let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
-    apiUrl = 'https://' + apiUrl;
-  }
-
-  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
-  const reportUrl = `${apiUrl}/api/audit/${auditId}/report`;
-
   useEffect(() => {
     // Check if report exists
     const checkReport = async () => {
       try {
-        const response = await fetch(`${apiUrl}/api/audit/${auditId}/status`, { headers: authHeaders });
+        const response = await fetch(`/api/proxy?path=/api/audit/${auditId}/status`);
         const data = await response.json();
 
         if (!response.ok) {
@@ -70,7 +61,7 @@ export default function ReportPage() {
   return (
     <div className="w-full h-screen">
       <iframe
-        src={reportUrl}
+        src={`/api/proxy?path=/api/audit/${auditId}/report`}
         className="w-full h-full border-0"
         title="GDPR Audit Report"
       />
