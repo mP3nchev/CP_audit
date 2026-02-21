@@ -41,6 +41,8 @@ export default function AuditForm({ onAuditComplete }) {
 
   const onSubmit = async (data) => {
     const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
+    console.log('🔑 API Key being sent:', process.env.NEXT_PUBLIC_API_KEY ? 'SET (length: ' + process.env.NEXT_PUBLIC_API_KEY.length + ')' : 'UNDEFINED/MISSING');
+    console.log('🔑 Auth headers:', authHeaders);
     try {
       setIsSubmitting(true);
       setProgress('Starting audit scan...');
