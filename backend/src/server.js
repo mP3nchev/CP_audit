@@ -35,18 +35,21 @@ const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://cp-audit-d
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow server-to-server (Railway internal, health checks)
+    // Allow server-to-server (Railway internal, health checks, curl)
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
     process.stdout.write(JSON.stringify({
       ts: new Date().toISOString(), level: 'warn', event: 'cors_blocked', origin
     }) + '\n');
-    callback(new Error('CORS: origin not allowed'));
+    // Return false (not an Error) — avoids propagating to Express error handler
+    // Browser receives 204 without CORS headers and treats it as a CORS rejection
+    callback(null, false);
   },
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-api-key'],
   credentials: false,
   maxAge: 86400,
+  preflightContinue: false,
   optionsSuccessStatus: 204
 }));
 
