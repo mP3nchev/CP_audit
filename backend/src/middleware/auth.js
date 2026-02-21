@@ -10,8 +10,14 @@ function log(data) {
 
 /**
  * X-API-Key middleware. Timing-safe comparison.
+ * OPTIONS preflight requests are always passed through — browsers never
+ * include custom headers in preflights, authentication happens on the
+ * actual request that follows.
  */
 function authMiddleware(req, res, next) {
+  // Pass OPTIONS preflights through — cors handles them, not auth
+  if (req.method === 'OPTIONS') return next();
+
   const provided = (req.headers['x-api-key'] || '').trim();
 
   if (!provided) {

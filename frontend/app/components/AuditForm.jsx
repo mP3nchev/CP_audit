@@ -39,6 +39,8 @@ export default function AuditForm({ onAuditComplete }) {
     resolver: zodResolver(auditSchema)
   });
 
+  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
+
   const onSubmit = async (data) => {
     try {
       setIsSubmitting(true);
@@ -55,7 +57,7 @@ export default function AuditForm({ onAuditComplete }) {
       // Step 1: Start audit
       const startResponse = await fetch(`${apiUrl}/api/audit/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           website_url: data.websiteUrl,
           client_name: data.clientName,
@@ -93,6 +95,7 @@ export default function AuditForm({ onAuditComplete }) {
 
         const uploadResponse = await fetch(`${apiUrl}/api/audit/${auditId}/privacy-policy`, {
           method: 'POST',
+          headers: { ...authHeaders },
           body: formData
         });
 
@@ -147,7 +150,9 @@ export default function AuditForm({ onAuditComplete }) {
       }
 
       try {
-        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`, {
+          headers: authHeaders
+        });
         const statusData = await statusResponse.json();
 
         // Termination condition 1a: State is DONE
