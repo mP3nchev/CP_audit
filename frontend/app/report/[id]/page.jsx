@@ -16,13 +16,14 @@ export default function ReportPage() {
     apiUrl = 'https://' + apiUrl;
   }
 
+  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
   const reportUrl = `${apiUrl}/api/audit/${auditId}/report`;
 
   useEffect(() => {
     // Check if report exists
     const checkReport = async () => {
       try {
-        const response = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const response = await fetch(`${apiUrl}/api/audit/${auditId}/status`, { headers: authHeaders });
         const data = await response.json();
 
         if (!response.ok) {

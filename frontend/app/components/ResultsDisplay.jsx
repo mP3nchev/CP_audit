@@ -16,6 +16,8 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     apiUrl = 'https://' + apiUrl;
   }
 
+  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
+
   const reportUrl = `https://cp-audit.vercel.app/report-v2/${auditId}`;
   const [shareUrl, setShareUrl] = useState(reportUrl);
 
@@ -23,7 +25,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
     // Fetch shareable link on first copy if not already fetched
     if (shareUrl === reportUrl) {
       try {
-        const res = await fetch(`${apiUrl}/api/audit/${auditId}/share`);
+        const res = await fetch(`${apiUrl}/api/audit/${auditId}/share`, { headers: authHeaders });
         if (res.ok) {
           const data = await res.json();
           if (data.share_url) {
@@ -54,7 +56,8 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
       setIsResuming(true);
 
       const resumeResponse = await fetch(`${apiUrl}/api/audit/${auditId}/resume`, {
-        method: 'POST'
+        method: 'POST',
+        headers: authHeaders
       });
 
       if (!resumeResponse.ok) {
@@ -82,7 +85,7 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
 
     const poll = async () => {
       try {
-        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`, { headers: authHeaders });
         const statusData = await statusResponse.json();
 
         console.log(`📡 Poll #${attempts + 1}: status=${statusData.status}, state=${statusData.state}`);

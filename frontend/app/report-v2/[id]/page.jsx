@@ -32,11 +32,13 @@ export default function ReportV2Page() {
     apiUrl = 'https://' + apiUrl;
   }
 
+  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
+
   useEffect(() => {
     const fetchReportData = async () => {
       try {
         // Check if audit is completed
-        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`);
+        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`, { headers: authHeaders });
         const statusData = await statusResponse.json();
 
         if (!statusResponse.ok) {
@@ -52,7 +54,7 @@ export default function ReportV2Page() {
         }
 
         // Fetch v2 report data
-        const reportResponse = await fetch(`${apiUrl}/api/audit/${auditId}/report-v2`);
+        const reportResponse = await fetch(`${apiUrl}/api/audit/${auditId}/report-v2`, { headers: authHeaders });
 
         if (!reportResponse.ok) {
           throw new Error('Failed to load report data');
