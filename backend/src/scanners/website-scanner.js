@@ -77,7 +77,12 @@ const {
   extractVendorEvidence
 } = require('../analyzers/vendor-fingerprinter');
 
+const {
+  validateExecutionOrder
+} = require('../analyzers/consent-mode-validator');
+
 const { getDatabase } = require('../database/db');
+const { validateSchema } = require('../utils/schema-validator');
 
 const constants = require('../config/constants');
 
@@ -276,8 +281,7 @@ function updateProgress(auditId, currentStep, totalSteps, message, startTime = D
 
     db.prepare(`
       UPDATE audits
-      SET progress_json = ?,
-          updated_at = datetime('now')
+      SET progress_json = ?
       WHERE id = ?
     `).run(JSON.stringify(progress), auditId);
   } catch (error) {
@@ -646,6 +650,21 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   ⚠️  Consent Mode not detected`);
     }
 
+    // Step 10.6: Validate Consent Mode V2 execution order
+    const orderValidation = validateExecutionOrder(
+      consentModeAudit,
+      networkMonitor.getRequests().map(r => ({ url: r.url, timestamp: r.timestamp }))
+    );
+    if (!orderValidation.valid && !orderValidation.skipped) {
+      console.log(`   ⚠️  Consent Mode execution order violation: ${orderValidation.violationType}`);
+      console.log(`      ${orderValidation.reason}`);
+      consentModeAudit.executionOrderValidation = orderValidation;
+      consentModeAudit.hasExecutionOrderViolation = true;
+    } else {
+      consentModeAudit.executionOrderValidation = orderValidation;
+      consentModeAudit.hasExecutionOrderViolation = false;
+    }
+
     // Step 11 & 12: Screenshots (HARD DISABLED - temporary)
     // CRITICAL: Do NOT execute screenshot code to prevent 2.5min blocking
     let screenshotUrls = {};
@@ -854,8 +873,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         const db = getDatabase();
         db.prepare(`
           UPDATE audits
-          SET status = ?,
-              updated_at = datetime('now')
+          SET status = ?
           WHERE id = ?
         `).run(constants.AUDIT_STATUS.PAUSED, auditId);
 
@@ -1047,13 +1065,29 @@ async function saveScanResults(auditId, results) {
       insertValues.push(JSON.stringify(results.networkStorageCorrelations || null));
     }
 
+    // Validate critical payload shapes before writing to DB
+    validateSchema('scanResult', {
+      cookies: results.cookies,
+      networkRequests: results.networkRequests,
+      trackingBeforeConsent: results.trackingBeforeConsent,
+      consentModeAudit: results.consentModeAudit || null
+    });
+
     const stmt = db.prepare(`
       INSERT INTO scan_results (
         ${insertColumns}
       ) VALUES (${insertPlaceholders})
     `);
 
-    stmt.run(...insertValues);
+    try {
+      stmt.run(...insertValues);
+    } catch (err) {
+      if (err.code === 'SCHEMA_VALIDATION_FAILED') {
+        console.error('❌ Scan result schema validation failed:', err.validationErrors);
+        throw err;
+      }
+      throw Object.assign(err, { code: 'DB_WRITE_FAILED' });
+    }
 
     // Update audits table with overall score
     if (results.complianceScore) {
@@ -1168,8 +1202,7 @@ async function continueAuditFromStep17(auditId, websiteUrl) {
       SET overall_score = ?,
           score_grade = ?,
           status = ?,
-          completed_at = datetime('now'),
-          updated_at = datetime('now')
+          completed_at = datetime('now')
       WHERE id = ?
     `).run(
       complianceScore.overallScore,

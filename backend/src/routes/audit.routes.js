@@ -81,8 +81,7 @@ router.post('/api/audit/start', async (req, res) => {
         const updateStmt = db.prepare(`
           UPDATE audits
           SET status = ?,
-              completed_at = datetime('now'),
-              updated_at = datetime('now')
+              completed_at = datetime('now')
           WHERE id = ?
         `);
         updateStmt.run(constants.AUDIT_STATUS.COMPLETED, auditId);
@@ -94,8 +93,7 @@ router.post('/api/audit/start', async (req, res) => {
         const updateStmt = db.prepare(`
           UPDATE audits
           SET status = ?,
-              error_message = ?,
-              updated_at = datetime('now')
+              error_message = ?
           WHERE id = ?
         `);
         updateStmt.run(
@@ -291,7 +289,7 @@ router.post('/api/audit/:audit_id/resume', async (req, res) => {
     // Update audit status back to PROCESSING
     db.prepare(`
       UPDATE audits
-      SET status = ?, updated_at = datetime('now')
+      SET status = ?
       WHERE id = ?
     `).run(constants.AUDIT_STATUS.PROCESSING, audit.id);
 
@@ -307,7 +305,7 @@ router.post('/api/audit/:audit_id/resume', async (req, res) => {
       // Update audit status to failed
       db.prepare(`
         UPDATE audits
-        SET status = ?, error_message = ?, updated_at = datetime('now')
+        SET status = ?, error_message = ?
         WHERE id = ?
       `).run(constants.AUDIT_STATUS.FAILED, err.message, audit.id);
     });
@@ -654,8 +652,7 @@ async function runPhase3Analysis(auditId, auditUid, cookiePolicyFile) {
     db.prepare(`
       UPDATE audits
       SET overall_score = ?,
-          score_grade = ?,
-          updated_at = datetime('now')
+          score_grade = ?
       WHERE id = ?
     `).run(scoreResult.overallScore, scoreResult.grade, auditId);
 
@@ -1121,8 +1118,7 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
         const updateStmt = db.prepare(`
           UPDATE audits
           SET status = ?,
-              error_message = ?,
-              updated_at = datetime('now')
+              error_message = ?
           WHERE id = ?
         `);
         updateStmt.run(constants.AUDIT_STATUS.FAILED, error.message, auditId);
@@ -1136,6 +1132,45 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
       message: error.message,
       code: 'E500'
     });
+  }
+});
+
+/**
+ * Screenshot proxy — streams blob content through server.
+ * Blob URL is never exposed to client directly.
+ * GET /api/audit/:audit_id/screenshot/:type
+ * type: 'full' | 'banner'
+ */
+router.get('/api/audit/:audit_id/screenshot/:type', async (req, res) => {
+  try {
+    const { audit_id, type } = req.params;
+    if (!['full', 'banner'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid type. Must be "full" or "banner".' });
+    }
+
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT a.audit_uid, s.screenshot_full_url, s.screenshot_banner_url
+      FROM audits a JOIN scan_results s ON s.audit_id = a.id
+      WHERE a.audit_uid = ?
+    `).get(audit_id);
+
+    if (!row) return res.status(404).json({ error: 'Audit not found' });
+
+    const blobUrl = type === 'full' ? row.screenshot_full_url : row.screenshot_banner_url;
+    if (!blobUrl) return res.status(404).json({ error: 'Screenshot not available' });
+
+    // Stream blob content through our server — client never sees blob URL
+    const upstream = await fetch(blobUrl);
+    if (!upstream.ok) return res.status(502).json({ error: 'Screenshot unavailable' });
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    upstream.body.pipe(res);
+  } catch (error) {
+    console.error('❌ Screenshot proxy failed:', error.message);
+    res.status(502).json({ error: 'Screenshot fetch failed' });
   }
 });
 

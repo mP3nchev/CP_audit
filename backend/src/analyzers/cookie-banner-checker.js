@@ -45,9 +45,13 @@ async function waitForBannerVisible(page, timeout = 10000) {
 
   while (Date.now() - startTime < timeout) {
     const result = await page.evaluate(() => {
+      // Generic CMP patterns (CookieScript, OneTrust, Cookiebot, Usercentrics, CookieYes, Consentmo)
       const selectors = [
         '[id*="cookie"]', '[class*="cookie"]',
         '[id*="consent"]', '[class*="consent"]',
+        '[id*="cmp"]', '[class*="cmp"]',
+        '[id*="onetrust"]', '[class*="onetrust"]',
+        '[class*="Cybot"]',
         '[role="dialog"]', '[role="alertdialog"]'
       ];
 
@@ -276,17 +280,13 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
         result = await checkLegitimateInterestForAds(page, violation, debugSessionId);
         break;
       case 'type_i':
-        // Type I requires cookies array - skip if not provided
-        if (!cookies || !Array.isArray(cookies)) {
-          result = {
-            detected: false,
-            skipped: true,
-            skipReason: 'Cookies data not provided',
-            evidence: null
-          };
-        } else {
-          result = checkMisclassifiedEssentialCookies(cookies, violation);
-        }
+        // Type I (Misclassified Cookies) - DISABLED for now
+        result = {
+          detected: false,
+          skipped: true,
+          skipReason: 'Type I check disabled - requires CMP-specific category extraction',
+          evidence: null
+        };
         break;
       case 'type_k':
         result = await checkDifficultConsentWithdrawal(page, violation, debugSessionId);

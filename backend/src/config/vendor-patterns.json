@@ -7,7 +7,9 @@
         { "type": "script", "regex": "googletagmanager\\.com/gtag/js\\?id=G-" },
         { "type": "script", "regex": "googletagmanager\\.com/gtm\\.js" },
         { "type": "network", "regex": "google-analytics\\.com/g/collect" },
-        { "type": "function", "name": "gtag" }
+        { "type": "function", "name": "gtag" },
+        { "type": "cookie", "regex": "^_ga=" },
+        { "type": "cookie", "regex": "^_gid=" }
       ],
       "category": "analytics",
       "gdprRequired": true
@@ -29,7 +31,9 @@
       "patterns": [
         { "type": "script", "regex": "connect\\.facebook\\.net/.*fbevents\\.js" },
         { "type": "function", "name": "fbq" },
-        { "type": "network", "regex": "facebook\\.com/tr" }
+        { "type": "network", "regex": "facebook\\.com/tr" },
+        { "type": "cookie", "regex": "^_fbp=" },
+        { "type": "cookie", "regex": "^_fbc=" }
       ],
       "category": "advertising",
       "gdprRequired": true
@@ -39,7 +43,8 @@
       "id": "tiktok_pixel",
       "patterns": [
         { "type": "script", "regex": "analytics\\.tiktok\\.com" },
-        { "type": "function", "name": "ttq" }
+        { "type": "function", "name": "ttq" },
+        { "type": "cookie", "regex": "^_ttp=" }
       ],
       "category": "advertising",
       "gdprRequired": true
@@ -59,7 +64,9 @@
       "id": "hotjar",
       "patterns": [
         { "type": "script", "regex": "static\\.hotjar\\.com" },
-        { "type": "function", "name": "hj" }
+        { "type": "function", "name": "hj" },
+        { "type": "cookie", "regex": "^_hjid=" },
+        { "type": "cookie", "regex": "^_hjSessionUser" }
       ],
       "category": "analytics",
       "gdprRequired": true

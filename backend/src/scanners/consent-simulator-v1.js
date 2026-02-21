@@ -14,6 +14,7 @@
 
 const { launchBrowser, createPage, closeBrowser } = require('./puppeteer-setup');
 const { extractCookies } = require('./cookie-extractor');
+const { analyzeCookieBanner } = require('../analyzers/cookie-banner-checker');
 const readline = require('readline');
 const constants = require('../config/constants');
 const { getDatabase } = require('../database/db');
@@ -271,6 +272,30 @@ async function runScenario(browser, websiteUrl, scenarioType) {
 
     console.log('   ✅ Page loaded successfully');
 
+    // 🎯 NEW: Analyze cookie banner for noyb violations BEFORE user interaction
+    // This happens while banner is visible in headful browser
+    console.log('');
+    console.log('   🔍 Analyzing cookie banner for noyb compliance...');
+    let bannerAnalysis = null;
+    try {
+      bannerAnalysis = await analyzeCookieBanner(page, null, null);
+      const passedChecks = bannerAnalysis.totalChecks - bannerAnalysis.skippedCount;
+      console.log(`   ✅ Banner analysis complete: ${bannerAnalysis.passedCount}/${passedChecks} checks passed (${bannerAnalysis.compliancePercentage}%)`);
+      if (bannerAnalysis.violationCount > 0) {
+        console.log(`   ⚠️  Found ${bannerAnalysis.violationCount} violation(s)`);
+      }
+      if (bannerAnalysis.skippedCount > 0) {
+        console.log(`   ⏭️  Skipped ${bannerAnalysis.skippedCount} check(s)`);
+      }
+    } catch (error) {
+      console.warn(`   ⚠️  Banner analysis failed: ${error.message}`);
+      bannerAnalysis = {
+        error: error.message,
+        skipped: true
+      };
+    }
+    console.log('');
+
     // Wait for human action
     await waitForHumanAction(scenarioType);
 
@@ -282,7 +307,8 @@ async function runScenario(browser, websiteUrl, scenarioType) {
 
     return {
       success: true,
-      state: state
+      state: state,
+      bannerAnalysis: bannerAnalysis  // noyb compliance check results
     };
 
   } catch (error) {
