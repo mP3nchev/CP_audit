@@ -40,25 +40,16 @@ export default function AuditForm({ onAuditComplete }) {
   });
 
   const onSubmit = async (data) => {
-    const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
-    console.log('🔑 API Key being sent:', process.env.NEXT_PUBLIC_API_KEY ? 'SET (length: ' + process.env.NEXT_PUBLIC_API_KEY.length + ')' : 'UNDEFINED/MISSING');
-    console.log('🔑 Auth headers:', authHeaders);
     try {
       setIsSubmitting(true);
       setProgress('Starting audit scan...');
 
-      // Normalize API URL - ensure it starts with protocol
-      let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-      if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
-        apiUrl = 'https://' + apiUrl;
-      }
-      console.log('API URL:', apiUrl);
-      console.log('Sending request to:', `${apiUrl}/api/audit/start`);
+      console.log('🔄 Using Next.js proxy for backend communication');
 
-      // Step 1: Start audit
-      const startResponse = await fetch(`${apiUrl}/api/audit/start`, {
+      // Step 1: Start audit via proxy
+      const startResponse = await fetch(`/api/proxy?path=/api/audit/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           website_url: data.websiteUrl,
           client_name: data.clientName,
@@ -94,9 +85,8 @@ export default function AuditForm({ onAuditComplete }) {
         const formData = new FormData();
         formData.append('privacyPolicy', selectedFile);
 
-        const uploadResponse = await fetch(`${apiUrl}/api/audit/${auditId}/privacy-policy`, {
+        const uploadResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/privacy-policy`, {
           method: 'POST',
-          headers: { ...authHeaders },
           body: formData
         });
 
@@ -109,7 +99,7 @@ export default function AuditForm({ onAuditComplete }) {
 
       // Step 3: Poll for completion
       setProgress('Scanning website...');
-      const result = await pollAuditStatus(auditId, apiUrl, authHeaders);
+      const result = await pollAuditStatus(auditId);
 
       // Reset form
       reset();
@@ -130,7 +120,7 @@ export default function AuditForm({ onAuditComplete }) {
     }
   };
 
-  const pollAuditStatus = async (auditId, apiUrl, authHeaders) => {
+  const pollAuditStatus = async (auditId) => {
     const HARD_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes hard timeout
     const STALL_TIMEOUT_MS = 90 * 1000;   // 90 seconds stall detection
     const MAX_BACKOFF_MS = 5000;           // Cap backoff at 5 seconds
@@ -151,9 +141,7 @@ export default function AuditForm({ onAuditComplete }) {
       }
 
       try {
-        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`, {
-          headers: authHeaders
-        });
+        const statusResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/status`);
         const statusData = await statusResponse.json();
 
         // Termination condition 1a: State is DONE
