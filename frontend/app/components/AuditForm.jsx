@@ -39,9 +39,8 @@ export default function AuditForm({ onAuditComplete }) {
     resolver: zodResolver(auditSchema)
   });
 
-  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
-
   const onSubmit = async (data) => {
+    const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
     try {
       setIsSubmitting(true);
       setProgress('Starting audit scan...');
@@ -108,7 +107,7 @@ export default function AuditForm({ onAuditComplete }) {
 
       // Step 3: Poll for completion
       setProgress('Scanning website...');
-      const result = await pollAuditStatus(auditId, apiUrl);
+      const result = await pollAuditStatus(auditId, apiUrl, authHeaders);
 
       // Reset form
       reset();
@@ -129,7 +128,7 @@ export default function AuditForm({ onAuditComplete }) {
     }
   };
 
-  const pollAuditStatus = async (auditId, apiUrl) => {
+  const pollAuditStatus = async (auditId, apiUrl, authHeaders) => {
     const HARD_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes hard timeout
     const STALL_TIMEOUT_MS = 90 * 1000;   // 90 seconds stall detection
     const MAX_BACKOFF_MS = 5000;           // Cap backoff at 5 seconds
