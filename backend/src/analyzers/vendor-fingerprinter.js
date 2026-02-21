@@ -29,7 +29,9 @@ function fingerprintVendors(evidence) {
     scripts = [],
     networkRequests = [],
     globalFunctions = [],
-    monitorData = {}
+    monitorData = {},
+    rawCookies = [],
+    dataLayerItems = []
   } = evidence;
 
   const detectedVendors = [];
@@ -82,6 +84,25 @@ function fingerprintVendors(evidence) {
       }
     }
 
+    // Check cookie patterns (+25 confidence)
+    for (const pattern of vendor.patterns.filter(p => p.type === 'cookie')) {
+      const regex = new RegExp(pattern.regex, 'i');
+      const matched = rawCookies.find(c => regex.test(c));
+      if (matched) {
+        matches.push({ type: 'cookie', evidence: matched.split('=')[0], pattern: pattern.regex });
+        confidence += 25;
+      }
+    }
+
+    // Check dataLayer patterns (+20 confidence)
+    for (const pattern of vendor.patterns.filter(p => p.type === 'dataLayer')) {
+      const matched = dataLayerItems.find(e => new RegExp(pattern.regex, 'i').test(e.event));
+      if (matched) {
+        matches.push({ type: 'dataLayer', evidence: matched.event, pattern: pattern.regex });
+        confidence += 20;
+      }
+    }
+
     // If vendor detected, add to results
     if (matches.length > 0 && !seenVendors.has(vendor.id)) {
       seenVendors.add(vendor.id);
@@ -122,12 +143,19 @@ function fingerprintVendors(evidence) {
         }
       }
 
+      // Single-layer detections are less reliable — apply 30% confidence penalty
+      const detectionLayers = [...new Set(matches.map(m => m.type))];
+      if (detectionLayers.length === 1) {
+        confidence = Math.round(confidence * 0.7);
+      }
+
       detectedVendors.push({
         id: vendor.id,
         name: vendor.name,
         category: vendor.category,
         gdprRequired: vendor.gdprRequired,
         confidence: Math.min(confidence, 100), // Cap at 100%
+        detectionLayers,
         matches: matches.length,
         evidence: matches.slice(0, 3), // Keep first 3 pieces of evidence
         firstSeen: firstSeenTimestamp,
@@ -238,6 +266,19 @@ async function extractVendorEvidence(page, networkRequests = []) {
         evidence.globalFunctions.push('google_tag_manager');
       }
 
+      // Cookie-based detection
+      evidence.rawCookies = document.cookie.split(';').map(c => c.trim()).filter(Boolean);
+
+      // dataLayer events (GTM-pushed events indicate vendor presence)
+      evidence.dataLayerItems = [];
+      if (Array.isArray(window.dataLayer)) {
+        window.dataLayer.slice(0, 100).forEach(item => {
+          if (item && typeof item === 'object' && !Array.isArray(item) && item.event) {
+            evidence.dataLayerItems.push({ event: item.event });
+          }
+        });
+      }
+
       return evidence;
     });
 
@@ -247,7 +288,9 @@ async function extractVendorEvidence(page, networkRequests = []) {
     return {
       scripts: pageEvidence.scripts,
       globalFunctions: pageEvidence.globalFunctions,
-      networkRequests: networkUrls
+      networkRequests: networkUrls,
+      rawCookies: pageEvidence.rawCookies || [],
+      dataLayerItems: pageEvidence.dataLayerItems || []
     };
 
   } catch (error) {
@@ -255,7 +298,9 @@ async function extractVendorEvidence(page, networkRequests = []) {
     return {
       scripts: [],
       globalFunctions: [],
-      networkRequests: []
+      networkRequests: [],
+      rawCookies: [],
+      dataLayerItems: []
     };
   }
 }

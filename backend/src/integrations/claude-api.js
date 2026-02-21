@@ -1,11 +1,35 @@
 const fs = require('fs');
 const path = require('path');
 const constants = require('../config/constants');
+const { CircuitBreaker } = require('../utils/circuit-breaker');
 
 /**
- * Claude API Integration with Prompt Caching
+ * Claude API Integration with Prompt Caching + Circuit Breaker
  * Cost optimization: 90% reduction on cached prompts
  */
+
+const claudeBreaker = new CircuitBreaker({ name: 'claude-api', failureThreshold: 3, resetTimeout: 120000 });
+const CLAUDE_TIMEOUT_MS = 90000;
+
+/**
+ * Fetch with AbortController timeout
+ */
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      const e = new Error(`Claude API timeout after ${timeoutMs}ms`);
+      e.code = 'CLAUDE_TIMEOUT';
+      throw e;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Load the privacy policy auditor prompt
@@ -79,16 +103,18 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
     console.log(`   Prompt size: ${(fullPrompt.length / 1024).toFixed(2)} KB`);
     console.log(`   Policy size: ${(policyText.length / 1024).toFixed(2)} KB`);
 
-    // Make API request
-    const response = await fetch(constants.CLAUDE_API_URL, {
-      method: 'POST',
-      headers: {
-        'x-api-key': constants.CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
-    });
+    // Make API request with circuit breaker + AbortController timeout
+    const response = await claudeBreaker.call(() =>
+      fetchWithTimeout(constants.CLAUDE_API_URL, {
+        method: 'POST',
+        headers: {
+          'x-api-key': constants.CLAUDE_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      }, CLAUDE_TIMEOUT_MS)
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -246,8 +272,32 @@ async function testClaudeConnection() {
   }
 }
 
+/**
+ * Graceful fallback when Claude is unavailable.
+ * Returns a placeholder requiring manual review.
+ */
+function buildFallbackAnalysis() {
+  return {
+    analysis: {
+      criteria: Array.from({ length: 37 }, (_, i) => ({
+        id: i + 1, score: 0, max_score: 1,
+        reason: 'AI analysis unavailable — manual review required.',
+        skipped: true
+      })),
+      total_score: 0, max_score: 37, percentage: 0,
+      category: 'MANUAL_REVIEW_REQUIRED',
+      fallback: true, fallback_reason: 'Claude API circuit breaker open or timeout'
+    },
+    usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+    duration: 0,
+    fallback: true
+  };
+}
+
 module.exports = {
   analyzePrivacyPolicy,
   testClaudeConnection,
-  calculateCost
+  calculateCost,
+  buildFallbackAnalysis,
+  claudeBreaker
 };

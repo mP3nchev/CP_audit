@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS gdpr_precedents (
     summary TEXT
 );
 
+-- Auto-update updated_at on business column changes (prevents trigger recursion)
+CREATE TRIGGER IF NOT EXISTS trg_audits_updated_at
+AFTER UPDATE OF status, error_message, overall_score, score_grade, progress_json,
+             completed_at ON audits
+FOR EACH ROW
+BEGIN
+  UPDATE audits SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_audits_status ON audits(status);
 CREATE INDEX IF NOT EXISTS idx_audits_created ON audits(created_at);

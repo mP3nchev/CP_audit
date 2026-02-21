@@ -8,6 +8,7 @@ const healthRoutes = require('./routes/health.routes');
 const auditRoutes = require('./routes/audit.routes');
 const constants = require('./config/constants');
 const { errorHandler } = require('./config/error-codes');
+const { authMiddleware } = require('./middleware/auth');
 
 // Environment variable validation
 const requiredEnvVars = ['CLAUDE_API_KEY', 'VERCEL_BLOB_TOKEN'];
@@ -26,8 +27,29 @@ console.log('✅ Environment variables validated');
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// Strict CORS — only allow configured origin(s)
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://cp-audit-dg6j.vercel.app')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server (Railway internal, health checks)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    process.stdout.write(JSON.stringify({
+      ts: new Date().toISOString(), level: 'warn', event: 'cors_blocked', origin
+    }) + '\n');
+    callback(new Error('CORS: origin not allowed'));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-api-key'],
+  credentials: false,
+  maxAge: 86400,
+  optionsSuccessStatus: 204
+}));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -58,6 +80,7 @@ try {
 
 // Routes
 app.use('/', healthRoutes);
+app.use('/api', authMiddleware);  // All /api/* requires X-API-Key
 app.use('/', auditRoutes);
 
 // Root endpoint

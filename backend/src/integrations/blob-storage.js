@@ -1,6 +1,10 @@
 const { put } = require('@vercel/blob');
 const { retryBlobUpload } = require('../utils/retry-handler');
 const constants = require('../config/constants');
+const crypto = require('crypto');
+
+const BLOB_SIGNING_SECRET = process.env.BLOB_SIGNING_SECRET;
+const SCREENSHOT_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 /**
  * Upload screenshot to Vercel Blob storage
@@ -130,9 +134,34 @@ async function testBlobConnection() {
   }
 }
 
+/**
+ * Generate a time-limited signed token for screenshot access.
+ * The proxy endpoint uses this — blob URL never sent to client directly.
+ */
+function generateScreenshotToken(auditUid, screenshotType) {
+  if (!BLOB_SIGNING_SECRET) throw new Error('BLOB_SIGNING_SECRET not configured');
+  const expires = Date.now() + SCREENSHOT_TOKEN_TTL_MS;
+  const payload = `${auditUid}:${screenshotType}:${expires}`;
+  const sig = crypto.createHmac('sha256', BLOB_SIGNING_SECRET).update(payload).digest('hex');
+  return { token: sig, expires };
+}
+
+function verifyScreenshotToken(auditUid, screenshotType, expires, token) {
+  if (!BLOB_SIGNING_SECRET) return false;
+  if (Date.now() > parseInt(expires)) return false;
+  const payload = `${auditUid}:${screenshotType}:${expires}`;
+  const expected = crypto.createHmac('sha256', BLOB_SIGNING_SECRET).update(payload).digest('hex');
+  const a = Buffer.from(token, 'hex');
+  const b = Buffer.from(expected, 'hex');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 module.exports = {
   uploadScreenshot,
   uploadScreenshots,
   uploadBlob,
-  testBlobConnection
+  testBlobConnection,
+  generateScreenshotToken,
+  verifyScreenshotToken
 };

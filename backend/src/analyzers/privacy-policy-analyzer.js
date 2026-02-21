@@ -1,6 +1,7 @@
-const { analyzePrivacyPolicy } = require('../integrations/claude-api');
+const { analyzePrivacyPolicy, buildFallbackAnalysis } = require('../integrations/claude-api');
 const { extractTextFromBuffer, getFileType, cleanText } = require('../utils/text-extractor');
 const { getDatabase } = require('../database/db');
+const { validateSchema } = require('../utils/schema-validator');
 
 /**
  * Privacy Policy Analyzer
@@ -45,9 +46,19 @@ async function analyzePolicyFile(fileBuffer, filename, auditId, policyType = 'pr
       policyText = policyText.substring(0, 500000);
     }
 
-    // Step 3: Analyze with Claude API
+    // Step 3: Analyze with Claude API (with circuit breaker fallback)
     console.log('🤖 Step 3: Sending to Claude API for analysis...');
-    const result = await analyzePrivacyPolicy(policyText);
+    let result;
+    try {
+      result = await analyzePrivacyPolicy(policyText);
+    } catch (err) {
+      if (err.code === 'CIRCUIT_OPEN' || err.code === 'CLAUDE_TIMEOUT') {
+        console.warn(`⚠️  Claude API unavailable (${err.code}), using fallback analysis`);
+        result = buildFallbackAnalysis();
+      } else {
+        throw err;
+      }
+    }
 
     // Step 4: Save to database
     console.log('💾 Step 4: Saving analysis results to database...');
@@ -104,6 +115,15 @@ async function savePolicyAnalysis(auditId, policyType, analysis, policyText, usa
   const db = getDatabase();
 
   try {
+    // Validate analysis structure before writing to DB
+    validateSchema('policyAnalysis', {
+      criteria: analysis.criteria,
+      total_score: analysis.total_score,
+      max_score: analysis.max_score,
+      percentage: analysis.percentage,
+      category: analysis.category
+    });
+
     // Save policy analysis
     const stmt = db.prepare(`
       INSERT INTO policy_analysis (

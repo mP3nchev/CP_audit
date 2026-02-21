@@ -310,10 +310,72 @@ function generateRecommendations(validation) {
   return recommendations;
 }
 
+/**
+ * Validates that consent.default() fires BEFORE any GA4/Ads config call.
+ * GDPR violation if tracking tags initialize before consent signal.
+ *
+ * @param {Object} consentData - from extractConsentModeData()
+ * @param {Array}  networkRequests - each with { url, timestamp }
+ * @returns {{ valid: boolean, reason?: string, violationType?: string, evidence?: Object }}
+ */
+function validateExecutionOrder(consentData, networkRequests = []) {
+  const sequence = consentData?.callSequence || [];
+
+  const defaultCall = sequence.find(c => c.command === 'default');
+  const configCalls = sequence.filter(c =>
+    c.command === 'config' && (/^G-/.test(c.target || '') || /^AW-/.test(c.target || ''))
+  );
+
+  // No consent mode detected at all — not a violation of ORDER (separate check)
+  if (!defaultCall && configCalls.length === 0) {
+    return { valid: true, skipped: true, reason: 'Consent Mode not detected' };
+  }
+
+  // Config calls exist but no default → violation
+  if (!defaultCall && configCalls.length > 0) {
+    return {
+      valid: false,
+      violationType: 'CONSENT_DEFAULT_MISSING',
+      reason: `GA4/Ads config calls found (${configCalls.map(c => c.target).join(', ')}) but no consent.default() detected`,
+      evidence: { configCalls }
+    };
+  }
+
+  // Check dataLayer sequence order
+  const earlyConfig = configCalls.find(c => c.timestamp < defaultCall.timestamp);
+  if (earlyConfig) {
+    return {
+      valid: false,
+      violationType: 'CONSENT_ORDER_VIOLATION',
+      reason: `${earlyConfig.target} config at ${earlyConfig.timestamp}ms fired BEFORE consent.default at ${defaultCall.timestamp}ms`,
+      evidence: { earlyConfig, defaultCall, deltaMs: defaultCall.timestamp - earlyConfig.timestamp }
+    };
+  }
+
+  // Cross-check with actual network requests: did GA4 collect requests arrive before consent?
+  const ga4CollectRequests = networkRequests.filter(r =>
+    /google-analytics\.com\/g\/collect/.test(r.url || '') && r.timestamp
+  );
+  const consentDefaultTime = defaultCall.timestamp;
+  const earlyNetworkHit = ga4CollectRequests.find(r => r.timestamp < consentDefaultTime);
+
+  if (earlyNetworkHit) {
+    return {
+      valid: false,
+      violationType: 'GA4_COLLECT_BEFORE_CONSENT',
+      reason: `GA4 /g/collect request at ${earlyNetworkHit.timestamp}ms preceded consent.default at ${consentDefaultTime}ms`,
+      evidence: { request: earlyNetworkHit.url, requestTime: earlyNetworkHit.timestamp, consentTime: consentDefaultTime }
+    };
+  }
+
+  return { valid: true };
+}
+
 module.exports = {
   getConsentModeDetectionCode,
   extractConsentModeData,
   validateConsentModeV2,
   analyzeConsentMode,
-  generateRecommendations
+  generateRecommendations,
+  validateExecutionOrder
 };
