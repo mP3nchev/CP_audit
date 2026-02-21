@@ -26,19 +26,11 @@ export default function ReportV2Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Normalize API URL - ensure it starts with protocol
-  let apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
-    apiUrl = 'https://' + apiUrl;
-  }
-
-  const authHeaders = { 'x-api-key': process.env.NEXT_PUBLIC_API_KEY };
-
   useEffect(() => {
     const fetchReportData = async () => {
       try {
         // Check if audit is completed
-        const statusResponse = await fetch(`${apiUrl}/api/audit/${auditId}/status`, { headers: authHeaders });
+        const statusResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/status`);
         const statusData = await statusResponse.json();
 
         if (!statusResponse.ok) {
@@ -54,7 +46,7 @@ export default function ReportV2Page() {
         }
 
         // Fetch v2 report data
-        const reportResponse = await fetch(`${apiUrl}/api/audit/${auditId}/report-v2`, { headers: authHeaders });
+        const reportResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/report-v2`);
 
         if (!reportResponse.ok) {
           throw new Error('Failed to load report data');
@@ -71,7 +63,7 @@ export default function ReportV2Page() {
     };
 
     fetchReportData();
-  }, [auditId, apiUrl]);
+  }, [auditId]);
 
   if (loading) {
     return (
