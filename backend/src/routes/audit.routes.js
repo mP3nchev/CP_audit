@@ -49,14 +49,6 @@ router.post('/api/audit/start', async (req, res) => {
     // Create audit record
     const db = getDatabase();
 
-    // Ensure client_name and industry columns exist (idempotent migration)
-    try {
-      db.exec(`ALTER TABLE audits ADD COLUMN client_name TEXT`);
-    } catch (_) { /* column already exists */ }
-    try {
-      db.exec(`ALTER TABLE audits ADD COLUMN industry TEXT`);
-    } catch (_) { /* column already exists */ }
-
     const stmt = db.prepare(`
       INSERT INTO audits (audit_uid, website_url, client_name, industry, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
