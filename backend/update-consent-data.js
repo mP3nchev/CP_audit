@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * Simple script to update consent data for an audit
- * No browser needed - just updates the database directly
+ * Updates consent simulation data for a specific audit directly in the database.
+ * Designed to run as a pre-start step on Railway.
+ * Exits with code 0 even if audit not found (so server still starts).
  */
 
 require('dotenv').config();
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-// Configuration
-const AUDIT_ID = 'aud_51a21fc1aa7574ad';
+const AUDIT_UID = 'aud_51a21fc1aa7574ad';
 const DATABASE_PATH = process.env.DATABASE_URL || './audits.db';
 
 const CONSENT_DATA = {
@@ -28,73 +29,69 @@ const CONSENT_DATA = {
   }
 };
 
-async function main() {
+function main() {
   console.log('═══════════════════════════════════════════════════════');
   console.log('📝 UPDATE CONSENT DATA - Direct Database Update');
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`   Audit ID: ${AUDIT_ID}`);
+  console.log(`   Audit UID: ${AUDIT_UID}`);
   console.log(`   Database: ${DATABASE_PATH}`);
   console.log('');
 
   try {
-    // Open database
     const dbPath = path.resolve(DATABASE_PATH);
     console.log(`📂 Opening database: ${dbPath}`);
     const db = new Database(dbPath);
 
-    // Get current audit data
-    const audit = db.prepare('SELECT * FROM audits WHERE id = ?').get(AUDIT_ID);
-
-    if (!audit) {
-      console.error(`❌ Audit ${AUDIT_ID} not found in database!`);
-      process.exit(1);
+    // Apply schema first so tables exist even before server has started
+    const schemaPath = path.join(__dirname, 'src/database/schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const schema = fs.readFileSync(schemaPath, 'utf8');
+      db.exec(schema);
+      console.log('✅ Schema applied');
     }
 
-    console.log(`✅ Found audit: ${audit.website}`);
+    // Look up by audit_uid (TEXT), not id (INTEGER)
+    const audit = db.prepare('SELECT * FROM audits WHERE audit_uid = ?').get(AUDIT_UID);
+
+    if (!audit) {
+      console.log(`⚠️  Audit ${AUDIT_UID} not found - skipping (normal on fresh deployment)`);
+      db.close();
+      process.exit(0); // Must be 0 so server still starts
+    }
+
+    console.log(`✅ Found audit: ${audit.website_url} (id: ${audit.id})`);
     console.log(`   Status: ${audit.status}`);
     console.log('');
 
-    // Parse current results
-    let results = JSON.parse(audit.results || '{}');
+    // Consent data lives in scan_results.consent_simulation_json
+    const scanResult = db.prepare('SELECT * FROM scan_results WHERE audit_id = ?').get(audit.id);
 
-    console.log('📝 Current consent data:');
-    console.log(`   consentRequired: ${results.consentRequired || 'not set'}`);
-    console.log(`   howToConsent: ${results.howToConsent ? 'set' : 'not set'}`);
-    console.log('');
+    const newConsent = {
+      consentRequired: CONSENT_DATA.consentRequired,
+      howToConsent: CONSENT_DATA.howToConsent,
+      updatedAt: new Date().toISOString()
+    };
 
-    // Update consent data
-    results.consentRequired = CONSENT_DATA.consentRequired;
-    results.howToConsent = CONSENT_DATA.howToConsent;
+    if (scanResult) {
+      const existing = scanResult.consent_simulation_json
+        ? JSON.parse(scanResult.consent_simulation_json)
+        : {};
+      const merged = { ...existing, ...newConsent };
 
-    // Update database
-    console.log('💾 Updating database...');
-    const stmt = db.prepare('UPDATE audits SET results = ?, updated_at = ? WHERE id = ?');
-    const info = stmt.run(
-      JSON.stringify(results),
-      new Date().toISOString(),
-      AUDIT_ID
-    );
-
-    if (info.changes > 0) {
-      console.log('✅ Database updated successfully!');
-      console.log('');
-      console.log('📊 New consent data:');
-      console.log(`   consentRequired: ${results.consentRequired}`);
-      console.log(`   howToConsent.requiresInteraction: ${results.howToConsent.requiresInteraction}`);
-      console.log(`   howToConsent.optInRequired: ${results.howToConsent.optInRequired}`);
-      console.log(`   howToConsent.consentMechanism: ${results.howToConsent.consentMechanism}`);
-      console.log(`   howToConsent.steps: ${results.howToConsent.steps.length} steps`);
-      console.log('');
-      console.log('🎉 DONE! The consent data has been updated in the database.');
-      console.log('');
-      console.log('ℹ️  To sync this to production (Railway), you need to:');
-      console.log('   1. Copy audits.db to Railway, OR');
-      console.log('   2. Run this script on Railway directly');
+      db.prepare('UPDATE scan_results SET consent_simulation_json = ? WHERE audit_id = ?')
+        .run(JSON.stringify(merged), audit.id);
+      console.log('✅ Updated consent_simulation_json in existing scan_results row');
     } else {
-      console.error('❌ Failed to update database (no rows changed)');
-      process.exit(1);
+      db.prepare(`
+        INSERT INTO scan_results
+          (audit_id, cookies_json, network_requests_json, consent_simulation_json, scan_duration_seconds, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `).run(audit.id, '[]', '[]', JSON.stringify(newConsent), 0);
+      console.log('✅ Inserted new scan_results row with consent data');
     }
 
+    console.log('');
+    console.log('🎉 DONE! Consent data updated successfully.');
     db.close();
 
   } catch (error) {
