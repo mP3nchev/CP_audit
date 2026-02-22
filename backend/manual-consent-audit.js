@@ -16,13 +16,13 @@
  * 5. Auto-exports JSON to backend API or local file
  */
 
-// Load environment variables
-require('dotenv').config();
+// Load environment variables from script directory (not CWD)
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const puppeteer = require('puppeteer');
 const readline = require('readline');
 const fs = require('fs').promises;
-const path = require('path');
 
 // ============================================
 // CLI ARGUMENT PARSING
@@ -621,12 +621,24 @@ async function main() {
       const fetch = (await import('node-fetch')).default;
       const AbortController = globalThis.AbortController || (await import('abort-controller')).default;
 
-      // Get API key from environment
+      // Get API key from environment (REQUIRED for authentication)
       const API_KEY = process.env.INTERNAL_API_KEY;
       if (!API_KEY) {
-        console.error('❌ INTERNAL_API_KEY not set in environment - upload will fail');
-        console.error('   Set it in .env file or via export INTERNAL_API_KEY=your_key');
+        console.error('');
+        console.error('❌ FATAL: INTERNAL_API_KEY not set in environment');
+        console.error('   This key is REQUIRED for authentication to the backend API.');
+        console.error('   ');
+        console.error('   Fix:');
+        console.error('   1. Ensure /home/user/CP_audit/backend/.env exists');
+        console.error('   2. Add this line: INTERNAL_API_KEY=your_actual_key_here');
+        console.error('   3. Get the key from Railway dashboard (same as backend)');
+        console.error('');
+        throw new Error('INTERNAL_API_KEY environment variable is required but not set');
       }
+
+      // Debug: Show first 8 chars of key (for verification)
+      console.log(`   🔑 Using API key: ${API_KEY.substring(0, 8)}...${API_KEY.substring(API_KEY.length - 4)}`);
+      console.log(`   📍 Uploading to: ${API_URL}/api/audit/manual-consent/upload`);
 
       // Retry logic with exponential backoff
       const maxRetries = 3;
@@ -639,10 +651,13 @@ async function main() {
 
           console.log(`   Attempt ${attempt}/${maxRetries}...`);
 
-          const headers = { 'Content-Type': 'application/json' };
-          if (API_KEY) {
-            headers['x-api-key'] = API_KEY; // Auth header for backend
-          }
+          const headers = {
+            'Content-Type': 'application/json',
+            'x-api-key': API_KEY  // Required for backend authentication
+          };
+
+          // Debug: Confirm headers are set
+          console.log(`   📤 Headers: Content-Type, x-api-key (${API_KEY.substring(0, 8)}...)`);
 
           const response = await fetch(`${API_URL}/api/audit/manual-consent/upload`, {
             method: 'POST',
