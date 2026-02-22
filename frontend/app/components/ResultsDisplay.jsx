@@ -58,7 +58,8 @@ export default function ResultsDisplay({ auditId, status, websiteUrl, instructio
 
       const resumeResponse = await fetch(`/api/proxy?path=/api/audit/${auditId}/resume`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
       });
 
       if (!resumeResponse.ok) {
