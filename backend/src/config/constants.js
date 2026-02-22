@@ -28,7 +28,6 @@ module.exports = {
 
   // Consent Simulation
   CONSENT_MODE: process.env.CONSENT_MODE || 'assisted', // Only 'assisted' supported in v1
-  SKIP_CONSENT_CHECK: process.env.SKIP_CONSENT_CHECK === 'true', // Bypass pause/resume flow
   IS_RAILWAY: !!process.env.RAILWAY_ENVIRONMENT,
 
   // Screenshots (feature flag)
