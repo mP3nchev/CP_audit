@@ -391,8 +391,27 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
   console.log(`[DEBUG] Consent simulation starting...`);
   console.log(`[DEBUG] IS_RAILWAY: ${constants.IS_RAILWAY}`);
   console.log(`[DEBUG] CONSENT_MODE: ${constants.CONSENT_MODE}`);
+  console.log(`[DEBUG] SKIP_CONSENT_CHECK: ${constants.SKIP_CONSENT_CHECK}`);
   console.log(`[DEBUG] RAILWAY_ENVIRONMENT: ${process.env.RAILWAY_ENVIRONMENT}`);
   console.log(`[DEBUG] auditId: ${auditId}`);
+
+  // WORKAROUND: Skip consent check entirely if flag is set
+  if (constants.SKIP_CONSENT_CHECK) {
+    console.log('');
+    console.log('⏭️  === SKIPPING CONSENT CHECK (SKIP_CONSENT_CHECK=true) ===');
+    console.log('   Reason: SKIP_CONSENT_CHECK environment variable is enabled');
+    console.log('   Audit will continue without consent simulation');
+    console.log('');
+
+    return {
+      waiting: false,
+      skipped: true,
+      reason: 'Consent check skipped via SKIP_CONSENT_CHECK flag',
+      rejectScenario: { success: true, skipped: true },
+      acceptScenario: { success: true, skipped: true },
+      comparison: { cookieDifference: 0, note: 'Consent check was skipped' }
+    };
+  }
 
   // Check if running on Railway (no GUI available)
   if (constants.IS_RAILWAY && constants.CONSENT_MODE === 'assisted') {
