@@ -3,7 +3,10 @@
  * Manual Consent Audit - Headful Puppeteer Script
  *
  * Purpose: Allow human-assisted cookie consent interaction with full CDP monitoring
- * Usage: node manual-consent-audit.js --url https://example.com
+ * Usage: node manual-consent-audit.js --url https://example.com --api-url https://your-backend.com --audit-id aud_xxx
+ *
+ * Environment variables required (in .env file):
+ *   INTERNAL_API_KEY=your_secret_key  # Required for API upload authentication
  *
  * Workflow:
  * 1. Opens headful Chrome browser
@@ -618,6 +621,13 @@ async function main() {
       const fetch = (await import('node-fetch')).default;
       const AbortController = globalThis.AbortController || (await import('abort-controller')).default;
 
+      // Get API key from environment
+      const API_KEY = process.env.INTERNAL_API_KEY;
+      if (!API_KEY) {
+        console.error('❌ INTERNAL_API_KEY not set in environment - upload will fail');
+        console.error('   Set it in .env file or via export INTERNAL_API_KEY=your_key');
+      }
+
       // Retry logic with exponential backoff
       const maxRetries = 3;
       let lastError = null;
@@ -629,9 +639,14 @@ async function main() {
 
           console.log(`   Attempt ${attempt}/${maxRetries}...`);
 
+          const headers = { 'Content-Type': 'application/json' };
+          if (API_KEY) {
+            headers['x-api-key'] = API_KEY; // Auth header for backend
+          }
+
           const response = await fetch(`${API_URL}/api/audit/manual-consent/upload`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(finalResults),
             signal: controller.signal
           });
