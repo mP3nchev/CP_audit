@@ -10,6 +10,7 @@ const { generateSolutions } = require('../analyzers/solution-generator');
 const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
 const { generateReport } = require('../generators/html-report-builder');
 const { uploadBlob } = require('../integrations/blob-storage');
+const { checkBudget } = require('../integrations/claude-api');
 const constants = require('../config/constants');
 const crypto = require('crypto');
 
@@ -40,6 +41,19 @@ router.post('/api/audit/start', async (req, res) => {
         error: 'Invalid URL format',
         code: 'E003',
         message: constants.ERROR_CODES.INVALID_URL.message
+      });
+    }
+
+    // Check budget before starting audit
+    const budget = checkBudget();
+    if (!budget.allowed) {
+      console.log(`💰 Budget exceeded: $${budget.spent.toFixed(2)}/$${budget.limit} - blocking new audit`);
+      return res.status(429).json({
+        error: `Daily Claude API budget exceeded ($${budget.limit}). Try again later.`,
+        code: 'E429',
+        spent: budget.spent,
+        limit: budget.limit,
+        retryAfter: budget.retryAfter
       });
     }
 
