@@ -12,6 +12,57 @@ const claudeBreaker = new CircuitBreaker({ name: 'claude-api', failureThreshold:
 const CLAUDE_TIMEOUT_MS = 90000;
 
 /**
+ * In-Memory Budget Tracker (resets on server restart)
+ * Tracks total Claude API spending to enforce daily budget limit
+ */
+let dailySpent = 0;
+let budgetResetTime = Date.now();
+
+/**
+ * Check if budget allows a new audit request
+ * @returns {{ allowed: boolean, spent: number, limit: number, retryAfter?: number }}
+ */
+function checkBudget() {
+  const budget = constants.DAILY_BUDGET_USD;
+
+  if (dailySpent >= budget) {
+    // Budget exceeded - calculate seconds until next day (simplified: 24h from first spend)
+    const retryAfter = Math.max(0, Math.ceil((budgetResetTime + 86400000 - Date.now()) / 1000));
+    return {
+      allowed: false,
+      spent: dailySpent,
+      limit: budget,
+      retryAfter
+    };
+  }
+
+  return {
+    allowed: true,
+    spent: dailySpent,
+    limit: budget
+  };
+}
+
+/**
+ * Track spending after Claude API call
+ * @param {number} cost - Cost in USD
+ */
+function trackSpending(cost) {
+  dailySpent += cost;
+  console.log(`💰 Claude API cost: $${cost.toFixed(4)} | Daily total: $${dailySpent.toFixed(2)}/${constants.DAILY_BUDGET_USD}`);
+}
+
+/**
+ * Reset budget counter (called manually or on server restart)
+ */
+function resetBudget() {
+  const previousSpent = dailySpent;
+  dailySpent = 0;
+  budgetResetTime = Date.now();
+  console.log(`🔄 Budget reset. Previous spent: $${previousSpent.toFixed(2)}`);
+}
+
+/**
  * Fetch with AbortController timeout
  */
 async function fetchWithTimeout(url, options, timeoutMs) {
@@ -136,6 +187,9 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
     console.log(`   Cache creation tokens: ${usage.cache_creation_input_tokens || 0}`);
     console.log(`   Cost: $${cost.toFixed(4)}`);
     console.log(`   Cached: ${usage.cache_read_input_tokens ? 'YES ✅' : 'NO (first request)'}`);
+
+    // Track spending for budget control
+    trackSpending(cost);
 
     // Extract response text
     const responseText = data.content?.[0]?.text;
@@ -299,5 +353,7 @@ module.exports = {
   testClaudeConnection,
   calculateCost,
   buildFallbackAnalysis,
-  claudeBreaker
+  claudeBreaker,
+  checkBudget,
+  resetBudget
 };
