@@ -3,6 +3,7 @@ const path = require('path');
 const Handlebars = require('handlebars');
 const { getDatabase } = require('../database/db');
 const { getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
+const { buildMetricHierarchy } = require('../analyzers/confirmed-tracking-filter');
 
 // Register Handlebars helpers
 Handlebars.registerHelper('if_eq', function(a, b, options) {
@@ -138,9 +139,10 @@ async function gatherAuditData(auditUid) {
 /**
  * Aggregate critical violations from all sources
  * @param {Object} data - Raw audit data
+ * @param {number} confirmedViolationCount - Layer 3 authoritative count from SSOT
  * @returns {Array} Critical violations list
  */
-function aggregateCriticalViolations(data) {
+function aggregateCriticalViolations(data, confirmedViolationCount) {
   const criticalViolations = [];
 
   // 1. Critical banner violations (NOYB 8-point checklist)
@@ -159,15 +161,15 @@ function aggregateCriticalViolations(data) {
   });
 
   // 2. Tracking before consent
+  // Uses Layer 3 authoritative count — the only legally qualified metric (GDPR Art. 5(1)(d))
   if (data.scanResults?.tracking_before_consent) {
-    const timelineViolations = data.timelineData?.violations || [];
-    const trackingCount = timelineViolations.length;
+    const trackingCount = confirmedViolationCount ?? 0;
 
     criticalViolations.push({
       source: 'Technical Implementation',
       type: 'tracking_before_consent',
       title: 'Tracking Before Consent',
-      description: `${trackingCount} tracking requests/cookies detected before user consent was obtained. This violates ePrivacy Directive Article 5(3) and GDPR Article 7.`,
+      description: `${trackingCount} confirmed pre-consent tracking ${trackingCount === 1 ? 'request' : 'requests'} detected before user consent was obtained. This violates ePrivacy Directive Article 5(3) and GDPR Article 7.`,
       severity: 'critical',
       article: 'ePrivacy Dir. 5(3), GDPR Art. 7',
       dpa_reference: 'Multiple DPA decisions (France, Belgium, Austria)',
@@ -266,10 +268,15 @@ function transformDataForTemplate(data) {
     consentSimulation
   } = data;
 
+  // Compute authoritative metric hierarchy (SSOT) — Layer 3 is the only legally
+  // qualified count and the single source of truth for all violation displays.
+  const metrics = buildMetricHierarchy(networkRequests, data.requestCategorization);
+  const confirmedTrackingRequests = metrics.layer3.requests;
+
   // 1. Executive Summary - Aggregate ALL critical violations
   const overallScore = complianceScore?.overallScore || audit.overall_score || 0;
   const scoreGrade = complianceScore?.grade || audit.score_grade || 'F';
-  const allCriticalViolations = aggregateCriticalViolations(data);
+  const allCriticalViolations = aggregateCriticalViolations(data, metrics.layer3.count);
   const criticalViolations = bannerViolations.filter(v => v.severity === 'critical');
   const undeclaredCookies = cookieComparison?.undeclared || [];
   const hasCookiePolicy = cookieComparison && cookieComparison.declared !== null;
@@ -277,14 +284,15 @@ function transformDataForTemplate(data) {
 
   // 2. Scan Results
   const trackingBeforeConsent = data.scanResults?.tracking_before_consent ? 'YES' : 'NO';
-  const preConsentRequests = networkRequests.filter(r => r.beforeConsent && r.isTracking);
+  // Use Layer 3 confirmed requests as the authoritative pre-consent tracking list.
+  // postConsentRequests retains its original isTracking flag (no legal claim made on it).
   const postConsentRequests = networkRequests.filter(r => !r.beforeConsent && r.isTracking);
   const preConsentCookies = cookies.filter(c =>
     c.detectedAt && c.detectedAt < (data.timelineData?.zones?.find(z => z.name === 'Cookie Banner Appeared')?.start || Infinity)
   );
 
-  // Prepare detailed tracking before consent list
-  const trackingBeforeConsentDetails = preConsentRequests.map(req => {
+  // Prepare confirmed tracking request evidence list (Layer 3 only — no cookie mixing)
+  const trackingBeforeConsentDetails = confirmedTrackingRequests.map(req => {
     try {
       const url = new URL(req.url);
       return {
@@ -305,18 +313,9 @@ function transformDataForTemplate(data) {
     }
   });
 
-  // Add cookies detected before consent
-  data.timelineData?.violations?.filter(v => v.type === 'cookie').forEach(violation => {
-    trackingBeforeConsentDetails.push({
-      type: 'Cookie',
-      name: violation.name,
-      url: violation.domain || 'N/A',
-      timestamp: `${(violation.timestamp / 1000).toFixed(2)}s`,
-      category: violation.category || 'tracking'
-    });
-  });
-
-  const trackingBeforeConsentCount = trackingBeforeConsentDetails.length;
+  // tracking_before_consent_count = Layer 3 confirmed violations only (GDPR Art. 5(1)(d))
+  // Cookies are a distinct data type and are NOT mixed into this request count.
+  const trackingBeforeConsentCount = metrics.layer3.count;
 
   // Timeline data for chart - use timeline events from database
   const timelineEvents = data.timelineData?.events || [];
@@ -545,8 +544,18 @@ function transformDataForTemplate(data) {
         }))
         .sort((a, b) => b.tracking - a.tracking)
         .slice(0, 10) : [],
+    // Layer 2 breakdown — for methodology display only, not for violation counts
     definite_tracking_count: data.requestCategorization?.categoryA?.count || 0,
     suspicious_tracking_count: data.requestCategorization?.categoryB?.count || 0,
+
+    // Metric hierarchy (SSOT) — Layer 3 is the authoritative violation count
+    metric_layer1_count: metrics.layer1.count,
+    metric_layer1_label: metrics.layer1.label,
+    metric_layer2_count: metrics.layer2.count,
+    metric_layer2_label: metrics.layer2.label,
+    metric_layer3_count: metrics.layer3.count,
+    metric_layer3_label: metrics.layer3.label,
+    metric_funnel_explanation: metrics.funnelExplanation,
 
     // Recommendations
     recommendations: recommendations,
