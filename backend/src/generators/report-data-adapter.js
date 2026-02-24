@@ -13,6 +13,7 @@
 const { getDatabase } = require('../database/db');
 const { getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
 const { getRelevantPrecedents } = require('../analyzers/gdpr-precedents-search');
+const { buildMetricHierarchy } = require('../analyzers/confirmed-tracking-filter');
 
 /**
  * Main adapter function
@@ -69,12 +70,17 @@ async function adaptAuditDataToReportModel(auditUid) {
     gdprPrecedents = { detected_violations: [], cases_found: 0, cases: [] };
   }
 
+  // Compute authoritative metric hierarchy (SSOT) — single calculation used by all sections.
+  // Layer 3 is the only legally qualified count; Layers 1 and 2 appear in methodology only.
+  const metrics = buildMetricHierarchy(networkRequests, requestCategorization);
+
   // Build canonical report data
   return {
     meta: buildMetaSection(audit, scanResults),
-    executive: buildExecutiveSummary(audit, scanResults, bannerViolations, timelineData, cookieComparisonData),
-    scope: buildScopeMethodology(audit),
-    finding1: buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests, requestCategorization),
+    executive: buildExecutiveSummary(audit, scanResults, bannerViolations, timelineData, cookieComparisonData, metrics),
+    scope: buildScopeMethodology(audit, metrics),
+    finding1: buildFinding1TrackingBeforeConsent(scanResults, timelineData, requestCategorization, metrics),
+    metrics,
     finding2: buildFinding2RejectButton(bannerViolations),
     mediumFindings: buildMediumFindings(consentModeStatus, privacyAnalysis, cookieComparisonData, cookies),
     cookies: buildCookieInventory(cookies, cookieComparisonData),
@@ -106,8 +112,8 @@ function buildMetaSection(audit, scanResults) {
   };
 }
 
-function buildExecutiveSummary(audit, scanResults, bannerViolations, timelineData, cookieComparison) {
-  const topFindings = extractTopFindings(scanResults, bannerViolations, timelineData, cookieComparison);
+function buildExecutiveSummary(audit, scanResults, bannerViolations, timelineData, cookieComparison, metrics) {
+  const topFindings = extractTopFindings(scanResults, bannerViolations, cookieComparison, metrics);
   const complianceStatus = deriveComplianceStatus(audit.overall_score);
 
   return {
@@ -129,7 +135,7 @@ function buildExecutiveSummary(audit, scanResults, bannerViolations, timelineDat
   };
 }
 
-function buildScopeMethodology(audit) {
+function buildScopeMethodology(audit, metrics) {
   return {
     whatWeTested: [
       'Cookie implementation and categorization accuracy',
@@ -161,85 +167,21 @@ function buildScopeMethodology(audit) {
       'Single-page scan; sub-pages may contain additional trackers',
       'Dynamic ad scripts may vary by session or geography',
       'Privacy policy evaluation is text-based and does not confirm legal enforceability'
-    ]
+    ],
+    // Metric transparency: explains the 3-layer funnel for DPA defensibility
+    metricFunnelExplanation: metrics?.funnelExplanation || null,
+    confirmedViolationCount: metrics?.layer3?.count ?? null
   };
 }
 
-function buildFinding1TrackingBeforeConsent(scanResults, timelineData, networkRequests, requestCategorization) {
+function buildFinding1TrackingBeforeConsent(scanResults, timelineData, requestCategorization, metrics) {
   if (!scanResults?.tracking_before_consent) {
     return null; // No violation found
   }
 
-  // ──────────────────────────────────────────────────────────
-  // PROPER VIOLATION FILTERING
-  // Only include requests that are ACTUAL tracking violations:
-  //   1. Category A (Definite Tracking) or B (Suspicious) from categorizer
-  //   2. AND occurred before consent
-  //   3. EXCLUDE: images, fonts, CSS, media, UI scripts
-  // ──────────────────────────────────────────────────────────
-
-  // Resource types that are NEVER violations (rendering resources)
-  const BENIGN_RESOURCE_TYPES = ['image', 'font', 'stylesheet', 'media',
-    'texttrack', 'manifest'];
-
-  // Static file extensions that are NEVER violations
-  const BENIGN_EXTENSIONS = ['.webp', '.svg', '.png', '.jpg', '.jpeg', '.gif',
-    '.ico', '.bmp', '.tiff', '.woff', '.woff2', '.ttf', '.eot', '.otf',
-    '.css', '.mp4', '.webm', '.mp3', '.ogg', '.wav', '.avif'];
-
-  // Build a lookup of categorized tracking requests (Category A + B)
-  const categorizedTracking = new Set();
-  if (requestCategorization) {
-    const catA = requestCategorization.categoryA?.requests || [];
-    const catB = requestCategorization.categoryB?.requests || [];
-    [...catA, ...catB].forEach(r => categorizedTracking.add(r.url));
-  }
-
-  // Filter violations: must be before consent AND actually tracking
-  const trackingViolations = networkRequests.filter(req => {
-    if (!req.beforeConsent) return false;
-
-    // Exclude benign resource types
-    if (req.resourceType && BENIGN_RESOURCE_TYPES.includes(req.resourceType)) {
-      // Exception: tracking pixels (images from tracking domains with payloads)
-      if (req.resourceType === 'image') {
-        try {
-          const u = new URL(req.url);
-          const isPixel = u.search.length > 10 &&
-            ['/tr', '/collect', '/pixel', '/track', '/beacon', '/t.gif',
-              '/p.gif', '/b.gif', '/c.gif', '/bat.gif', '/impression',
-              '/conversion', '/event'].some(p => u.pathname.includes(p));
-          if (!isPixel) return false;
-        } catch { return false; }
-      } else {
-        return false;
-      }
-    }
-
-    // Exclude static file extensions
-    try {
-      const pathname = new URL(req.url).pathname.toLowerCase();
-      const ext = pathname.substring(pathname.lastIndexOf('.'));
-      if (BENIGN_EXTENSIONS.includes(ext)) {
-        // Exception: .gif tracking pixels from tracking domains with query params
-        if (ext === '.gif') {
-          const u = new URL(req.url);
-          if (u.search.length <= 10) return false;
-          // Fall through to tracking check below
-        } else {
-          return false;
-        }
-      }
-    } catch { /* proceed with checks */ }
-
-    // If categorizer data exists, use it (most accurate)
-    if (categorizedTracking.size > 0) {
-      return categorizedTracking.has(req.url);
-    }
-
-    // Fallback: use isTracking flag from network monitor
-    return req.isTracking === true;
-  });
+  // Use Layer 3 confirmed violations from the SSOT — do not re-filter independently.
+  // This guarantees the finding count matches the executive summary and all other sections.
+  const trackingViolations = metrics?.layer3?.requests || [];
 
   // Determine vendor names from evidence
   const vendorDomains = new Set();
@@ -755,16 +697,17 @@ function mergePostConsentCookies(preConsentCookies, consentSimulation) {
   return merged;
 }
 
-function extractTopFindings(scanResults, bannerViolations, timelineData, cookieComparison) {
+function extractTopFindings(scanResults, bannerViolations, cookieComparison, metrics) {
   const findings = [];
 
   // Finding 1: Tracking Before Consent
+  // Uses Layer 3 (confirmed violations) as the authoritative count — GDPR Art. 5(1)(d)
   if (scanResults?.tracking_before_consent) {
-    const trackingCount = timelineData?.violations?.length || 0;
+    const trackingCount = metrics?.layer3?.count ?? 0;
     findings.push({
       title: 'Tracking Before Consent',
       severity: 'critical',
-      summary: `${trackingCount} tracking requests detected before any user consent was obtained, including Google Tag Manager, Facebook Pixel, and LinkedIn.`
+      summary: `${trackingCount} confirmed pre-consent tracking ${trackingCount === 1 ? 'request' : 'requests'} detected before any user consent was obtained.`
     });
   }
 

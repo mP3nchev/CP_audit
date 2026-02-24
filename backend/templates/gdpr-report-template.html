@@ -860,6 +860,38 @@
                     </div>
                 </div>
 
+                <!-- Metric Transparency — Detection Funnel Explanation -->
+                {{#if metric_funnel_explanation}}
+                <div style="margin-top: 2rem; padding: 1.25rem 1.5rem; background: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #64748b; border-radius: 8px;">
+                    <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">
+                        Methodology Note — Detection Funnel
+                    </h4>
+                    <p style="margin: 0 0 1rem 0; font-size: 0.875rem; color: #475569; line-height: 1.6;">
+                        {{metric_funnel_explanation}}
+                    </p>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 160px; padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <div style="font-size: 0.7rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; margin-bottom: 0.25rem;">Layer 1 — Raw Activity</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #64748b;">{{metric_layer1_count}}</div>
+                            <div style="font-size: 0.75rem; color: #94a3b8;">{{metric_layer1_label}}</div>
+                        </div>
+                        <div style="flex: 1; min-width: 160px; padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <div style="font-size: 0.7rem; font-weight: 600; color: #d97706; text-transform: uppercase; margin-bottom: 0.25rem;">Layer 2 — Preliminary</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #d97706;">{{metric_layer2_count}}</div>
+                            <div style="font-size: 0.75rem; color: #94a3b8;">{{metric_layer2_label}}</div>
+                        </div>
+                        <div style="flex: 1; min-width: 160px; padding: 0.75rem; background: #fef2f2; border-radius: 6px; border: 2px solid #fca5a5;">
+                            <div style="font-size: 0.7rem; font-weight: 600; color: #dc2626; text-transform: uppercase; margin-bottom: 0.25rem;">Layer 3 — Confirmed ★</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #dc2626;">{{metric_layer3_count}}</div>
+                            <div style="font-size: 0.75rem; color: #dc2626;">{{metric_layer3_label}}</div>
+                        </div>
+                    </div>
+                    <p style="margin: 0.75rem 0 0 0; font-size: 0.75rem; color: #94a3b8;">
+                        ★ Layer 3 is the authoritative figure for all compliance determinations in this report (GDPR Art. 5(1)(d)).
+                    </p>
+                </div>
+                {{/if}}
+
                 <!-- Google Consent Mode V2 Status -->
                 {{#if consent_mode_detected}}
                 <div style="margin-top: 2rem; padding: 1.5rem; background: {{#if consent_mode_compliant}}#f0fdf4{{else}}#fef2f2{{/if}}; border: 2px solid {{#if consent_mode_compliant}}#86efac{{else}}#fca5a5{{/if}}; border-radius: 8px;">
