@@ -7,6 +7,9 @@ const {
   saveSummary,
   logError
 } = require('../utils/violation-debug-logger');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('banner-checker');
 
 // Debug mode flag (set via environment variable DEBUG_VIOLATIONS=true)
 const DEBUG_VIOLATIONS = process.env.DEBUG_VIOLATIONS === 'true';
@@ -103,10 +106,12 @@ async function waitForBannerVisible(page, timeout = 10000) {
     });
 
     if (result.visible) {
-      console.log(`   ✅ Banner found via ${result.method}: ${result.selector}`);
-      if (result.method === 'iframe') {
-        console.log(`      Iframe: ${result.iframeSrc}, buttons: ${result.buttonCount}`);
-      }
+      logger.info('banner-found', {
+        method: result.method,
+        selector: result.selector,
+        iframeSrc: result.method === 'iframe' ? result.iframeSrc : undefined,
+        buttonCount: result.method === 'iframe' ? result.buttonCount : undefined
+      });
 
       // Capture screenshot for evidence (optional, may fail)
       let screenshot = null;
@@ -120,7 +125,7 @@ async function waitForBannerVisible(page, timeout = 10000) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  console.log(`   ⚠️  Banner wait timeout after ${timeout}ms - banner may be hidden or non-existent`);
+  logger.warn('banner-wait-timeout', { timeoutMs: timeout });
   return { visible: false };
 }
 
@@ -135,12 +140,12 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
   let debugSessionId = null;
 
   try {
-    console.log('🔍 Analyzing cookie banner for noyb violations...');
+    logger.info('banner-analysis-start', { auditId, hasCookies: !!cookies });
 
     // Initialize debug session if enabled
     if (DEBUG_VIOLATIONS && auditId) {
       debugSessionId = await initDebugSession(auditId);
-      console.log(`📝 Debug logging enabled: ${debugSessionId}`);
+      logger.info('banner-debug-enabled', { sessionId: debugSessionId });
     }
 
     const violations = [];
@@ -158,7 +163,7 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
           name: violation.name,
           reason: result.skipReason || 'Check could not be performed'
         });
-        console.log(`  ⏭️  ${violation.id.toUpperCase()}: Skipped (${result.skipReason})`);
+        logger.info('banner-check-skipped', { auditId, violationId: violation.id, reason: result.skipReason });
       } else if (result.detected) {
         violations.push({
           id: violation.id,
@@ -168,13 +173,13 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
           legal_basis: violation.legal_basis,
           evidence: result.evidence
         });
-        console.log(`  ❌ ${violation.id.toUpperCase()}: ${violation.name}`);
+        logger.warn('banner-violation-detected', { auditId, violationId: violation.id, name: violation.name, severity: violation.severity });
       } else {
         passedChecks.push({
           id: violation.id,
           name: violation.name
         });
-        console.log(`  ✅ ${violation.id.toUpperCase()}: Passed`);
+        logger.info('banner-check-passed', { auditId, violationId: violation.id });
       }
 
       // Save debug log for this violation
@@ -202,10 +207,15 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
     const skippedCount = skippedChecks.length;
     const compliancePercentage = Math.round((passedCount / (totalChecks - skippedCount)) * 100);
 
-    console.log(`✅ Banner analysis complete: ${passedCount}/${totalChecks - skippedCount} checks passed (${compliancePercentage}%)`);
-    if (skippedCount > 0) {
-      console.log(`   ⏭️  ${skippedCount} checks skipped`);
-    }
+    logger.info('banner-analysis-complete', {
+      auditId,
+      passedCount,
+      totalChecks,
+      effectiveChecks: totalChecks - skippedCount,
+      compliancePercentage,
+      skippedCount,
+      violationCount
+    });
 
     // Save debug summary
     if (DEBUG_VIOLATIONS && debugSessionId) {
@@ -234,7 +244,7 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       debugSessionId: DEBUG_VIOLATIONS ? debugSessionId : null
     };
   } catch (error) {
-    console.error('❌ Cookie banner analysis failed:', error.message);
+    logger.error('banner-analysis-failed', { error: '❌ ' + error.message, auditId, stack: error.stack });
 
     // Log error if debug enabled
     if (DEBUG_VIOLATIONS && debugSessionId) {
@@ -302,7 +312,11 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
 
     return result;
   } catch (error) {
-    console.error(`  ❌ ${violation.id} check failed:`, error.message);
+    logger.error('banner-check-error', {
+      error: `❌ ${violation.id} check failed: ` + error.message,
+      violationId: violation.id,
+      stack: error.stack
+    });
 
     if (DEBUG_VIOLATIONS && debugSessionId) {
       await logError(debugSessionId, violation.id, error, {
@@ -330,9 +344,9 @@ async function checkNoRejectButton(page, violation) {
     const bannerResult = await waitForBannerVisible(page, 10000);
 
     if (!bannerResult.visible) {
-      console.log('   ⚠️  Cookie banner not visible after 10s - banner may not exist or be hidden');
+      logger.warn('banner-not-visible', { check: 'Type-A' });
     } else {
-      console.log(`   ✅ Cookie banner found via ${bannerResult.method}`);
+      logger.info('banner-visible', { check: 'Type-A', method: bannerResult.method });
     }
 
     // STEP 2: Search for buttons in ALL contexts (main doc + iframes + shadow DOM)
@@ -417,11 +431,16 @@ async function checkNoRejectButton(page, violation) {
     }, BUTTON_KEYWORDS);
 
     // DEBUG: Log button detection results
-    console.log(`   🔍 Button Detection Results:`);
-    console.log(`      Total buttons found: ${result.totalButtonsFound}`);
-    console.log(`      Accept button: found=${result.hasAcceptButton}, text="${result.acceptText}"`);
-    console.log(`      Reject button: found=${result.hasRejectButton}, text="${result.rejectText}"`);
-    console.log(`      Contexts searched: iframes=${result.contextsSearched.iframes}, shadowDoms=${result.contextsSearched.shadowDoms}`);
+    logger.debug('button-detection-results', {
+      check: 'Type-A',
+      totalButtons: result.totalButtonsFound,
+      hasAccept: result.hasAcceptButton,
+      acceptText: result.acceptText,
+      hasReject: result.hasRejectButton,
+      rejectText: result.rejectText,
+      iframes: result.contextsSearched.iframes,
+      shadowDoms: result.contextsSearched.shadowDoms
+    });
 
     // Violation detected if accept button exists but reject button doesn't
     const detected = result.hasAcceptButton && !result.hasRejectButton;
@@ -435,7 +454,7 @@ async function checkNoRejectButton(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type A check failed:', error.message);
+    logger.error('type-a-check-failed', { error: '❌ Type A check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -490,7 +509,7 @@ async function checkPreTickedBoxes(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type B check failed:', error.message);
+    logger.error('type-b-check-failed', { error: '❌ Type B check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -558,7 +577,7 @@ async function checkDeceptiveLinkDesign(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type C check failed:', error.message);
+    logger.error('type-c-check-failed', { error: '❌ Type C check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -694,7 +713,7 @@ async function checkDeceptiveButtonColors(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type D check failed:', error.message);
+    logger.error('type-d-check-failed', { error: '❌ Type D check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -782,7 +801,7 @@ async function checkDeceptiveButtonContrast(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type E check failed:', error.message);
+    logger.error('type-e-check-failed', { error: '❌ Type E check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -833,7 +852,7 @@ async function checkLegitimateInterestForAds(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type H check failed:', error.message);
+    logger.error('type-h-check-failed', { error: '❌ Type H check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -887,7 +906,7 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type I check failed:', error.message);
+    logger.error('type-i-check-failed', { error: '❌ Type I check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
@@ -958,7 +977,7 @@ async function checkDifficultConsentWithdrawal(page, violation) {
       } : null
     };
   } catch (error) {
-    console.error('Type K check failed:', error.message);
+    logger.error('type-k-check-failed', { error: '❌ Type K check failed: ' + error.message });
     return {
       detected: false,
       skipped: true,
