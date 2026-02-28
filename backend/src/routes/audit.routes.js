@@ -8,7 +8,8 @@ const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-pol
 const { assessRisk, saveRiskAssessment } = require('../analyzers/risk-assessor');
 const { generateSolutions } = require('../analyzers/solution-generator');
 const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
-const { generateReport } = require('../generators/html-report-builder');
+const { generateReport } = require('../generators/html-report-builder'); // Legacy HTML builder
+const { renderReactReportToHTML, renderReactReportToPDF } = require('../generators/react-report-renderer');
 const { uploadBlob } = require('../integrations/blob-storage');
 const { checkBudget } = require('../integrations/claude-api');
 const constants = require('../config/constants');
@@ -716,14 +717,18 @@ router.get('/api/audit/:audit_id/policy-analysis', (req, res) => {
 });
 
 /**
- * Generate and view HTML report
+ * Generate and view HTML report (LEGACY - DEPRECATED)
  * GET /api/audit/:audit_id/report
+ *
+ * @deprecated This endpoint uses the legacy Handlebars template system.
+ * Please migrate to /api/audit/:audit_id/report-v2 for the React-based report.
+ * This endpoint will be removed in a future version.
  */
 router.get('/api/audit/:audit_id/report', async (req, res) => {
   try {
     const { audit_id } = req.params;
 
-    console.log(`📊 Generating report for audit ${audit_id}...`);
+    console.log(`📊 [DEPRECATED] Generating legacy report for audit ${audit_id}...`);
 
     // Verify audit exists
     const db = getDatabase();
@@ -747,11 +752,13 @@ router.get('/api/audit/:audit_id/report', async (req, res) => {
       });
     }
 
-    // Generate HTML report
+    // Generate HTML report (legacy Handlebars template)
     const html = await generateReport(audit_id);
 
-    // Return HTML
+    // Return HTML with deprecation warning
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('X-API-Warn', 'This endpoint is deprecated. Use /api/audit/:audit_id/report-v2 instead.');
+    res.setHeader('Deprecation', 'true');
     res.send(html);
 
   } catch (error) {
@@ -795,14 +802,29 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
       });
     }
 
-    // Generate HTML report
-    const html = await generateReport(audit_id);
+    // Generate HTML report using React v2 renderer (with legacy fallback)
+    let html;
+    let renderMethod = 'react-v2';
+
+    try {
+      // NEW: Try React v2 report rendering via headless Chromium
+      console.log('   Attempting React v2 report rendering...');
+      html = await renderReactReportToHTML(audit_id);
+      console.log('   ✅ React v2 rendering successful');
+    } catch (renderError) {
+      // FALLBACK: Use legacy Handlebars HTML builder if Chromium fails
+      console.warn('   ⚠️  React v2 rendering failed, falling back to legacy HTML builder');
+      console.warn(`   Error: ${renderError.message}`);
+      html = await generateReport(audit_id);
+      renderMethod = 'legacy-handlebars';
+      console.log('   ✅ Legacy HTML builder successful');
+    }
 
     // Upload to Vercel Blob
     const filename = `report-${audit_id}-${Date.now()}.html`;
     const blobUrl = await uploadBlob(Buffer.from(html, 'utf8'), filename);
 
-    console.log(`✅ Report uploaded: ${blobUrl}`);
+    console.log(`✅ Report uploaded: ${blobUrl} (method: ${renderMethod})`);
 
     // Return v2 Vercel URL as primary, blob as fallback
     const v2Url = `https://cp-audit.vercel.app/report-v2/${audit_id}`;
