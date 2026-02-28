@@ -1,4 +1,7 @@
 const { getDatabase } = require('../database/db');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('risk-assessor');
 
 /**
  * Assess GDPR compliance risk and calculate potential fines
@@ -9,15 +12,15 @@ const { getDatabase } = require('../database/db');
  */
 async function assessRisk(violations, jurisdiction = 'EU', annualRevenue = null) {
   try {
-    console.log('⚖️  Assessing GDPR compliance risk...');
+    logger.info('risk-assessment-start', { jurisdiction, hasRevenue: !!annualRevenue });
 
     // Map violations to GDPR articles
     const articles = mapViolationsToArticles(violations);
-    console.log(`  📋 Identified ${articles.length} relevant GDPR articles: ${articles.join(', ')}`);
+    logger.info('risk-articles-identified', { count: articles.length, articles });
 
     // Query GDPR Hub precedents
     const precedents = await queryPrecedents(articles, jurisdiction);
-    console.log(`  📚 Found ${precedents.length} relevant precedents`);
+    logger.info('risk-precedents-found', { count: precedents.length });
 
     // Calculate risk range using statistical analysis
     const riskCalculation = calculateRiskRange(precedents, violations, annualRevenue);
@@ -28,7 +31,12 @@ async function assessRisk(violations, jurisdiction = 'EU', annualRevenue = null)
     // Select top cited precedents
     const citedPrecedents = selectTopPrecedents(precedents, 5);
 
-    console.log(`  💰 Risk Assessment: ${riskCalculation.risk_min}€ - ${riskCalculation.risk_max}€ (${riskLevel})`);
+    logger.info('risk-assessment-complete', {
+      riskMin: riskCalculation.risk_min,
+      riskMax: riskCalculation.risk_max,
+      riskLevel,
+      precedentsUsed: citedPrecedents.length
+    });
 
     return {
       articles,
@@ -44,7 +52,7 @@ async function assessRisk(violations, jurisdiction = 'EU', annualRevenue = null)
       revenue_cap: riskCalculation.revenue_cap
     };
   } catch (error) {
-    console.error('❌ Risk assessment failed:', error.message);
+    logger.error('risk-assessment-failed', { error: '❌ ' + error.message });
     throw error;
   }
 }
@@ -159,7 +167,7 @@ async function queryPrecedents(articles, jurisdiction) {
       summary: p.summary
     }));
   } catch (error) {
-    console.error('Failed to query precedents:', error.message);
+    logger.error('risk-precedents-query-failed', { error: error.message });
     return [];
   }
 }
@@ -406,9 +414,9 @@ function saveRiskAssessment(db, auditId, risk, violations) {
       risk.risk_level
     );
 
-    console.log('✅ Risk assessment saved to database');
+    logger.info('risk-assessment-saved', { auditId });
   } catch (error) {
-    console.error('❌ Failed to save risk assessment:', error.message);
+    logger.error('risk-assessment-save-failed', { error: '❌ ' + error.message, auditId });
     throw error;
   }
 }
