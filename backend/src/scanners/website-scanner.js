@@ -83,8 +83,11 @@ const {
 
 const { getDatabase } = require('../database/db');
 const { validateSchema } = require('../utils/schema-validator');
+const { createLogger } = require('../utils/logger');
 
 const constants = require('../config/constants');
+
+const logger = createLogger('scanner');
 
 /**
  * Network-Storage Correlation Engine
@@ -302,13 +305,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
   let stepStartTime = Date.now();
 
   try {
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log(`🚀 Starting scan for: ${websiteUrl}`);
-    console.log(`📝 Audit ID: ${auditUid}`);
-    console.log(`⏰ Started at: ${new Date().toISOString()}`);
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('');
+    logger.info('scan-start', {
+      auditId: auditUid,
+      url: websiteUrl,
+      startTime: new Date().toISOString()
+    });
 
     // Step 1: Initialize and Load Target (consolidated infrastructure setup)
     const initStartTime = Date.now();
@@ -931,27 +932,25 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   ⚠️  Score caps applied: ${complianceScore.capsApplied.join(', ')}`);
     }
 
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log(`✅ Scan completed in ${scanDuration}s`);
-    console.log(`   Cookies: ${cookies.length}`);
-    console.log(`   Tracking before consent: ${results.trackingBeforeConsent ? 'YES ⚠️' : 'NO ✅'}`);
-    console.log(`   Compliance Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
-    console.log(`   Screenshots uploaded: ${screenshotUrls.fullPageUrl ? 'YES' : 'NO'}`);
-    if (consentSimulation && consentSimulation.success !== false && consentSimulation.comparison?.violations) {
-      console.log(`   Consent violations: ${consentSimulation.comparison.violations.length}`);
-    }
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('');
+    logger.info('scan-complete', {
+      auditId: auditUid,
+      durationSeconds: scanDuration,
+      cookieCount: cookies.length,
+      trackingBeforeConsent: results.trackingBeforeConsent,
+      complianceScore: complianceScore.overallScore,
+      grade: complianceScore.grade,
+      screenshotsUploaded: !!screenshotUrls.fullPageUrl,
+      consentViolations: consentSimulation?.comparison?.violations?.length || 0
+    });
 
     return results;
 
   } catch (error) {
-    console.error('');
-    console.error('═══════════════════════════════════════════════════════');
-    console.error('❌ Scan failed:', error.message);
-    console.error('═══════════════════════════════════════════════════════');
-    console.error('');
+    logger.error('scan-failed', {
+      auditId: auditUid,
+      error: error.message,
+      stack: error.stack
+    });
 
     // Close browser if still open
     if (browser) {

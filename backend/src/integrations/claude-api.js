@@ -2,27 +2,91 @@ const fs = require('fs');
 const path = require('path');
 const constants = require('../config/constants');
 const { CircuitBreaker } = require('../utils/circuit-breaker');
+const { createLogger } = require('../utils/logger');
 
 /**
  * Claude API Integration with Prompt Caching + Circuit Breaker
  * Cost optimization: 90% reduction on cached prompts
  */
 
+const logger = createLogger('claude-api');
 const claudeBreaker = new CircuitBreaker({ name: 'claude-api', failureThreshold: 3, resetTimeout: 120000 });
 const CLAUDE_TIMEOUT_MS = 90000;
 
 /**
- * In-Memory Budget Tracker (resets on server restart)
- * Tracks total Claude API spending to enforce daily budget limit
+ * Budget Tracker with SQLite Persistence
+ * Survives server restarts (critical for production auto-scaling)
  */
 let dailySpent = 0;
 let budgetResetTime = Date.now();
+let db = null; // Lazy-loaded database connection
+
+/**
+ * Get database connection (lazy initialization)
+ */
+function getDb() {
+  if (!db) {
+    const { getDatabase } = require('../database/db');
+    db = getDatabase();
+  }
+  return db;
+}
+
+/**
+ * Load budget from database on first access
+ */
+function loadBudgetFromDb() {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
+    const row = getDb().prepare('SELECT spent_usd, reset_at FROM budget_tracking WHERE date = ?').get(today);
+
+    if (row) {
+      dailySpent = row.spent_usd;
+      budgetResetTime = new Date(row.reset_at).getTime();
+      logger.info('budget-loaded', { date: today, spent: dailySpent.toFixed(4) });
+    } else {
+      // First request of the day - initialize new row
+      dailySpent = 0;
+      budgetResetTime = Date.now();
+      getDb().prepare('INSERT OR IGNORE INTO budget_tracking (date, spent_usd) VALUES (?, 0)').run(today);
+      logger.info('budget-initialized', { date: today });
+    }
+  } catch (error) {
+    logger.error('budget-load-failed', { error: error.message });
+    // Fallback to in-memory tracking
+    dailySpent = 0;
+    budgetResetTime = Date.now();
+  }
+}
+
+/**
+ * Save budget to database
+ * @param {number} cost - Cost to add
+ */
+function saveBudgetToDb(cost) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    getDb().prepare(`
+      INSERT INTO budget_tracking (date, spent_usd, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(date) DO UPDATE SET
+        spent_usd = spent_usd + excluded.spent_usd,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(today, cost);
+  } catch (error) {
+    logger.error('budget-save-failed', { error: error.message, cost });
+  }
+}
 
 /**
  * Check if budget allows a new audit request
  * @returns {{ allowed: boolean, spent: number, limit: number, retryAfter?: number }}
  */
 function checkBudget() {
+  // Lazy load budget on first check
+  if (dailySpent === 0 && budgetResetTime === Date.now()) {
+    loadBudgetFromDb();
+  }
   const budget = constants.DAILY_BUDGET_USD;
 
   if (dailySpent >= budget) {
@@ -49,17 +113,31 @@ function checkBudget() {
  */
 function trackSpending(cost) {
   dailySpent += cost;
-  console.log(`💰 Claude API cost: $${cost.toFixed(4)} | Daily total: $${dailySpent.toFixed(2)}/${constants.DAILY_BUDGET_USD}`);
+  saveBudgetToDb(cost); // Persist to database
+  logger.info('api-cost-tracked', {
+    cost: cost.toFixed(4),
+    dailyTotal: dailySpent.toFixed(4),
+    budget: constants.DAILY_BUDGET_USD,
+    remaining: (constants.DAILY_BUDGET_USD - dailySpent).toFixed(4)
+  });
 }
 
 /**
- * Reset budget counter (called manually or on server restart)
+ * Reset budget counter (called manually or via cron)
  */
 function resetBudget() {
   const previousSpent = dailySpent;
   dailySpent = 0;
   budgetResetTime = Date.now();
-  console.log(`🔄 Budget reset. Previous spent: $${previousSpent.toFixed(2)}`);
+
+  // Clear database for new day
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    getDb().prepare('INSERT OR REPLACE INTO budget_tracking (date, spent_usd, reset_at) VALUES (?, 0, CURRENT_TIMESTAMP)').run(today);
+    logger.info('budget-reset', { previousSpent: previousSpent.toFixed(4), date: today });
+  } catch (error) {
+    logger.error('budget-reset-failed', { error: error.message });
+  }
 }
 
 /**
@@ -91,18 +169,16 @@ function loadPrivacyPolicyPrompt() {
     const promptPath = path.join(__dirname, '../../prompts/privacy-policy-auditor-full.txt');
 
     if (!fs.existsSync(promptPath)) {
-      console.error('❌ Privacy policy prompt file not found at:', promptPath);
-      console.error('   Please add the AI INSTRUCTION SET — PRIVACY POLICY AUDITOR.md');
-      console.error('   content to: backend/prompts/privacy-policy-auditor-full.txt');
+      logger.error('prompt-not-found', { path: promptPath });
       throw new Error('Privacy policy prompt file not found. See backend/prompts/README.md');
     }
 
     const prompt = fs.readFileSync(promptPath, 'utf8');
-    console.log(`✅ Loaded privacy policy prompt (${(prompt.length / 1024).toFixed(2)} KB)`);
+    logger.info('prompt-loaded', { sizeKB: (prompt.length / 1024).toFixed(2) });
 
     return prompt;
   } catch (error) {
-    console.error('❌ Failed to load privacy policy prompt:', error.message);
+    logger.error('prompt-load-failed', { error: error.message });
     throw error;
   }
 }
@@ -117,10 +193,10 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
   const startTime = Date.now();
 
   try {
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('🤖 Starting Claude API Privacy Policy Analysis');
-    console.log('═══════════════════════════════════════════════════════');
+    logger.info('analysis-start', {
+      model: constants.CLAUDE_MODEL,
+      policySizeKB: (policyText.length / 1024).toFixed(2)
+    });
 
     // Validate API key
     if (!constants.CLAUDE_API_KEY || constants.CLAUDE_API_KEY === 'sk-ant-api03-placeholder') {
@@ -149,10 +225,10 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
       ]
     };
 
-    console.log(`📤 Sending request to Claude API...`);
-    console.log(`   Model: ${constants.CLAUDE_MODEL}`);
-    console.log(`   Prompt size: ${(fullPrompt.length / 1024).toFixed(2)} KB`);
-    console.log(`   Policy size: ${(policyText.length / 1024).toFixed(2)} KB`);
+    logger.info('api-request-sent', {
+      promptSizeKB: (fullPrompt.length / 1024).toFixed(2),
+      policySizeKB: (policyText.length / 1024).toFixed(2)
+    });
 
     // Make API request with circuit breaker + AbortController timeout
     const response = await claudeBreaker.call(() =>
@@ -169,7 +245,7 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ Claude API error:', response.status, errorText);
+      logger.error('api-request-failed', { status: response.status, error: errorText.substring(0, 200) });
       throw new Error(`Claude API error: ${response.status} - ${errorText}`);
     }
 
@@ -179,14 +255,14 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
     const usage = data.usage || {};
     const cost = calculateCost(usage);
 
-    console.log('');
-    console.log('📊 API Usage:');
-    console.log(`   Input tokens: ${usage.input_tokens || 0}`);
-    console.log(`   Output tokens: ${usage.output_tokens || 0}`);
-    console.log(`   Cached tokens: ${usage.cache_read_input_tokens || 0}`);
-    console.log(`   Cache creation tokens: ${usage.cache_creation_input_tokens || 0}`);
-    console.log(`   Cost: $${cost.toFixed(4)}`);
-    console.log(`   Cached: ${usage.cache_read_input_tokens ? 'YES ✅' : 'NO (first request)'}`);
+    logger.info('api-usage', {
+      inputTokens: usage.input_tokens || 0,
+      outputTokens: usage.output_tokens || 0,
+      cachedTokens: usage.cache_read_input_tokens || 0,
+      cacheCreationTokens: usage.cache_creation_input_tokens || 0,
+      cost: cost.toFixed(4),
+      cached: !!usage.cache_read_input_tokens
+    });
 
     // Track spending for budget control
     trackSpending(cost);
@@ -208,8 +284,7 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
       const jsonText = jsonMatch ? jsonMatch[1] : responseText;
       analysis = JSON.parse(jsonText);
     } catch (parseError) {
-      console.error('❌ Failed to parse Claude response as JSON');
-      console.error('Response:', responseText.substring(0, 500));
+      logger.error('json-parse-failed', { responsePreview: responseText.substring(0, 200) });
       throw new Error('Failed to parse Claude response as JSON');
     }
 
@@ -219,20 +294,19 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
     }
 
     if (analysis.criteria.length !== 37) {
-      console.warn(`⚠️  Expected 37 criteria, got ${analysis.criteria.length}`);
+      logger.warn('criteria-count-mismatch', { expected: 37, actual: analysis.criteria.length });
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    console.log('');
-    console.log('✅ Analysis complete');
-    console.log(`   Criteria analyzed: ${analysis.criteria.length}`);
-    console.log(`   Total score: ${analysis.total_score}/${analysis.max_score}`);
-    console.log(`   Percentage: ${analysis.percentage?.toFixed(1)}%`);
-    console.log(`   Category: ${analysis.category}`);
-    console.log(`   Duration: ${duration}s`);
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('');
+    logger.info('analysis-complete', {
+      criteriaCount: analysis.criteria.length,
+      totalScore: analysis.total_score,
+      maxScore: analysis.max_score,
+      percentage: analysis.percentage?.toFixed(1),
+      category: analysis.category,
+      durationSeconds: duration
+    });
 
     return {
       analysis,
@@ -249,13 +323,11 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
 
   } catch (error) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.error('');
-    console.error('═══════════════════════════════════════════════════════');
-    console.error('❌ Privacy policy analysis failed');
-    console.error(`   Error: ${error.message}`);
-    console.error(`   Duration: ${duration}s`);
-    console.error('═══════════════════════════════════════════════════════');
-    console.error('');
+    logger.error('analysis-failed', {
+      error: error.message,
+      code: error.code,
+      durationSeconds: duration
+    });
     throw error;
   }
 }
@@ -286,10 +358,10 @@ function calculateCost(usage) {
  */
 async function testClaudeConnection() {
   try {
-    console.log('🧪 Testing Claude API connection...');
+    logger.info('connection-test-start', {});
 
     if (!constants.CLAUDE_API_KEY || constants.CLAUDE_API_KEY === 'sk-ant-api03-placeholder') {
-      console.log('⚠️  Claude API key not configured');
+      logger.warn('connection-test-no-key', {});
       return false;
     }
 
@@ -313,15 +385,15 @@ async function testClaudeConnection() {
     });
 
     if (response.ok) {
-      console.log('✅ Claude API connection successful');
+      logger.info('connection-test-success', {});
       return true;
     } else {
       const errorText = await response.text();
-      console.error(`❌ Claude API connection failed: ${response.status} - ${errorText}`);
+      logger.error('connection-test-failed', { status: response.status, error: errorText.substring(0, 200) });
       return false;
     }
   } catch (error) {
-    console.error('❌ Claude API connection failed:', error.message);
+    logger.error('connection-test-error', { error: error.message });
     return false;
   }
 }

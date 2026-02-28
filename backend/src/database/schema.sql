@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS risk_assessments (
 --     FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
 -- );
 
+-- Budget tracking table (lightweight persistence for budget control)
+-- Prevents budget bypass on server restarts (critical for production auto-scaling)
+CREATE TABLE IF NOT EXISTS budget_tracking (
+    date TEXT PRIMARY KEY,              -- Format: 'YYYY-MM-DD'
+    spent_usd REAL NOT NULL DEFAULT 0,  -- Total spent on this date
+    reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- GDPR Precedents table
 CREATE TABLE IF NOT EXISTS gdpr_precedents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

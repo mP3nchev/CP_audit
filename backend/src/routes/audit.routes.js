@@ -14,6 +14,9 @@ const { uploadBlob } = require('../integrations/blob-storage');
 const { checkBudget } = require('../integrations/claude-api');
 const constants = require('../config/constants');
 const crypto = require('crypto');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('audit');
 
 /**
  * Start a new audit
@@ -48,7 +51,11 @@ router.post('/api/audit/start', async (req, res) => {
     // Check budget before starting audit
     const budget = checkBudget();
     if (!budget.allowed) {
-      console.log(`💰 Budget exceeded: $${budget.spent.toFixed(2)}/$${budget.limit} - blocking new audit`);
+      logger.warn('budget-exceeded', {
+        spent: budget.spent.toFixed(2),
+        limit: budget.limit,
+        retryAfter: budget.retryAfter
+      });
       return res.status(429).json({
         error: `Daily Claude API budget exceeded ($${budget.limit}). Try again later.`,
         code: 'E429',
@@ -72,15 +79,14 @@ router.post('/api/audit/start', async (req, res) => {
     const result = stmt.run(auditUid, website_url, client_name || null, industry || null, constants.AUDIT_STATUS.PROCESSING);
     auditId = result.lastInsertRowid;
 
-    console.log(`📝 Created audit: ${auditUid} (ID: ${auditId})`);
+    logger.info('audit-created', { auditId: auditUid, dbId: auditId, url: website_url });
 
     // Start scanning asynchronously
     scanWebsite(website_url, auditId, auditUid)
       .then(scanResults => {
         // Check if audit was paused (waiting for manual consent)
         if (scanResults && scanResults.paused) {
-          console.log(`⏸️  Audit ${auditUid} paused - waiting for manual consent upload`);
-          console.log(`   Instructions: ${scanResults.instructions}`);
+          logger.info('audit-paused', { auditId: auditUid, reason: 'awaiting_manual_consent' });
           return; // Don't mark as completed
         }
 
@@ -93,7 +99,7 @@ router.post('/api/audit/start', async (req, res) => {
         `);
         updateStmt.run(constants.AUDIT_STATUS.COMPLETED, auditId);
 
-        console.log(`✅ Audit ${auditUid} completed successfully`);
+        logger.info('audit-completed', { auditId: auditUid });
       })
       .catch(error => {
         // Update audit status to failed
@@ -109,7 +115,7 @@ router.post('/api/audit/start', async (req, res) => {
           auditId
         );
 
-        console.error(`❌ Audit ${auditUid} failed:`, error.message);
+        logger.error('audit-failed', { auditId: auditUid, error: error.message });
       });
 
     // Return immediate response
@@ -122,7 +128,7 @@ router.post('/api/audit/start', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Failed to start audit:', error);
+    logger.error('audit-start-failed', { error: error.message, stack: error.stack });
 
     // If audit was created, mark it as failed
     if (auditId) {
@@ -135,7 +141,7 @@ router.post('/api/audit/start', async (req, res) => {
         `);
         updateStmt.run(constants.AUDIT_STATUS.FAILED, error.message, auditId);
       } catch (dbError) {
-        console.error('Failed to update audit status:', dbError);
+        logger.error('audit-status-update-failed', { auditId, error: dbError.message });
       }
     }
 
