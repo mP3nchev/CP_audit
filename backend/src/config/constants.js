@@ -27,6 +27,11 @@ module.exports = {
   PUPPETEER_TIMEOUT_MS: parseInt(process.env.PUPPETEER_TIMEOUT_MS) || 120000,
   PUPPETEER_HEADLESS: process.env.PUPPETEER_HEADLESS === 'true',
 
+  // React Report Rendering
+  FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL || 'http://localhost:3000',
+  REPORT_RENDER_TIMEOUT_MS: parseInt(process.env.REPORT_RENDER_TIMEOUT_MS) || 60000,
+  PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH,
+
   // Consent Simulation
   CONSENT_MODE: process.env.CONSENT_MODE || 'assisted', // Only 'assisted' supported in v1
   IS_RAILWAY: !!process.env.RAILWAY_ENVIRONMENT,

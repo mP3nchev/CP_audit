@@ -98,7 +98,7 @@ export default function ReportV2Page() {
   const { finding1, finding2 } = reportData;
 
   return (
-    <div className="min-h-screen bg-[var(--cp-blue-5)]">
+    <div className="min-h-screen bg-[var(--cp-blue-5)]" data-report-ready="true">
       <div className="mx-auto max-w-7xl px-4 py-6 lg:px-6 print-full-width">
         <div className="flex gap-6">
           {/* Sticky sidebar navigation */}
