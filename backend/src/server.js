@@ -83,7 +83,27 @@ try {
 
 // Routes
 app.use('/', healthRoutes);
-app.use('/api', authMiddleware);  // All /api/* requires X-API-Key
+
+// Public endpoints (no auth required)
+const publicPaths = ['/api/audit/:id/share', '/api/audit/:id/report-v2', '/api/audit/:id/report'];
+
+// Auth middleware with public path exemption
+app.use('/api', (req, res, next) => {
+  // Check if path matches any public endpoint pattern
+  const isPublic = publicPaths.some(pattern => {
+    const regex = new RegExp('^' + pattern.replace(/:[^\s/]+/g, '[^/]+') + '$');
+    return regex.test(req.path);
+  });
+
+  if (isPublic) {
+    console.log(`📖 Public endpoint accessed: ${req.path}`);
+    return next(); // Skip auth for public endpoints
+  }
+
+  // Apply auth for all other /api/* endpoints
+  return authMiddleware(req, res, next);
+});
+
 app.use('/', auditRoutes);
 
 // Root endpoint
