@@ -1,3 +1,7 @@
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('compliance-scorer');
+
 /**
  * Overall Compliance Score Calculator (1-100)
  * Based on weighted components from all audit phases
@@ -9,7 +13,7 @@
  * @returns {Object} Overall score and breakdown
  */
 function calculateOverallScore(auditResults) {
-  console.log('📊 Calculating overall compliance score...');
+  logger.info('compliance-score-calculation-start', {});
 
   // Calculate each component
   const components = {
@@ -87,19 +91,19 @@ function calculateOverallScore(auditResults) {
   // Determine grade
   const grade = determineGrade(overallScore);
 
-  console.log(`  ✅ Overall Compliance Score: ${overallScore}/100 (Grade: ${grade})`);
-  if (components.privacyPolicy) {
-    console.log(`     - Privacy Policy: ${components.privacyPolicy.score}/100 (contributes ${contributions.privacyPolicy.toFixed(1)} points)`);
-  }
-  console.log(`     - Cookie Banner: ${components.cookieBanner.score}/100 (contributes ${contributions.cookieBanner.toFixed(1)} points)`);
-  console.log(`     - Technical: ${components.technical.score}/100 (contributes ${contributions.technical.toFixed(1)} points)`);
-  if (components.cookiePolicy) {
-    console.log(`     - Cookie Policy: ${components.cookiePolicy.score}/100 (contributes ${contributions.cookiePolicy.toFixed(1)} points)`);
-  }
-
-  if (capsApplied.length > 0) {
-    console.log(`     ⚠️  Critical caps applied: ${capsApplied.join(', ')}`);
-  }
+  logger.info('compliance-score-complete', {
+    overallScore,
+    grade,
+    privacyPolicyScore: components.privacyPolicy?.score,
+    privacyPolicyContribution: contributions.privacyPolicy.toFixed(1),
+    cookieBannerScore: components.cookieBanner.score,
+    cookieBannerContribution: contributions.cookieBanner.toFixed(1),
+    technicalScore: components.technical.score,
+    technicalContribution: contributions.technical.toFixed(1),
+    cookiePolicyScore: components.cookiePolicy?.score,
+    cookiePolicyContribution: contributions.cookiePolicy.toFixed(1),
+    capsApplied: capsApplied.length > 0 ? capsApplied : undefined
+  });
 
   return {
     overallScore,
