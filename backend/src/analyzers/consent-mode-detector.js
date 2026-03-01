@@ -7,6 +7,9 @@
  * Reference: https://developers.google.com/tag-platform/security/guides/consent
  */
 
+const { createLogger } = require('../utils/logger');
+const logger = createLogger('consent-mode-detector');
+
 /**
  * Detect and validate Google Consent Mode v2 implementation
  * @param {Page} page - Puppeteer page
@@ -14,7 +17,7 @@
  */
 async function detectConsentMode(page) {
   try {
-    console.log('🔍 Checking for Google Consent Mode v2...');
+    logger.info('consent-mode-detection-start');
 
     const analysis = await page.evaluate(() => {
       const results = {
@@ -629,54 +632,43 @@ async function detectConsentMode(page) {
 
     // Log results with confidence level
     if (analysis.detected) {
-      console.log(`   ✅ Google Consent Mode detected (${analysis.version}) - Confidence: ${analysis.confidence}%`);
-      console.log(`   🔍 Detection method: ${analysis.detection_method}`);
+      logger.info('consent-mode-detected', {
+        version: analysis.version,
+        confidence: analysis.confidence,
+        detectionMethod: analysis.detection_method,
+        mode: analysis.mode,
+        modeDescription: analysis.mode_description,
+        consentStates: analysis.consentStates,
+        gdprCompliant: analysis.compliant,
+        hasUpdates: analysis.hasConsentUpdates,
+        updateCount: analysis.updateCount,
+        icsUpdateUsed: analysis.ics_details?.usedUpdate,
+        cmpIntegrations: analysis.cmp_integrations?.map(cmp => ({
+          name: cmp.name,
+          integrated: cmp.consent_mode_integration
+        })),
+        evidence: {
+          gtagApiVerified: analysis.evidence.gtag_get_consent,
+          updateEventsCount: analysis.evidence.consent_update_events
+        }
+      });
 
-      if (analysis.mode) {
-        console.log(`   🔧 Implementation mode: ${analysis.mode.toUpperCase()} - ${analysis.mode_description}`);
-      }
-
-      console.log(`   📊 Consent states:`);
-      console.log(`      - ad_storage: ${analysis.consentStates.ad_storage}`);
-      console.log(`      - ad_user_data: ${analysis.consentStates.ad_user_data}`);
-      console.log(`      - ad_personalization: ${analysis.consentStates.ad_personalization}`);
-      console.log(`      - analytics_storage: ${analysis.consentStates.analytics_storage}`);
-
-      if (analysis.compliant) {
-        console.log(`   ✅ Default consent states are GDPR-compliant (all "denied")`);
-      } else {
-        console.log(`   ⚠️  GDPR violation: Some consent states default to "granted"`);
-      }
-
-      if (analysis.hasConsentUpdates) {
-        console.log(`   ✅ Consent updates detected (${analysis.updateCount} update commands)`);
-      } else if (analysis.ics_details?.usedUpdate) {
-        console.log(`   ✅ Consent updates used (via google_tag_data.ics)`);
-      } else {
-        console.log(`   ⚠️  No consent update commands found - user consent may not be recorded`);
-      }
-
-      // Log CMP integrations
-      if (analysis.cmp_integrations && analysis.cmp_integrations.length > 0) {
-        console.log(`   🔌 CMP Integrations detected:`);
-        analysis.cmp_integrations.forEach(cmp => {
-          const integration = cmp.consent_mode_integration ? '✅ integrated' : '⚠️ not integrated';
-          console.log(`      - ${cmp.name}: ${integration}`);
+      if (!analysis.compliant) {
+        logger.warn('consent-mode-gdpr-violation', {
+          message: 'Some consent states default to "granted"',
+          consentStates: analysis.consentStates
         });
       }
 
-      // Log evidence
-      if (analysis.evidence.gtag_get_consent) {
-        console.log(`   🔬 Evidence: gtag consent API verified`);
-      }
-      if (analysis.evidence.consent_update_events) {
-        console.log(`   🔬 Evidence: ${analysis.evidence.consent_update_events} consent update events found`);
+      if (!analysis.hasConsentUpdates && !analysis.ics_details?.usedUpdate) {
+        logger.warn('consent-mode-no-updates', {
+          message: 'No consent update commands found - user consent may not be recorded'
+        });
       }
     } else {
-      console.log(`   ❌ Google Consent Mode not detected`);
-      if (analysis.issues.length > 0) {
-        console.log(`   Issues: ${analysis.issues.join(', ')}`);
-      }
+      logger.warn('consent-mode-not-detected', {
+        issues: analysis.issues
+      });
     }
 
     return {
@@ -699,7 +691,10 @@ async function detectConsentMode(page) {
     };
 
   } catch (error) {
-    console.error('❌ Consent Mode detection failed:', error.message);
+    logger.error('consent-mode-detection-failed', {
+      error: '❌ ' + error.message,
+      stack: error.stack
+    });
     return {
       detected: false,
       confidence: 0,
@@ -747,7 +742,10 @@ async function checkConsentUpdate(page, acceptAction) {
     };
 
   } catch (error) {
-    console.error('Failed to check consent update:', error.message);
+    logger.error('consent-update-check-failed', {
+      error: '❌ ' + error.message,
+      stack: error.stack
+    });
     return {
       updateDetected: false,
       error: error.message
@@ -775,7 +773,7 @@ async function auditConsentMode(page, monitoringData = null) {
 
   // If monitoring data is available, enhance detection with real-time evidence
   if (monitoringData && monitoringData.initialized) {
-    console.log('   🔬 Enhancing Consent Mode detection with monitoring data...');
+    logger.debug('consent-mode-enhancing-with-monitoring');
 
     // Check for V2 parameters in gtag calls (more reliable than ics.entries)
     const consentDefaultCalls = monitoringData.gtagCalls.filter(call =>
@@ -807,10 +805,14 @@ async function auditConsentMode(page, monitoringData = null) {
       const v2Params = ['ad_user_data', 'ad_personalization'];
       const hasV2Params = v2Params.every(param => defaultValues.hasOwnProperty(param));
 
-      console.log(`   🔬 V2 params check: ad_user_data=${defaultValues.ad_user_data}, ad_personalization=${defaultValues.ad_personalization}`);
+      logger.debug('consent-mode-v2-params-check', {
+        ad_user_data: defaultValues.ad_user_data,
+        ad_personalization: defaultValues.ad_personalization,
+        hasV2Params
+      });
 
       if (hasV2Params) {
-        console.log('   ✅ Monitoring data confirms V2 parameters present');
+        logger.info('consent-mode-v2-confirmed-by-monitoring');
 
         // ALWAYS upgrade to v2 if V2 params are present
         audit.version = 'v2';
@@ -829,7 +831,9 @@ async function auditConsentMode(page, monitoringData = null) {
           });
           const afterFilter = audit.issues.length;
           if (beforeFilter !== afterFilter) {
-            console.log(`   🗑️  Removed ${beforeFilter - afterFilter} V2 param warning(s) from issues`);
+            logger.debug('consent-mode-removed-v2-warnings', {
+              removedCount: beforeFilter - afterFilter
+            });
           }
         }
 
@@ -839,13 +843,15 @@ async function auditConsentMode(page, monitoringData = null) {
           ...defaultValues
         };
       } else {
-        console.log(`   ⚠️  V2 params incomplete: ${Object.keys(defaultValues).join(', ')}`);
+        logger.warn('consent-mode-v2-params-incomplete', {
+          params: Object.keys(defaultValues)
+        });
       }
 
       // Update monitored states for reference
       audit.monitoredDefaultStates = defaultValues;
     } else {
-      console.log('   ⚠️  No consent default values found in monitoring data');
+      logger.warn('consent-mode-no-monitoring-defaults');
     }
 
     // Check for consent update calls (both gtag and dataLayer)
@@ -864,7 +870,7 @@ async function auditConsentMode(page, monitoringData = null) {
     if (totalUpdates > 0) {
       audit.monitoredUpdates = totalUpdates;
       audit.hasUpdates = true;
-      console.log(`   ✅ Detected ${totalUpdates} consent update(s) via monitoring`);
+      logger.info('consent-mode-updates-detected', { totalUpdates });
     }
 
     // Add monitoring evidence to audit
@@ -887,7 +893,9 @@ async function auditConsentMode(page, monitoringData = null) {
              !issueText.includes('ad_personalization');
     });
     if (beforeCleanup !== audit.issues.length) {
-      console.log(`   🧹 Cleaned up ${beforeCleanup - audit.issues.length} obsolete V2 warning(s)`);
+      logger.debug('consent-mode-cleaned-obsolete-warnings', {
+        removedCount: beforeCleanup - audit.issues.length
+      });
     }
   }
 
@@ -913,10 +921,12 @@ async function auditConsentMode(page, monitoringData = null) {
   }
 
   // Final debug logging
-  console.log(`   📋 Final audit result: version=${audit.version}, detected=${audit.detected}, issues=${audit.issues?.length || 0}`);
-  if (audit.issues && audit.issues.length > 0) {
-    console.log(`   📋 Issues: ${audit.issues.join(', ')}`);
-  }
+  logger.debug('consent-mode-audit-complete', {
+    version: audit.version,
+    detected: audit.detected,
+    issuesCount: audit.issues?.length || 0,
+    issues: audit.issues && audit.issues.length > 0 ? audit.issues : undefined
+  });
 
   return audit;
 }
