@@ -20,6 +20,9 @@ const {
   getCookieStats
 } = require('./cookie-extractor');
 
+const { createLogger } = require('../utils/logger');
+const logger = createLogger('consent-simulator');
+
 /**
  * Wait for consent UI to be ready (STATE-BASED, not lifecycle-based)
  * @param {Page} page - Puppeteer page
@@ -294,7 +297,11 @@ async function performHumanClick(page, selector, boundingBox) {
 
     return true;
   } catch (error) {
-    console.error(`   ❌ performHumanClick failed:`, error.message);
+    logger.error('human-click-failed', {
+      error: '❌ ' + error.message,
+      selector,
+      stack: error.stack
+    });
     return false;
   }
 }
@@ -473,7 +480,9 @@ async function extractAllCookies(page) {
     cdpCookies = cookies.map(c => ({ ...c, source: 'cdp' }));
     await client.detach();
   } catch (error) {
-    console.warn(`⚠️  CDP getAllCookies failed: ${error.message}`);
+    logger.warn('cdp-get-cookies-failed', {
+      error: '⚠️ ' + error.message
+    });
   }
 
   // 2. document.cookie - catches JS-only cookies that CDP might miss
@@ -774,8 +783,10 @@ async function clickButton(page, buttonInfo) {
 
     return true;
   } catch (error) {
-    console.error(`   ❌ clickButton failed:`, error.message);
-    if (DEBUG) console.error(error.stack);
+    logger.error('click-button-failed', {
+      error: '❌ ' + error.message,
+      stack: error.stack
+    });
     return false;
   }
 }
@@ -925,7 +936,11 @@ async function runRejectScenario(websiteUrl) {
     };
 
   } catch (error) {
-    console.error(`   ❌ Reject scenario failed:`, error.message);
+    logger.error('reject-scenario-failed', {
+      error: '❌ ' + error.message,
+      websiteUrl,
+      stack: error.stack
+    });
     if (browser) {
       await closeBrowser(browser).catch(() => {});
     }
@@ -1044,7 +1059,11 @@ async function runAcceptScenario(websiteUrl) {
     };
 
   } catch (error) {
-    console.error(`   ❌ Accept scenario failed:`, error.message);
+    logger.error('accept-scenario-failed', {
+      error: '❌ ' + error.message,
+      websiteUrl,
+      stack: error.stack
+    });
     if (browser) {
       await closeBrowser(browser).catch(() => {});
     }

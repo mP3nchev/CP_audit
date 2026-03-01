@@ -18,6 +18,9 @@ const { analyzeCookieBanner } = require('../analyzers/cookie-banner-checker');
 const readline = require('readline');
 const constants = require('../config/constants');
 const { getDatabase } = require('../database/db');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('consent-simulator-v1');
 
 /**
  * Tracking domains for network filtering (v1)
@@ -134,7 +137,10 @@ async function captureState(page, networkRequests) {
     fs.writeFileSync(screenshotPath, screenshot);
     console.log(`   💾 Saved: ${screenshotPath}`);
   } catch (e) {
-    console.warn(`   ⚠️  Screenshot failed: ${e.message}`);
+    logger.warn('screenshot-capture-failed', {
+      error: '⚠️ ' + e.message,
+      scenario
+    });
   }
 
   console.log(`   ✅ Captured: ${cookies.length} cookies, ${trackingRequests.length} tracking requests, ${Object.keys(localStorage).length} localStorage items`);
@@ -288,7 +294,10 @@ async function runScenario(browser, websiteUrl, scenarioType) {
         console.log(`   ⏭️  Skipped ${bannerAnalysis.skippedCount} check(s)`);
       }
     } catch (error) {
-      console.warn(`   ⚠️  Banner analysis failed: ${error.message}`);
+      logger.warn('banner-analysis-failed', {
+        error: '⚠️ ' + error.message,
+        scenario
+      });
       bannerAnalysis = {
         error: error.message,
         skipped: true
@@ -312,7 +321,12 @@ async function runScenario(browser, websiteUrl, scenarioType) {
     };
 
   } catch (error) {
-    console.error(`   ❌ ${scenarioType} scenario failed:`, error.message);
+    logger.error('scenario-execution-failed', {
+      error: '❌ ' + error.message,
+      scenarioType,
+      websiteUrl,
+      stack: error.stack
+    });
     await context.close().catch(() => {});
     throw error;
   }
@@ -374,7 +388,11 @@ async function checkForManualConsentData(auditId, websiteUrl) {
 
     return null;
   } catch (error) {
-    console.error(`Error checking for manual consent data: ${error.message}`);
+    logger.error('manual-consent-check-failed', {
+      error: '❌ ' + error.message,
+      auditId,
+      stack: error.stack
+    });
     return null;
   }
 }
@@ -536,12 +554,12 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     };
 
   } catch (error) {
-    console.error('');
-    console.error('═'.repeat(70));
-    console.error('❌ CONSENT SIMULATION FAILED');
-    console.error('═'.repeat(70));
-    console.error('Error:', error.message);
-    console.error('');
+    logger.error('consent-simulation-failed', {
+      error: '❌ CONSENT SIMULATION FAILED: ' + error.message,
+      auditId,
+      websiteUrl,
+      stack: error.stack
+    });
 
     if (browser) {
       await closeBrowser(browser).catch(() => {});
