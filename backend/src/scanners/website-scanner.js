@@ -316,20 +316,20 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
     // Step 1: Initialize and Load Target (consolidated infrastructure setup)
     const initStartTime = Date.now();
-    console.log('🚀 Step 1: Initialize and Load Target...');
+    logger.info('scan-step-start', { step: 1, name: 'Initialize and Load Target', auditId });
     updateProgress(auditId, 1, 17, 'Initializing browser and loading website...', startTime);
 
     // Launch browser
     stepStartTime = Date.now();
-    console.log('   📦 Launching browser...');
+    logger.debug('scan-substep-start', { substep: 'launch-browser', auditId });
     browser = await launchBrowser();
-    console.log(`   ✅ Browser launched in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-substep-complete', { substep: 'launch-browser', durationMs: Date.now() - stepStartTime, auditId });
 
     // Create page with monitoring
     stepStartTime = Date.now();
-    console.log('   📄 Creating page with monitoring...');
+    logger.debug('scan-substep-start', { substep: 'create-page', auditId });
     const page = await createPage(browser);
-    console.log(`   ✅ Page created in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-substep-complete', { substep: 'create-page', durationMs: Date.now() - stepStartTime, auditId });
 
     // Capture browser console for CMP diagnostics
     page.on('console', msg => {
@@ -338,24 +338,23 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       // Only log CMP/Consent Mode related messages
       if (text.includes('consent') || text.includes('CookieScript') ||
           text.includes('google_tag') || text.includes('ics')) {
-        console.log(`   🌐 [Browser ${msg.type()}] ${text}`);
+        logger.debug('browser-console-message', { type: msg.type(), message: text, auditId });
       }
     });
 
     // Setup network monitoring
     stepStartTime = Date.now();
-    console.log('   🌐 Setting up network monitoring...');
+    logger.debug('scan-substep-start', { substep: 'network-monitoring', auditId });
     const networkMonitor = setupNetworkMonitoring(page);
-    console.log(`   ✅ Network monitoring setup in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-substep-complete', { substep: 'network-monitoring', durationMs: Date.now() - stepStartTime, auditId });
 
     // Inject consent monitor wrappers BEFORE any scripts load
     stepStartTime = Date.now();
-    console.log('   🛡️  Injecting consent monitor wrappers...');
+    logger.debug('scan-substep-start', { substep: 'consent-monitor-injection', auditId });
     try {
       const wrapperScript = getWrapperInjectionScript();
       await page.evaluateOnNewDocument(wrapperScript);
-      console.log(`   ✅ Consent monitor wrappers injected (gtag, dataLayer, localStorage)`);
-      console.log(`   🎯 Ready to capture: consent calls, tracking events, storage writes`);
+      logger.debug('scan-substep-complete', { substep: 'consent-monitor-wrappers-injected', auditId });
     } catch (error) {
       logger.error('consent-monitor-injection-failed', {
         error: '⚠️ ' + error.message,
@@ -363,47 +362,47 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         stack: error.stack
       });
     }
-    console.log(`   ✅ Consent monitoring setup in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-substep-complete', { substep: 'consent-monitoring-setup', durationMs: Date.now() - stepStartTime, auditId });
 
     // Inject tracking detector BEFORE navigation
     stepStartTime = Date.now();
-    console.log('   🔍 Injecting tracking detector...');
+    logger.debug('scan-substep-start', { substep: 'tracking-detector-injection', auditId });
     await injectTrackingDetector(page);
-    console.log(`   ✅ Tracking detector injected in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-substep-complete', { substep: 'tracking-detector-injection', durationMs: Date.now() - stepStartTime, auditId });
 
     // Navigate to URL
     stepStartTime = Date.now();
-    console.log('   🌐 Navigating to URL...');
+    logger.debug('scan-substep-start', { substep: 'navigation', url: websiteUrl, auditId });
     await navigateToUrl(page, websiteUrl);
     networkMonitor.markPageLoaded();
-    console.log(`   ✅ Navigation completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-substep-complete', { substep: 'navigation', durationMs: Date.now() - stepStartTime, auditId });
 
-    console.log(`✅ Step 1 completed in ${Date.now() - initStartTime}ms`);
+    logger.info('scan-step-complete', { step: 1, durationMs: Date.now() - initStartTime, auditId });
 
     // Step 5.5: IMMEDIATE cookie snapshot (NO delay) - captures already loaded cookies
     stepStartTime = Date.now();
-    console.log('🍪 Step 5.5: Taking immediate cookie snapshot (baseline)...');
+    logger.info('scan-step-start', { step: 5.5, name: 'Taking immediate cookie snapshot (baseline)', auditId });
     const baselineCookies = await extractCookies(page, { skipDelay: true }); // NO delay!
     const baselineTime = await page.evaluate(() => performance.now());
-    console.log(`   📸 Baseline snapshot: ${baselineCookies.length} cookies at ${(baselineTime / 1000).toFixed(2)}s`);
+    logger.debug('scan-baseline-snapshot', { cookieCount: baselineCookies.length, timeSeconds: (baselineTime / 1000).toFixed(2), auditId });
 
     // Step 5.7: INTERMEDIATE snapshot AFTER 5s delay - captures async-loaded cookies (_ga, _gcl_au)
     stepStartTime = Date.now();
-    console.log('🍪 Step 5.7: Waiting 5s and taking intermediate snapshot (async cookies)...');
+    logger.info('scan-step-start', { step: 5.7, name: 'Waiting 5s and taking intermediate snapshot (async cookies)', auditId });
     await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s for _ga, _gcl_au to load
     const intermediateCookies = await extractCookies(page, { skipDelay: true }); // Immediate after wait
     const intermediateTime = await page.evaluate(() => performance.now());
-    console.log(`   📸 Intermediate snapshot: ${intermediateCookies.length} cookies at ${(intermediateTime / 1000).toFixed(2)}s`);
+    logger.debug('scan-progress', { message: `   📸 Intermediate snapshot: ${intermediateCookies.length} cookies at ${(intermediateTime / 1000).toFixed(2)}s`, auditId });
 
     // Step 6: Wait for page stability
     stepStartTime = Date.now();
-    console.log('⏳ Step 6: Waiting for page stability...');
+    logger.debug('scan-progress', { message: '⏳ Step 6: Waiting for page stability...', auditId });
     await waitForPageStability(page, 3000);
-    console.log(`   ✅ Page stable after ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Page stable after ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 6.6: Universal wait for Consent Mode initialization (CMP-agnostic)
     stepStartTime = Date.now();
-    console.log('   🎯 Waiting for Consent Mode data (google_tag_data.ics)...');
+    logger.debug('scan-progress', { message: '   🎯 Waiting for Consent Mode data (google_tag_data.ics)...', auditId });
 
     let consentReady = false;
     let attempts = 0;
@@ -439,7 +438,12 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
       if (debugData && attempts % 4 === 0) {
         // Log every 2s (every 4th attempt at 500ms intervals) to avoid spam
-        console.log(`   🔍 [Attempt ${attempts}] Consent Mode @ ${debugData.perfTime.toFixed(0)}ms:`, JSON.stringify(debugData.entries, null, 2));
+        logger.debug('consent-mode-wait-progress', {
+          attempt: attempts,
+          perfTimeMs: debugData.perfTime.toFixed(0),
+          entries: debugData.entries,
+          auditId
+        });
       }
 
       consentReady = await page.evaluate(() => {
@@ -484,24 +488,24 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     }
 
     if (consentReady) {
-      console.log(`   ✅ Consent Mode initialized after ${attempts * 500}ms`);
+      logger.debug('scan-progress', { message: `   ✅ Consent Mode initialized after ${attempts * 500}ms`, auditId });
     } else {
-      console.log(`   ⚠️  Consent Mode not initialized after ${maxAttempts * 500}ms - proceeding anyway`);
-      console.log(`   ℹ️  Note: This is normal if site doesn't use Consent Mode or uses non-standard implementation`);
+      logger.debug('scan-progress', { message: `   ⚠️  Consent Mode not initialized after ${maxAttempts * 500}ms - proceeding anyway`, auditId });
+      logger.debug('scan-progress', { message: `   ℹ️  Note: This is normal if site doesn't use Consent Mode or uses non-standard implementation`, auditId });
     }
 
-    console.log(`   ✅ Consent wait completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Consent wait completed in ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 6.5: Detect cookie banner appearance time
     stepStartTime = Date.now();
     const bannerAppearTime = await detectBannerAppearTime(page);
     if (bannerAppearTime) {
-      console.log(`   🍪 Cookie banner detected at ${(bannerAppearTime / 1000).toFixed(2)}s after page load`);
+      logger.debug('scan-progress', { message: `   🍪 Cookie banner detected at ${(bannerAppearTime / 1000).toFixed(2)}s after page load`, auditId });
     }
 
     // Step 7: Extract final cookies (with 3s delay for any remaining async cookies)
     stepStartTime = Date.now();
-    console.log('🍪 Step 7: Extracting final cookies and comparing with snapshots...');
+    logger.debug('scan-progress', { message: '🍪 Step 7: Extracting final cookies and comparing with snapshots...', auditId });
     updateProgress(auditId, 7, 17, 'Extracting and analyzing cookies...', startTime);
     let cookies = await extractCookies(page); // WITH delay (default 3s)
     const finalTime = await page.evaluate(() => performance.now());
@@ -543,55 +547,55 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     const cookiesBeforeBanner = cookies.filter(c => c.loadedBeforeBanner);
     const trackingBeforeBanner = trackingCookies.filter(c => c.loadedBeforeBanner);
 
-    console.log(`   Found ${cookies.length} cookies:`);
-    console.log(`   - Essential: ${cookieStats.byCategory.essential || 0}`);
-    console.log(`   - Analytics: ${cookieStats.byCategory.analytics || 0}`);
-    console.log(`   - Advertising: ${cookieStats.byCategory.advertising || 0}`);
-    console.log(`   - Tracking cookies: ${trackingCookies.length}`);
-    console.log(`   - Cookies before banner: ${cookiesBeforeBanner.length}`);
-    console.log(`   - TRACKING before banner: ${trackingBeforeBanner.length} ⚠️`);
+    logger.debug('scan-progress', { message: `   Found ${cookies.length} cookies:`, auditId });
+    logger.debug('scan-progress', { message: `   - Essential: ${cookieStats.byCategory.essential || 0}`, auditId });
+    logger.debug('scan-progress', { message: `   - Analytics: ${cookieStats.byCategory.analytics || 0}`, auditId });
+    logger.debug('scan-progress', { message: `   - Advertising: ${cookieStats.byCategory.advertising || 0}`, auditId });
+    logger.debug('scan-progress', { message: `   - Tracking cookies: ${trackingCookies.length}`, auditId });
+    logger.debug('scan-progress', { message: `   - Cookies before banner: ${cookiesBeforeBanner.length}`, auditId });
+    logger.debug('scan-progress', { message: `   - TRACKING before banner: ${trackingBeforeBanner.length} ⚠️`, auditId });
     if (trackingBeforeBanner.length > 0) {
       trackingBeforeBanner.forEach(c => {
-        console.log(`      ⚠️  ${c.name} (${c.category})`);
+        logger.debug('scan-progress', { message: `      ⚠️  ${c.name} (${c.category})`, auditId });
       });
     }
-    console.log(`   ✅ Cookie extraction completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Cookie extraction completed in ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 8: Get network requests (preliminary counts — will be re-categorized in Step 13.6)
     stepStartTime = Date.now();
-    console.log('📊 Step 8: Analyzing network requests (preliminary)...');
+    logger.debug('scan-progress', { message: '📊 Step 8: Analyzing network requests (preliminary)...', auditId });
     const networkStats = networkMonitor.getStats();
     let trackingRequests = networkMonitor.getTrackingRequests();
     let trackingBeforeConsentRequests = networkMonitor.getTrackingBeforeConsent();
 
-    console.log(`   Total requests: ${networkStats.totalRequests}`);
-    console.log(`   Tracking requests (preliminary, domain-based): ${networkStats.trackingRequests}`);
-    console.log(`   Tracking before consent (preliminary): ${networkStats.trackingBeforeConsent}`);
-    console.log(`   ℹ️  Note: Final counts after re-categorization in Step 13.6 (excludes blocked requests)`);
-    console.log(`   ✅ Network analysis completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   Total requests: ${networkStats.totalRequests}`, auditId });
+    logger.debug('scan-progress', { message: `   Tracking requests (preliminary, domain-based): ${networkStats.trackingRequests}`, auditId });
+    logger.debug('scan-progress', { message: `   Tracking before consent (preliminary): ${networkStats.trackingBeforeConsent}`, auditId });
+    logger.debug('scan-progress', { message: `   ℹ️  Note: Final counts after re-categorization in Step 13.6 (excludes blocked requests)`, auditId });
+    logger.debug('scan-progress', { message: `   ✅ Network analysis completed in ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 9: Analyze tracking before consent
     stepStartTime = Date.now();
-    console.log('🔬 Step 9: Analyzing tracking before consent...');
+    logger.debug('scan-progress', { message: '🔬 Step 9: Analyzing tracking before consent...', auditId });
     const trackingData = await extractTrackingData(page);
     const trackingAnalysis = analyzeTracking(trackingData, cookies);
-    console.log(`   ✅ Tracking analysis completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Tracking analysis completed in ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 10: Analyze cookie banner for NOYB violations
     stepStartTime = Date.now();
-    console.log('⚖️  Step 10: Analyzing cookie banner for GDPR violations...');
+    logger.debug('scan-progress', { message: '⚖️  Step 10: Analyzing cookie banner for GDPR violations...', auditId });
     updateProgress(auditId, 10, 17, 'Analyzing cookie banner compliance (NOYB checklist)...', startTime);
     const bannerAnalysis = await analyzeCookieBanner(page, auditId, cookies);
-    console.log(`   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`);
+    logger.debug('scan-progress', { message: `   ✅ Banner analysis completed in ${Date.now() - stepStartTime}ms`, auditId });
+    logger.debug('scan-progress', { message: `   📋 Violations found: ${bannerAnalysis.violationCount}/${bannerAnalysis.totalChecks}`, auditId });
     if (bannerAnalysis.skippedCount > 0) {
-      console.log(`   ⏭️  Checks skipped: ${bannerAnalysis.skippedCount}`);
+      logger.debug('scan-progress', { message: `   ⏭️  Checks skipped: ${bannerAnalysis.skippedCount}`, auditId });
     }
-    console.log(`   ⚠️  Critical violations: ${bannerAnalysis.hasCriticalViolations ? 'YES' : 'NO'}`);
+    logger.debug('scan-progress', { message: `   ⚠️  Critical violations: ${bannerAnalysis.hasCriticalViolations ? 'YES' : 'NO'}`, auditId });
 
     // Step 10.4: Extract consent monitoring data + vendor fingerprinting
     stepStartTime = Date.now();
-    console.log('🔬 Step 10.4: Extracting consent monitor data + fingerprinting vendors...');
+    logger.debug('scan-progress', { message: '🔬 Step 10.4: Extracting consent monitor data + fingerprinting vendors...', auditId });
     let monitoringData = null;
     let monitoringAnalysis = null;
     let detectedVendors = [];
@@ -602,18 +606,18 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       monitoringData = await extractMonitoringData(page);
 
       if (monitoringData.initialized) {
-        console.log(`   ✅ Consent monitor active:`);
-        console.log(`      - gtag calls: ${monitoringData.gtagCalls.length}`);
-        console.log(`      - dataLayer events: ${monitoringData.dataLayerEvents.length}`);
-        console.log(`      - Storage writes: ${monitoringData.storageWrites.length}`);
+        logger.debug('scan-progress', { message: `   ✅ Consent monitor active:`, auditId });
+        logger.debug('scan-progress', { message: `      - gtag calls: ${monitoringData.gtagCalls.length}`, auditId });
+        logger.debug('scan-progress', { message: `      - dataLayer events: ${monitoringData.dataLayerEvents.length}`, auditId });
+        logger.debug('scan-progress', { message: `      - Storage writes: ${monitoringData.storageWrites.length}`, auditId });
 
         if (monitoringData.errors.length > 0) {
-          console.log(`   ⚠️  Monitor errors: ${monitoringData.errors.length}`);
+          logger.debug('scan-progress', { message: `   ⚠️  Monitor errors: ${monitoringData.errors.length}`, auditId });
         }
 
         // Analyze for violations
         monitoringAnalysis = analyzeMonitoringData(monitoringData);
-        console.log(`   📊 Violations: ${monitoringAnalysis.violations.length} (${monitoringAnalysis.summary.criticalViolations} critical)`);
+        logger.debug('scan-progress', { message: `   📊 Violations: ${monitoringAnalysis.violations.length} (${monitoringAnalysis.summary.criticalViolations} critical)`, auditId });
 
         // Extract vendor evidence
         const vendorEvidence = await extractVendorEvidence(page, networkMonitor.getRequests());
@@ -623,20 +627,20 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
         detectedVendors = fingerprintVendors(vendorEvidence);
         vendorSummary = generateVendorSummary(detectedVendors, monitoringData.consentState);
 
-        console.log(`   🏷️  Detected vendors: ${detectedVendors.length}`);
+        logger.debug('scan-progress', { message: `   🏷️  Detected vendors: ${detectedVendors.length}`, auditId });
         if (detectedVendors.length > 0) {
           const topVendors = detectedVendors.slice(0, 5);
           topVendors.forEach(vendor => {
             const violationFlag = vendor.violation ? '⚠️' : '✅';
-            console.log(`      ${violationFlag} ${vendor.name} (${vendor.category}, ${vendor.confidence}% confidence)`);
+            logger.debug('scan-progress', { message: `      ${violationFlag} ${vendor.name} (${vendor.category}, ${vendor.confidence}% confidence)`, auditId });
           });
         }
 
         if (vendorSummary.violations.length > 0) {
-          console.log(`   ⚠️  Vendor violations: ${vendorSummary.violations.length}`);
+          logger.debug('scan-progress', { message: `   ⚠️  Vendor violations: ${vendorSummary.violations.length}`, auditId });
         }
       } else {
-        console.log(`   ⚠️  Consent monitor not initialized - wrappers may have failed`);
+        logger.debug('scan-progress', { message: `   ⚠️  Consent monitor not initialized - wrappers may have failed`, auditId });
       }
 
     } catch (error) {
@@ -647,18 +651,18 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       });
     }
 
-    console.log(`   ✅ Consent monitoring + vendor fingerprinting completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Consent monitoring + vendor fingerprinting completed in ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 10.5: Audit Google Consent Mode v2 (with monitoring data)
     stepStartTime = Date.now();
-    console.log('🎯 Step 10.5: Checking Google Consent Mode v2...');
+    logger.debug('scan-progress', { message: '🎯 Step 10.5: Checking Google Consent Mode v2...', auditId });
     const consentModeAudit = await auditConsentMode(page, monitoringData);
-    console.log(`   ✅ Consent Mode audit completed in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Consent Mode audit completed in ${Date.now() - stepStartTime}ms`, auditId });
     if (consentModeAudit.detected) {
-      console.log(`   📊 Version: ${consentModeAudit.version || 'unknown'}`);
-      console.log(`   ${consentModeAudit.compliant ? '✅' : '⚠️'}  GDPR Compliance: ${consentModeAudit.compliant ? 'YES' : 'NO'}`);
+      logger.debug('scan-progress', { message: `   📊 Version: ${consentModeAudit.version || 'unknown'}`, auditId });
+      logger.debug('scan-progress', { message: `   ${consentModeAudit.compliant ? '✅' : '⚠️'}  GDPR Compliance: ${consentModeAudit.compliant ? 'YES' : 'NO'}`, auditId });
     } else {
-      console.log(`   ⚠️  Consent Mode not detected`);
+      logger.debug('scan-progress', { message: `   ⚠️  Consent Mode not detected`, auditId });
     }
 
     // Step 10.6: Validate Consent Mode V2 execution order
@@ -667,8 +671,8 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       networkMonitor.getRequests().map(r => ({ url: r.url, timestamp: r.timestamp }))
     );
     if (!orderValidation.valid && !orderValidation.skipped) {
-      console.log(`   ⚠️  Consent Mode execution order violation: ${orderValidation.violationType}`);
-      console.log(`      ${orderValidation.reason}`);
+      logger.debug('scan-progress', { message: `   ⚠️  Consent Mode execution order violation: ${orderValidation.violationType}`, auditId });
+      logger.debug('scan-progress', { message: `      ${orderValidation.reason}`, auditId });
       consentModeAudit.executionOrderValidation = orderValidation;
       consentModeAudit.hasExecutionOrderViolation = true;
     } else {
@@ -679,7 +683,7 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Step 11 & 12: Screenshots (HARD DISABLED - temporary)
     // CRITICAL: Do NOT execute screenshot code to prevent 2.5min blocking
     let screenshotUrls = {};
-    console.log('⏭️  Step 11-12: Screenshots DISABLED (temporary) - skipping to maintain fast audit loop');
+    logger.debug('scan-progress', { message: '⏭️  Step 11-12: Screenshots DISABLED (temporary) - skipping to maintain fast audit loop', auditId });
 
     // FUTURE: When screenshots are re-enabled, uncomment below with proper safeguards:
     // - protocolTimeout must be lowered (done: 10s)
@@ -689,17 +693,17 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     /*
     if (constants.ENABLE_SCREENSHOTS) {
       stepStartTime = Date.now();
-      console.log('📸 Step 11: Capturing screenshots...');
+      logger.debug('scan-progress', { message: '📸 Step 11: Capturing screenshots...', auditId });
       await waitForStableView(page);
       const screenshots = await captureScreenshots(page);
-      console.log(`   ✅ Screenshots captured in ${Date.now() - stepStartTime}ms`);
+      logger.debug('scan-progress', { message: `   ✅ Screenshots captured in ${Date.now() - stepStartTime}ms`, auditId });
 
       stepStartTime = Date.now();
-      console.log('☁️  Step 12: Uploading screenshots to Vercel Blob...');
+      logger.debug('scan-progress', { message: '☁️  Step 12: Uploading screenshots to Vercel Blob...', auditId });
       screenshotUrls = await uploadScreenshots(screenshots, auditUid);
-      console.log(`   ✅ Screenshots uploaded in ${Date.now() - stepStartTime}ms`);
-      console.log(`   📎 Full page: ${screenshotUrls.fullPageUrl ? 'Uploaded' : 'Failed'}`);
-      console.log(`   📎 Banner: ${screenshotUrls.bannerUrl ? 'Uploaded' : 'Failed'}`);
+      logger.debug('scan-progress', { message: `   ✅ Screenshots uploaded in ${Date.now() - stepStartTime}ms`, auditId });
+      logger.debug('scan-progress', { message: `   📎 Full page: ${screenshotUrls.fullPageUrl ? 'Uploaded' : 'Failed'}`, auditId });
+      logger.debug('scan-progress', { message: `   📎 Banner: ${screenshotUrls.bannerUrl ? 'Uploaded' : 'Failed'}`, auditId });
     }
     */
 
@@ -707,11 +711,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     stepStartTime = Date.now();
     updateProgress(auditId, 13, 17, 'Building request timeline and capturing screenshots...', startTime);
     const metadata = await getPageMetadata(page);
-    console.log(`   ✅ Metadata extracted in ${Date.now() - stepStartTime}ms`);
+    logger.debug('scan-progress', { message: `   ✅ Metadata extracted in ${Date.now() - stepStartTime}ms`, auditId });
 
     // Step 13.5: Build timeline
     stepStartTime = Date.now();
-    console.log('⏱️  Step 13.5: Building request timeline...');
+    logger.debug('scan-progress', { message: '⏱️  Step 13.5: Building request timeline...', auditId });
     const pageLoadTime = await page.evaluate(() => {
       return performance.timing.loadEventEnd - performance.timing.navigationStart;
     });
@@ -725,21 +729,21 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     });
 
     const timelineReport = generateTimelineReport(timeline);
-    console.log(`   ✅ Timeline built in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📊 Events: ${timeline.events.length}, Violations: ${timeline.violations?.length || 0}`);
-    console.log(`   ⚠️  Before consent: ${timelineReport.beforeConsent.cookies} cookies, ${timelineReport.beforeConsent.requests} requests`);
+    logger.debug('scan-progress', { message: `   ✅ Timeline built in ${Date.now() - stepStartTime}ms`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Events: ${timeline.events.length}, Violations: ${timeline.violations?.length || 0}`, auditId });
+    logger.debug('scan-progress', { message: `   ⚠️  Before consent: ${timelineReport.beforeConsent.cookies} cookies, ${timelineReport.beforeConsent.requests} requests`, auditId });
 
     // Step 13.6: Categorize network requests (Problem 5)
     stepStartTime = Date.now();
-    console.log('🔍 Step 13.6: Categorizing network requests...');
+    logger.debug('scan-progress', { message: '🔍 Step 13.6: Categorizing network requests...', auditId });
     const requestCategorization = categorizeRequests(networkMonitor.getRequests());
     const trackingSummary = getTrackingSummary(requestCategorization);
-    console.log(`   ✅ Categorization completed in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📊 Definite tracking: ${requestCategorization.categoryA.count}`);
-    console.log(`   📊 Suspicious: ${requestCategorization.categoryB.count}`);
-    console.log(`   📊 Benign: ${requestCategorization.categoryC.count}`);
+    logger.debug('scan-progress', { message: `   ✅ Categorization completed in ${Date.now() - stepStartTime}ms`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Definite tracking: ${requestCategorization.categoryA.count}`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Suspicious: ${requestCategorization.categoryB.count}`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Benign: ${requestCategorization.categoryC.count}`, auditId });
     if (Object.keys(requestCategorization.vendorBreakdown).length > 0) {
-      console.log(`   📊 Top vendors: ${Object.keys(requestCategorization.vendorBreakdown).slice(0, 3).join(', ')}`);
+      logger.debug('scan-progress', { message: `   📊 Top vendors: ${Object.keys(requestCategorization.vendorBreakdown).slice(0, 3).join(', ')}`, auditId });
     }
 
     // ── CRITICAL FIX: Replace boolean-flagged tracking arrays with re-categorized data ──
@@ -753,15 +757,15 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     // Re-assign trackingBeforeConsentRequests to use final categorized + beforeConsent filter
     trackingBeforeConsentRequests = requestCategorization.trackingRequests.filter(r => r.beforeConsent);
 
-    console.log(`   🔄 Tracking requests (re-categorized): ${trackingRequests.length}`);
-    console.log(`   🔄 Tracking before consent (re-categorized): ${trackingBeforeConsentRequests.length}`);
+    logger.debug('scan-progress', { message: `   🔄 Tracking requests (re-categorized): ${trackingRequests.length}`, auditId });
+    logger.debug('scan-progress', { message: `   🔄 Tracking before consent (re-categorized): ${trackingBeforeConsentRequests.length}`, auditId });
 
     // Step 13.7: Network-storage correlation
     // Correlates network tracking requests with storage writes within a time window.
     // Correlated findings = highest-confidence GDPR evidence (network transmission + local persistence).
     // NOTE: trackingBeforeConsentRequests now contains re-categorized data (blocked requests excluded).
     stepStartTime = Date.now();
-    console.log('🔗 Step 13.7: Correlating network requests with storage writes...');
+    logger.debug('scan-progress', { message: '🔗 Step 13.7: Correlating network requests with storage writes...', auditId });
 
     const networkStorageCorrelations = correlateNetworkAndStorage(
       trackingBeforeConsentRequests,  // ← Re-categorized data (excludes blocked requests via hard override)
@@ -769,9 +773,9 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       requestCategorization
     );
 
-    console.log(`   ✅ Correlation completed in ${Date.now() - stepStartTime}ms`);
-    console.log(`   🔗 Correlated violations: ${networkStorageCorrelations.correlatedViolations.length}`);
-    console.log(`   📊 Confidence: ${networkStorageCorrelations.overallConfidence}%`);
+    logger.debug('scan-progress', { message: `   ✅ Correlation completed in ${Date.now() - stepStartTime}ms`, auditId });
+    logger.debug('scan-progress', { message: `   🔗 Correlated violations: ${networkStorageCorrelations.correlatedViolations.length}`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Confidence: ${networkStorageCorrelations.overallConfidence}%`, auditId });
 
     // Calculate scan duration
     const scanDuration = Math.round((Date.now() - startTime) / 1000);
@@ -848,26 +852,26 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
     };
 
     // Step 14: Save to database
-    console.log('💾 Step 14: Saving results to database...');
+    logger.debug('scan-progress', { message: '💾 Step 14: Saving results to database...', auditId });
     await saveScanResults(auditId, results);
 
     // Step 15: Close browser
-    console.log('🧹 Step 15: Cleaning up...');
+    logger.debug('scan-progress', { message: '🧹 Step 15: Cleaning up...', auditId });
     await closeBrowser(browser);
 
     // Step 16: Consent Simulation (Human-Assisted Accept vs Reject)
     let consentSimulation = null;
     stepStartTime = Date.now();
-    console.log('');
-    console.log('🎭 Step 16: Running human-assisted consent simulation...');
+    logger.debug('scan-progress', { message: '', auditId });
+    logger.debug('scan-progress', { message: '🎭 Step 16: Running human-assisted consent simulation...', auditId });
     updateProgress(auditId, 16, 17, 'Consent simulation (human-assisted)...', startTime);
 
     try {
       consentSimulation = await runAssistedConsentSimulation(websiteUrl, auditId);
 
       if (consentSimulation.waiting) {
-        console.log(`   ⏸️  Consent simulation waiting: ${consentSimulation.reason}`);
-        console.log(`   📋 Instructions: ${consentSimulation.instructions}`);
+        logger.debug('scan-progress', { message: `   ⏸️  Consent simulation waiting: ${consentSimulation.reason}`, auditId });
+        logger.debug('scan-progress', { message: `   📋 Instructions: ${consentSimulation.instructions}`, auditId });
 
         // PAUSE audit and set status to WAITING_MANUAL_CONSENT
         updateProgress(auditId, 16, 17, 'WAITING_MANUAL_CONSENT', startTime, {
@@ -888,11 +892,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
           WHERE id = ?
         `).run(constants.AUDIT_STATUS.PAUSED, auditId);
 
-        console.log('');
-        console.log('⏸️  === AUDIT PAUSED ===');
-        console.log('   Waiting for manual consent simulation upload from local machine');
-        console.log('   Audit will resume automatically after data upload via /api/audit/:id/resume');
-        console.log('');
+        logger.debug('scan-progress', { message: '', auditId });
+        logger.debug('scan-progress', { message: '⏸️  === AUDIT PAUSED ===', auditId });
+        logger.debug('scan-progress', { message: '   Waiting for manual consent simulation upload from local machine', auditId });
+        logger.debug('scan-progress', { message: '   Audit will resume automatically after data upload via /api/audit/:id/resume', auditId });
+        logger.debug('scan-progress', { message: '', auditId });
 
         // Return pause indicator - do NOT continue to Step 17
         return {
@@ -902,12 +906,12 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
           instructions: consentSimulation.instructions
         };
       } else if (consentSimulation.skipped) {
-        console.log(`   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`);
+        logger.debug('scan-progress', { message: `   ⏭️  Consent simulation skipped: ${consentSimulation.reason}`, auditId });
       } else {
-        console.log(`   ✅ Consent simulation completed in ${consentSimulation.duration}s`);
+        logger.debug('scan-progress', { message: `   ✅ Consent simulation completed in ${consentSimulation.duration}s`, auditId });
         if (consentSimulation.comparison) {
-          console.log(`   🍪 New cookies after Accept: ${consentSimulation.comparison.cookies.newAfterAccept.length}`);
-          console.log(`   📡 New tracking domains after Accept: ${consentSimulation.comparison.network.newDomainsAfterAccept.length}`);
+          logger.debug('scan-progress', { message: `   🍪 New cookies after Accept: ${consentSimulation.comparison.cookies.newAfterAccept.length}`, auditId });
+          logger.debug('scan-progress', { message: `   📡 New tracking domains after Accept: ${consentSimulation.comparison.network.newDomainsAfterAccept.length}`, auditId });
         }
       }
 
@@ -930,20 +934,20 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
     // Step 17: Calculate overall compliance score (Problem 7)
     stepStartTime = Date.now();
-    console.log('');
-    console.log('📊 Step 17: Calculating overall compliance score...');
+    logger.debug('scan-progress', { message: '', auditId });
+    logger.debug('scan-progress', { message: '📊 Step 17: Calculating overall compliance score...', auditId });
     updateProgress(auditId, 17, 17, 'Calculating compliance score and finalizing report...', startTime);
     const complianceScore = calculateOverallScore(results);
     results.complianceScore = complianceScore;
-    console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
-    console.log(`   📋 Components:`);
-    console.log(`      - Privacy Policy: ${complianceScore.components.privacyPolicy?.score ?? 0}/100`);
-    console.log(`      - Cookie Banner: ${complianceScore.components.cookieBanner?.score ?? 0}/100`);
-    console.log(`      - Technical: ${complianceScore.components.technical?.score ?? 0}/100`);
-    console.log(`      - Cookie Policy: ${complianceScore.components.cookiePolicy?.score ?? 0}/100`);
+    logger.debug('scan-progress', { message: `   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`, auditId });
+    logger.debug('scan-progress', { message: `   📋 Components:`, auditId });
+    logger.debug('scan-progress', { message: `      - Privacy Policy: ${complianceScore.components.privacyPolicy?.score ?? 0}/100`, auditId });
+    logger.debug('scan-progress', { message: `      - Cookie Banner: ${complianceScore.components.cookieBanner?.score ?? 0}/100`, auditId });
+    logger.debug('scan-progress', { message: `      - Technical: ${complianceScore.components.technical?.score ?? 0}/100`, auditId });
+    logger.debug('scan-progress', { message: `      - Cookie Policy: ${complianceScore.components.cookiePolicy?.score ?? 0}/100`, auditId });
     if (complianceScore.capsApplied.length > 0) {
-      console.log(`   ⚠️  Score caps applied: ${complianceScore.capsApplied.join(', ')}`);
+      logger.debug('scan-progress', { message: `   ⚠️  Score caps applied: ${complianceScore.capsApplied.join(', ')}`, auditId });
     }
 
     logger.info('scan-complete', {
@@ -1129,7 +1133,7 @@ async function saveScanResults(auditId, results) {
       }
     }
 
-    console.log('✅ Scan results saved to database');
+    logger.debug('scan-progress', { message: '✅ Scan results saved to database', auditId });
   } catch (error) {
     logger.error('scan-save-failed', {
       error: '❌ ' + error.message,
@@ -1168,7 +1172,7 @@ function savePartialResults(auditId, results) {
       `).run(auditId, JSON.stringify([]), 0);
     }
 
-    console.log('   ✅ Partial results saved');
+    logger.debug('scan-progress', { message: '   ✅ Partial results saved', auditId });
   } catch (error) {
     logger.warn('partial-results-save-failed', {
       error: '⚠️ ' + error.message,
@@ -1181,11 +1185,11 @@ function savePartialResults(auditId, results) {
  * Continue audit from Step 17 (after manual consent upload)
  */
 async function continueAuditFromStep17(auditId, websiteUrl) {
-  console.log('');
-  console.log('▶️  === RESUMING AUDIT FROM STEP 17 ===');
-  console.log(`   Audit ID: ${auditId}`);
-  console.log(`   Website: ${websiteUrl}`);
-  console.log('');
+  logger.debug('scan-progress', { message: '', auditId });
+  logger.debug('scan-progress', { message: '▶️  === RESUMING AUDIT FROM STEP 17 ===', auditId });
+  logger.debug('scan-progress', { message: `   Audit ID: ${auditId}`, auditId });
+  logger.debug('scan-progress', { message: `   Website: ${websiteUrl}`, auditId });
+  logger.debug('scan-progress', { message: '', auditId });
 
   const startTime = Date.now();
   const db = getDatabase();
@@ -1213,15 +1217,15 @@ async function continueAuditFromStep17(auditId, websiteUrl) {
 
     // Step 17: Calculate overall compliance score
     let stepStartTime = Date.now();
-    console.log('');
-    console.log('📊 Step 17: Calculating overall compliance score...');
+    logger.debug('scan-progress', { message: '', auditId });
+    logger.debug('scan-progress', { message: '📊 Step 17: Calculating overall compliance score...', auditId });
     updateProgress(auditId, 17, 17, 'Calculating compliance score and finalizing report...', startTime);
 
     const complianceScore = calculateOverallScore(results);
     results.complianceScore = complianceScore;
 
-    console.log(`   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`);
-    console.log(`   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`);
+    logger.debug('scan-progress', { message: `   ✅ Compliance score calculated in ${Date.now() - stepStartTime}ms`, auditId });
+    logger.debug('scan-progress', { message: `   📊 Overall Score: ${complianceScore.overallScore}/100 (Grade: ${complianceScore.grade})`, auditId });
 
     // Update database with compliance score
     db.prepare(`
@@ -1238,10 +1242,10 @@ async function continueAuditFromStep17(auditId, websiteUrl) {
       auditId
     );
 
-    console.log('');
-    console.log('✅ === AUDIT RESUMED AND COMPLETED ===');
-    console.log(`   Total duration: ${Math.round((Date.now() - startTime) / 1000)}s`);
-    console.log('');
+    logger.debug('scan-progress', { message: '', auditId });
+    logger.debug('scan-progress', { message: '✅ === AUDIT RESUMED AND COMPLETED ===', auditId });
+    logger.debug('scan-progress', { message: `   Total duration: ${Math.round((Date.now() - startTime) / 1000)}s`, auditId });
+    logger.debug('scan-progress', { message: '', auditId });
 
   } catch (error) {
     logger.error('audit-resume-failed', {

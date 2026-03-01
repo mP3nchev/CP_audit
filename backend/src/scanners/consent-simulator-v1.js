@@ -40,18 +40,16 @@ const TRACKING_DOMAINS = [
 async function waitForHumanAction(scenarioType) {
   const actionText = scenarioType === 'reject' ? 'REJECT' : 'ACCEPT';
 
-  console.log('');
-  console.log('═'.repeat(70));
-  console.log(`🎯 HUMAN ACTION REQUIRED - ${scenarioType.toUpperCase()} SCENARIO`);
-  console.log('═'.repeat(70));
-  console.log('');
-  console.log(`  1. Locate the consent banner on the page`);
-  console.log(`  2. Click the "${actionText}" button`);
-  console.log(`  3. Wait 5 seconds for the page to settle`);
-  console.log(`  4. Press ENTER in this terminal to continue`);
-  console.log('');
-  console.log('═'.repeat(70));
-  console.log('');
+  logger.debug('separator', { line: '═'.repeat(70) });
+  logger.debug('consent-sim-v1-progress', { message: `🎯 HUMAN ACTION REQUIRED - ${scenarioType.toUpperCase()} SCENARIO` });
+  logger.debug('separator', { line: '═'.repeat(70) });
+
+  logger.debug('consent-sim-v1-progress', { message: `  1. Locate the consent banner on the page` });
+  logger.debug('consent-sim-v1-progress', { message: `  2. Click the "${actionText}" button` });
+  logger.debug('consent-sim-v1-progress', { message: `  3. Wait 5 seconds for the page to settle` });
+  logger.debug('consent-sim-v1-progress', { message: `  4. Press ENTER in this terminal to continue` });
+
+  logger.debug('separator', { line: '═'.repeat(70) });
 
   return new Promise((resolve) => {
     const rl = readline.createInterface({
@@ -61,7 +59,7 @@ async function waitForHumanAction(scenarioType) {
 
     rl.question('Press ENTER after completing the above steps... ', () => {
       rl.close();
-      console.log('✅ Continuing with state capture...\n');
+      logger.debug('consent-sim-v1-progress', { message: '✅ Continuing with state capture...\n' });
       resolve();
     });
   });
@@ -104,7 +102,7 @@ function setupNetworkListener(page) {
  * @returns {Promise<Object>} Captured state
  */
 async function captureState(page, networkRequests) {
-  console.log('   📸 Capturing state...');
+  logger.debug('consent-sim-v1-progress', { message: '   📸 Capturing state...' });
 
   // 1. Extract cookies (triple-source: Storage + Network + document.cookie)
   const cookies = await extractCookies(page, { skipDelay: false, delay: 3000 });
@@ -128,14 +126,14 @@ async function captureState(page, networkRequests) {
   let screenshot = null;
   try {
     screenshot = await page.screenshot({ fullPage: false, type: 'png' });
-    console.log(`   📸 Screenshot captured (${screenshot.length} bytes)`);
+    logger.debug('consent-sim-v1-progress', { message: `   📸 Screenshot captured (${screenshot.length} bytes)` });
 
     // Save to /tmp for evidence
     const fs = require('fs');
     const timestamp = Date.now();
     const screenshotPath = `/tmp/consent-${timestamp}.png`;
     fs.writeFileSync(screenshotPath, screenshot);
-    console.log(`   💾 Saved: ${screenshotPath}`);
+    logger.debug('consent-sim-v1-progress', { message: `   💾 Saved: ${screenshotPath}` });
   } catch (e) {
     logger.warn('screenshot-capture-failed', {
       error: '⚠️ ' + e.message,
@@ -143,7 +141,7 @@ async function captureState(page, networkRequests) {
     });
   }
 
-  console.log(`   ✅ Captured: ${cookies.length} cookies, ${trackingRequests.length} tracking requests, ${Object.keys(localStorage).length} localStorage items`);
+  logger.debug('consent-sim-v1-progress', { message: `   ✅ Captured: ${cookies.length} cookies, ${trackingRequests.length} tracking requests, ${Object.keys(localStorage).length} localStorage items` });
 
   return {
     cookies: cookies,
@@ -179,8 +177,8 @@ function dedupeCookies(cookies) {
  * @returns {Object} Diff comparison
  */
 function compareStates(rejectState, acceptState) {
-  console.log('');
-  console.log('🔍 === DIFF COMPARISON ===');
+
+  logger.debug('consent-sim-v1-progress', { message: '🔍 === DIFF COMPARISON ===' });
 
   // Dedupe cookies BEFORE comparison
   const rejectCookies = dedupeCookies(rejectState.cookies);
@@ -211,16 +209,15 @@ function compareStates(rejectState, acceptState) {
   const newStorageAfterAccept = [...acceptKeys].filter(k => !rejectKeys.has(k));
 
   // Log summary
-  console.log(`   🍪 Reject cookies: ${rejectCookies.length}`);
-  console.log(`   🍪 Accept cookies: ${acceptCookies.length}`);
-  console.log(`   ✨ NEW cookies after Accept: ${newCookiesAfterAccept.length}`);
-  console.log('');
-  console.log(`   📡 Reject tracking requests: ${rejectState.networkRequests.length}`);
-  console.log(`   📡 Accept tracking requests: ${acceptState.networkRequests.length}`);
-  console.log(`   ✨ NEW tracking domains after Accept: ${newDomainsAfterAccept.length}`);
-  console.log('');
-  console.log(`   💾 localStorage changes: ${newStorageAfterAccept.length} new keys`);
-  console.log('');
+  logger.debug('consent-sim-v1-progress', { message: `   🍪 Reject cookies: ${rejectCookies.length}` });
+  logger.debug('consent-sim-v1-progress', { message: `   🍪 Accept cookies: ${acceptCookies.length}` });
+  logger.debug('consent-sim-v1-progress', { message: `   ✨ NEW cookies after Accept: ${newCookiesAfterAccept.length}` });
+
+  logger.debug('consent-sim-v1-progress', { message: `   📡 Reject tracking requests: ${rejectState.networkRequests.length}` });
+  logger.debug('consent-sim-v1-progress', { message: `   📡 Accept tracking requests: ${acceptState.networkRequests.length}` });
+  logger.debug('consent-sim-v1-progress', { message: `   ✨ NEW tracking domains after Accept: ${newDomainsAfterAccept.length}` });
+
+  logger.debug('consent-sim-v1-progress', { message: `   💾 localStorage changes: ${newStorageAfterAccept.length} new keys` });
 
   return {
     cookies: {
@@ -251,9 +248,9 @@ function compareStates(rejectState, acceptState) {
  * @returns {Promise<Object>} Scenario state
  */
 async function runScenario(browser, websiteUrl, scenarioType) {
-  console.log('');
-  console.log(`${scenarioType === 'reject' ? '🚫' : '✅'} === ${scenarioType.toUpperCase()} SCENARIO ===`);
-  console.log(`   Testing: ${websiteUrl}`);
+
+  logger.debug('consent-sim-v1-progress', { message: `${scenarioType === 'reject' ? '🚫' : '✅'} === ${scenarioType.toUpperCase()} SCENARIO ===` });
+  logger.debug('consent-sim-v1-progress', { message: `   Testing: ${websiteUrl}` });
 
   // Create incognito context (isolated cookies/storage)
   const context = await browser.createIncognitoBrowserContext();
@@ -264,7 +261,7 @@ async function runScenario(browser, websiteUrl, scenarioType) {
 
   try {
     // Navigate to URL
-    console.log('   🌐 Navigating to page...');
+    logger.debug('consent-sim-v1-progress', { message: '   🌐 Navigating to page...' });
     await page.goto(websiteUrl, {
       waitUntil: 'load',
       timeout: 30000
@@ -276,22 +273,22 @@ async function runScenario(browser, websiteUrl, scenarioType) {
       throw new Error('Navigation failed - page is about:blank');
     }
 
-    console.log('   ✅ Page loaded successfully');
+    logger.debug('consent-sim-v1-progress', { message: '   ✅ Page loaded successfully' });
 
     // 🎯 NEW: Analyze cookie banner for noyb violations BEFORE user interaction
     // This happens while banner is visible in headful browser
-    console.log('');
-    console.log('   🔍 Analyzing cookie banner for noyb compliance...');
+
+    logger.debug('consent-sim-v1-progress', { message: '   🔍 Analyzing cookie banner for noyb compliance...' });
     let bannerAnalysis = null;
     try {
       bannerAnalysis = await analyzeCookieBanner(page, null, null);
       const passedChecks = bannerAnalysis.totalChecks - bannerAnalysis.skippedCount;
-      console.log(`   ✅ Banner analysis complete: ${bannerAnalysis.passedCount}/${passedChecks} checks passed (${bannerAnalysis.compliancePercentage}%)`);
+      logger.debug('consent-sim-v1-progress', { message: `   ✅ Banner analysis complete: ${bannerAnalysis.passedCount}/${passedChecks} checks passed (${bannerAnalysis.compliancePercentage}%)` });
       if (bannerAnalysis.violationCount > 0) {
-        console.log(`   ⚠️  Found ${bannerAnalysis.violationCount} violation(s)`);
+        logger.debug('consent-sim-v1-progress', { message: `   ⚠️  Found ${bannerAnalysis.violationCount} violation(s)` });
       }
       if (bannerAnalysis.skippedCount > 0) {
-        console.log(`   ⏭️  Skipped ${bannerAnalysis.skippedCount} check(s)`);
+        logger.debug('consent-sim-v1-progress', { message: `   ⏭️  Skipped ${bannerAnalysis.skippedCount} check(s)` });
       }
     } catch (error) {
       logger.warn('banner-analysis-failed', {
@@ -303,7 +300,6 @@ async function runScenario(browser, websiteUrl, scenarioType) {
         skipped: true
       };
     }
-    console.log('');
 
     // Wait for human action
     await waitForHumanAction(scenarioType);
@@ -406,15 +402,15 @@ async function checkForManualConsentData(auditId, websiteUrl) {
 async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
   const startTime = Date.now();
 
-  console.log(`[DEBUG] Consent simulation starting...`);
-  console.log(`[DEBUG] IS_RAILWAY: ${constants.IS_RAILWAY}`);
-  console.log(`[DEBUG] CONSENT_MODE: ${constants.CONSENT_MODE}`);
-  console.log(`[DEBUG] RAILWAY_ENVIRONMENT: ${process.env.RAILWAY_ENVIRONMENT}`);
-  console.log(`[DEBUG] auditId: ${auditId}`);
+  logger.debug('consent-sim-v1-progress', { message: `[DEBUG] Consent simulation starting...` });
+  logger.debug('consent-sim-v1-progress', { message: `[DEBUG] IS_RAILWAY: ${constants.IS_RAILWAY}` });
+  logger.debug('consent-sim-v1-progress', { message: `[DEBUG] CONSENT_MODE: ${constants.CONSENT_MODE}` });
+  logger.debug('consent-sim-v1-progress', { message: `[DEBUG] RAILWAY_ENVIRONMENT: ${process.env.RAILWAY_ENVIRONMENT}` });
+  logger.debug('consent-sim-v1-progress', { message: `[DEBUG] auditId: ${auditId}` });
 
   // Check if running on Railway (no GUI available)
   if (constants.IS_RAILWAY && constants.CONSENT_MODE === 'assisted') {
-    console.log(`[DEBUG] Entered Railway block - ALWAYS pausing for manual upload...`);
+    logger.debug('consent-sim-v1-progress', { message: `[DEBUG] Entered Railway block - ALWAYS pausing for manual upload...` });
 
     // IMPORTANT: Always pause on first run during audit scan
     // Data will be loaded when audit is resumed via continueAuditFromStep17()
@@ -423,18 +419,16 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
       : 'https://cpaudit-production.up.railway.app';
 
-    console.log('');
-    console.log('⏸️  === WAITING FOR MANUAL CONSENT SIMULATION ===');
-    console.log('   Reason: Assisted mode requires local execution (GUI needed)');
-    console.log('   Environment: Railway (no display available)');
-    console.log('');
-    console.log('📋 INSTRUCTIONS:');
-    console.log('   1. Open a terminal on your LOCAL machine (Windows/Mac/Linux)');
-    console.log(`   2. Run: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayUrl}`);
-    console.log('   3. Complete the Reject + Accept scenarios');
-    console.log('   4. Data will be uploaded automatically');
-    console.log('   5. Click "Resume Audit" button in the frontend to continue');
-    console.log('');
+    logger.debug('consent-sim-v1-progress', { message: '⏸️  === WAITING FOR MANUAL CONSENT SIMULATION ===' });
+    logger.debug('consent-sim-v1-progress', { message: '   Reason: Assisted mode requires local execution (GUI needed)' });
+    logger.debug('consent-sim-v1-progress', { message: '   Environment: Railway (no display available)' });
+
+    logger.debug('consent-sim-v1-progress', { message: '📋 INSTRUCTIONS:' });
+    logger.debug('consent-sim-v1-progress', { message: '   1. Open a terminal on your LOCAL machine (Windows/Mac/Linux)' });
+    logger.debug('consent-sim-v1-progress', { message: `   2. Run: node manual-consent-audit.js --url "${websiteUrl}" --audit-id ${auditId} --api-url ${railwayUrl}` });
+    logger.debug('consent-sim-v1-progress', { message: '   3. Complete the Reject + Accept scenarios' });
+    logger.debug('consent-sim-v1-progress', { message: '   4. Data will be uploaded automatically' });
+    logger.debug('consent-sim-v1-progress', { message: '   5. Click "Resume Audit" button in the frontend to continue' });
 
     return {
       waiting: true,
@@ -455,10 +449,9 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     const existingData = await checkForManualConsentData(auditId, websiteUrl);
 
     if (existingData) {
-      console.log('');
-      console.log('✅ Using pre-uploaded manual consent simulation data');
-      console.log(`   Upload time: ${existingData.uploadedAt}`);
-      console.log('');
+
+      logger.debug('consent-sim-v1-progress', { message: '✅ Using pre-uploaded manual consent simulation data' });
+      logger.debug('consent-sim-v1-progress', { message: `   Upload time: ${existingData.uploadedAt}` });
 
       return existingData.consentSimulation;
     }
@@ -466,15 +459,14 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     // No data - check if we can run headful browser
     // If headless mode or no GUI, skip and show instructions
     if (constants.PUPPETEER_HEADLESS) {
-      console.log('');
-      console.log('⚠️  === CONSENT SIMULATION SKIPPED ===');
-      console.log('   Reason: PUPPETEER_HEADLESS=true (no GUI for manual interaction)');
-      console.log('   Environment: Local headless mode');
-      console.log('');
-      console.log('💡 To run consent simulation:');
-      console.log('   Option 1: Set PUPPETEER_HEADLESS=false in .env and restart');
-      console.log(`   Option 2: Run manually: node manual-consent-audit.js --url "${websiteUrl}"`);
-      console.log('');
+
+      logger.debug('consent-sim-v1-progress', { message: '⚠️  === CONSENT SIMULATION SKIPPED ===' });
+      logger.debug('consent-sim-v1-progress', { message: '   Reason: PUPPETEER_HEADLESS=true (no GUI for manual interaction)' });
+      logger.debug('consent-sim-v1-progress', { message: '   Environment: Local headless mode' });
+
+      logger.debug('consent-sim-v1-progress', { message: '💡 To run consent simulation:' });
+      logger.debug('consent-sim-v1-progress', { message: '   Option 1: Set PUPPETEER_HEADLESS=false in .env and restart' });
+      logger.debug('consent-sim-v1-progress', { message: `   Option 2: Run manually: node manual-consent-audit.js --url "${websiteUrl}"` });
 
       return {
         waiting: false,
@@ -488,32 +480,30 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
     }
   }
 
-  console.log('');
-  console.log('═'.repeat(70));
-  console.log('🎭 CONSENT SIMULATION v1.0 - Human-Assisted Browser Session');
-  console.log('═'.repeat(70));
-  console.log('');
-  console.log('📋 Overview:');
-  console.log('   This audit will launch a VISIBLE browser window');
-  console.log('   You will manually click REJECT and ACCEPT buttons');
-  console.log('   The system will observe real runtime behavior');
-  console.log('');
-  console.log('⏱️  Estimated time: 1-2 minutes (2 scenarios × 30s each)');
-  console.log('');
-  console.log('═'.repeat(70));
-  console.log('');
+  logger.debug('separator', { line: '═'.repeat(70) });
+  logger.debug('consent-sim-v1-progress', { message: '🎭 CONSENT SIMULATION v1.0 - Human-Assisted Browser Session' });
+  logger.debug('separator', { line: '═'.repeat(70) });
+
+  logger.debug('consent-sim-v1-progress', { message: '📋 Overview:' });
+  logger.debug('consent-sim-v1-progress', { message: '   This audit will launch a VISIBLE browser window' });
+  logger.debug('consent-sim-v1-progress', { message: '   You will manually click REJECT and ACCEPT buttons' });
+  logger.debug('consent-sim-v1-progress', { message: '   The system will observe real runtime behavior' });
+
+  logger.debug('consent-sim-v1-progress', { message: '⏱️  Estimated time: 1-2 minutes (2 scenarios × 30s each)' });
+
+  logger.debug('separator', { line: '═'.repeat(70) });
 
   let browser = null;
 
   try {
     // Launch ONE browser (headless: false for human interaction)
-    console.log('🚀 Launching browser (headful mode for human interaction)...');
+    logger.debug('consent-sim-v1-progress', { message: '🚀 Launching browser (headful mode for human interaction)...' });
     browser = await launchBrowser({
       headless: false, // REQUIRED for human interaction
       protocolTimeout: 60000
     });
 
-    console.log('✅ Browser launched - you should see a browser window open');
+    logger.debug('consent-sim-v1-progress', { message: '✅ Browser launched - you should see a browser window open' });
 
     // Scenario 1: REJECT
     const rejectResult = await runScenario(browser, websiteUrl, 'reject');
@@ -529,11 +519,9 @@ async function runAssistedConsentSimulation(websiteUrl, auditId = null) {
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 
-    console.log('');
-    console.log('═'.repeat(70));
-    console.log(`✅ CONSENT SIMULATION COMPLETED in ${duration}s`);
-    console.log('═'.repeat(70));
-    console.log('');
+    logger.debug('separator', { line: '═'.repeat(70) });
+    logger.debug('consent-sim-v1-progress', { message: `✅ CONSENT SIMULATION COMPLETED in ${duration}s` });
+    logger.debug('separator', { line: '═'.repeat(70) });
 
     return {
       skipped: false,

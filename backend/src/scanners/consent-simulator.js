@@ -32,7 +32,7 @@ const logger = createLogger('consent-simulator');
 async function waitForConsentUIReady(page, timeout = 30000) {
   const startTime = Date.now();
 
-  console.log(`   🎯 Waiting for consent UI state (max ${timeout}ms)...`);
+  logger.debug('consent-sim-progress', { message: `   🎯 Waiting for consent UI state (max ${timeout}ms)...` });
 
   while (Date.now() - startTime < timeout) {
     try {
@@ -83,19 +83,19 @@ async function waitForConsentUIReady(page, timeout = 30000) {
       });
 
       if (uiState.ready) {
-        console.log(`   ✅ Consent UI ready: ${uiState.reason} (${uiState.cmp})`);
+        logger.debug('consent-sim-progress', { message: `   ✅ Consent UI ready: ${uiState.reason} (${uiState.cmp})` });
         return true;
       }
 
       // Poll every 500ms
       await new Promise(resolve => setTimeout(resolve, 500));
     } catch (error) {
-      console.log(`   ⚠️  UI state check failed: ${error.message}`);
+      logger.debug('consent-sim-progress', { message: `   ⚠️  UI state check failed: ${error.message}` });
       await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
 
-  console.log(`   ⚠️  Consent UI not ready after ${timeout}ms`);
+  logger.debug('consent-sim-progress', { message: `   ⚠️  Consent UI not ready after ${timeout}ms` });
   return false;
 }
 
@@ -109,7 +109,7 @@ async function waitForConsentUIReady(page, timeout = 30000) {
 async function waitForConsentTransition(page, expectedTransition, timeout = 15000) {
   const startTime = Date.now();
 
-  console.log(`   🎯 Waiting for consent transition: ${expectedTransition}...`);
+  logger.debug('consent-sim-progress', { message: `   🎯 Waiting for consent transition: ${expectedTransition}...` });
 
   while (Date.now() - startTime < timeout) {
     try {
@@ -148,7 +148,7 @@ async function waitForConsentTransition(page, expectedTransition, timeout = 1500
       });
 
       if (transitionState.transitioned) {
-        console.log(`   ✅ Consent transition completed: ${transitionState.reason}`);
+        logger.debug('consent-sim-progress', { message: `   ✅ Consent transition completed: ${transitionState.reason}` });
         return true;
       }
 
@@ -158,7 +158,7 @@ async function waitForConsentTransition(page, expectedTransition, timeout = 1500
     }
   }
 
-  console.log(`   ⚠️  Consent transition not detected after ${timeout}ms`);
+  logger.debug('consent-sim-progress', { message: `   ⚠️  Consent transition not detected after ${timeout}ms` });
   return false;
 }
 
@@ -244,15 +244,15 @@ async function waitForInteractionReady(page, selector, timeout = 5000) {
     const status = await isInteractable(page, selector);
 
     if (status.interactable) {
-      if (DEBUG) console.log(`   ✅ Button ${selector} is interactable`, status.boundingBox);
+      if (DEBUG) logger.debug('consent-sim-debug', { message: `   ✅ Button ${selector} is interactable`, data: , status.boundingBox });
       return true;
     }
 
-    if (DEBUG) console.log(`   ⏳ Waiting for ${selector}: ${status.reason}`);
+    logger.debug('consent-sim-progress', { message: `   ⏳ Waiting for ${selector}: ${status.reason}` });
     await new Promise(resolve => setTimeout(resolve, 200));
   }
 
-  console.log(`   ❌ Button ${selector} never became interactable after ${timeout}ms`);
+  logger.debug('consent-sim-progress', { message: `   ❌ Button ${selector} never became interactable after ${timeout}ms` });
   return false;
 }
 
@@ -270,14 +270,14 @@ async function performHumanClick(page, selector, boundingBox) {
     // Screenshot BEFORE click (if DEBUG)
     if (DEBUG) {
       await page.screenshot({ path: `/tmp/before-click-${Date.now()}.png` });
-      console.log(`   📸 Screenshot saved (before click)`);
+      logger.debug('consent-sim-progress', { message: `   📸 Screenshot saved (before click)` });
     }
 
     // Calculate click coordinates (center of button)
     const x = boundingBox.x + boundingBox.width / 2;
     const y = boundingBox.y + boundingBox.height / 2;
 
-    console.log(`   🖱️  Clicking at (${Math.round(x)}, ${Math.round(y)}) - ${selector}`);
+    logger.debug('consent-sim-progress', { message: `   🖱️  Clicking at (${Math.round(x)}, ${Math.round(y)}) - ${selector}` });
 
     // Move mouse to button
     await page.mouse.move(x, y);
@@ -292,7 +292,7 @@ async function performHumanClick(page, selector, boundingBox) {
     if (DEBUG) {
       await new Promise(resolve => setTimeout(resolve, 500)); // Wait for visual change
       await page.screenshot({ path: `/tmp/after-click-${Date.now()}.png` });
-      console.log(`   📸 Screenshot saved (after click)`);
+      logger.debug('consent-sim-progress', { message: `   📸 Screenshot saved (after click)` });
     }
 
     return true;
@@ -348,7 +348,7 @@ async function findBannerButtons(page) {
     const acceptExists = await page.$(selectors.accept);
 
     if (acceptExists) {
-      console.log(`   🎯 Detected ${cmpName} CMP platform`);
+      logger.debug('consent-sim-progress', { message: `   🎯 Detected ${cmpName} CMP platform` });
 
       // Check interactability for all buttons
       const acceptStatus = await isInteractable(page, selectors.accept);
@@ -356,9 +356,9 @@ async function findBannerButtons(page) {
       const settingsStatus = await isInteractable(page, selectors.settings);
 
       if (DEBUG) {
-        console.log(`   🔍 Accept: ${acceptStatus.interactable ? '✅' : '❌'} - ${acceptStatus.reason}`);
-        console.log(`   🔍 Reject: ${rejectStatus.interactable ? '✅' : '❌'} - ${rejectStatus.reason}`);
-        console.log(`   🔍 Settings: ${settingsStatus.interactable ? '✅' : '❌'} - ${settingsStatus.reason}`);
+        logger.debug('consent-sim-progress', { message: `   🔍 Accept: ${acceptStatus.interactable ? '✅' : '❌'} - ${acceptStatus.reason}` });
+        logger.debug('consent-sim-progress', { message: `   🔍 Reject: ${rejectStatus.interactable ? '✅' : '❌'} - ${rejectStatus.reason}` });
+        logger.debug('consent-sim-progress', { message: `   🔍 Settings: ${settingsStatus.interactable ? '✅' : '❌'} - ${settingsStatus.reason}` });
       }
 
       return {
@@ -382,7 +382,7 @@ async function findBannerButtons(page) {
   }
 
   // FALLBACK: Generic text-based search (if no CMP detected)
-  console.log(`   ⚠️  No known CMP detected, falling back to generic search...`);
+  logger.debug('consent-sim-progress', { message: `   ⚠️  No known CMP detected, falling back to generic search...` });
 
   const genericButtons = await page.evaluate(() => {
     const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'));
@@ -727,7 +727,7 @@ async function waitForConsentStateChange(page, timeout = 15000) {
 
     return result;
   } catch (error) {
-    console.log(`⚠️  Consent state change detection failed: ${error.message}`);
+    logger.debug('consent-sim-progress', { message: `⚠️  Consent state change detection failed: ${error.message}` });
     return 'ERROR';
   }
 }
@@ -743,40 +743,40 @@ async function clickButton(page, buttonInfo) {
 
   try {
     if (!buttonInfo || !buttonInfo.selector) {
-      console.log(`   ❌ No button info provided`);
+      logger.debug('consent-sim-progress', { message: `   ❌ No button info provided` });
       return false;
     }
 
     const { selector, boundingBox, text } = buttonInfo;
 
-    console.log(`   🎯 Attempting to click: "${text}" (${selector})`);
+    logger.debug('consent-sim-progress', { message: `   🎯 Attempting to click: "${text}" (${selector})` });
 
     // STEP 1: Wait for button to become INTERACTABLE
     const ready = await waitForInteractionReady(page, selector, 5000);
     if (!ready) {
-      console.log(`   ❌ Button ${selector} is not interactable`);
+      logger.debug('consent-sim-progress', { message: `   ❌ Button ${selector} is not interactable` });
       return false;
     }
 
     // STEP 2: Get fresh bounding box (might have changed during animation)
     const freshStatus = await isInteractable(page, selector);
     if (!freshStatus.interactable) {
-      console.log(`   ❌ Button became non-interactable: ${freshStatus.reason}`);
+      logger.debug('consent-sim-progress', { message: `   ❌ Button became non-interactable: ${freshStatus.reason}` });
       return false;
     }
 
     // STEP 3: Perform HUMAN-LIKE click with mouse events
     const clicked = await performHumanClick(page, selector, freshStatus.boundingBox);
     if (!clicked) {
-      console.log(`   ❌ performHumanClick failed`);
+      logger.debug('consent-sim-progress', { message: `   ❌ performHumanClick failed` });
       return false;
     }
 
-    console.log(`   ✅ Clicked button: "${text}"`);
+    logger.debug('consent-sim-progress', { message: `   ✅ Clicked button: "${text}"` });
 
     // STEP 4: Wait for consent state change
     const trigger = await waitForConsentStateChange(page, 15000);
-    console.log(`   ✅ Consent state changed via: ${trigger}`);
+    logger.debug('consent-sim-progress', { message: `   ✅ Consent state changed via: ${trigger}` });
 
     // STEP 5: Additional wait for cookies to be set/removed
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -801,9 +801,9 @@ async function runRejectScenario(websiteUrl) {
   let browser = null;
 
   try {
-    console.log('');
-    console.log('🚫 === REJECT SCENARIO ===');
-    console.log(`   Testing: ${websiteUrl}`);
+
+    logger.debug('consent-sim-progress', { message: '🚫 === REJECT SCENARIO ===' });
+    logger.debug('consent-sim-progress', { message: `   Testing: ${websiteUrl}` });
 
     // Launch browser with EXTENDED protocolTimeout for CookieScript/CMP sites
     // Default 10s is too short - CDP protocol timeout-ва преди navigation да завърши
@@ -811,9 +811,9 @@ async function runRejectScenario(websiteUrl) {
     const page = await createPage(browser);
 
     // NAVIGATION - BLOCKING (consent simulation REQUIRES valid page)
-    console.log(`   📡 Navigating to page (hard requirement)...`);
+    logger.debug('consent-sim-progress', { message: `   📡 Navigating to page (hard requirement)...` });
     await navigateToUrl(page, websiteUrl, 'reject-scenario', { timeout: 30000 });
-    console.log(`   ✅ Navigation successful - page is valid`);
+    logger.debug('consent-sim-progress', { message: `   ✅ Navigation successful - page is valid` });
 
     // DIAGNOSTIC: Verify DOM content
     const DEBUG = process.env.DEBUG_CONSENT === 'true';
@@ -826,11 +826,11 @@ async function runRejectScenario(websiteUrl) {
         htmlLength: html.length
       };
     });
-    console.log(`   🔍 DOM Check:`, domCheck);
+    logger.debug('consent-sim-detail', { message: `   🔍 DOM Check:`, data: domCheck });
 
     if (DEBUG) {
       await page.screenshot({ path: `/tmp/reject-after-nav-${Date.now()}.png` });
-      console.log(`   📸 Screenshot saved (after navigation)`);
+      logger.debug('consent-sim-progress', { message: `   📸 Screenshot saved (after navigation)` });
     }
 
     // STATE CHECK: Wait for consent UI to be ready (HARD DEADLINE: 30s)
@@ -841,7 +841,7 @@ async function runRejectScenario(websiteUrl) {
 
     // Extract cookies BEFORE any interaction (NO delay - immediate state snapshot)
     const cookiesBeforeConsent = await extractCookies(page, { skipDelay: true });
-    console.log(`   📸 Baseline cookies: ${cookiesBeforeConsent.length}`);
+    logger.debug('consent-sim-progress', { message: `   📸 Baseline cookies: ${cookiesBeforeConsent.length}` });
 
     // Find banner buttons (UI is ready, buttons must exist)
     const buttons = await findBannerButtons(page);
@@ -852,13 +852,13 @@ async function runRejectScenario(websiteUrl) {
     // Try to reject
     if (buttons.rejectButton) {
       // Direct reject button exists
-      console.log(`   ✅ Found "Reject" button: "${buttons.rejectButton.text}"`);
+      logger.debug('consent-sim-progress', { message: `   ✅ Found "Reject" button: "${buttons.rejectButton.text}"` });
       await clickButton(page, buttons.rejectButton);
       clickPath.push('Click Reject All');
       clickCount = 1;
     } else if (buttons.settingsButton) {
       // Must go through settings
-      console.log(`   ⚠️  No direct Reject - using Settings`);
+      logger.debug('consent-sim-progress', { message: `   ⚠️  No direct Reject - using Settings` });
       await clickButton(page, buttons.settingsButton);
       clickPath.push('Click Settings');
       clickCount++;
@@ -899,7 +899,7 @@ async function runRejectScenario(websiteUrl) {
         clickCount++;
       }
     } else {
-      console.log(`   ❌ No Reject or Settings button found`);
+      logger.debug('consent-sim-progress', { message: `   ❌ No Reject or Settings button found` });
     }
 
     // STATE CHECK: Wait for consent transition to complete
@@ -907,7 +907,7 @@ async function runRejectScenario(websiteUrl) {
 
     // TRACKING RUNTIME PROPAGATION: Wait for tracking logic to process rejection
     // This is NOT a procedural delay - it's waiting for runtime state propagation
-    console.log(`   ⏱️  Waiting 3s for tracking runtime propagation...`);
+    logger.debug('consent-sim-progress', { message: `   ⏱️  Waiting 3s for tracking runtime propagation...` });
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Extract cookies AFTER consent state transition
@@ -918,11 +918,11 @@ async function runRejectScenario(websiteUrl) {
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 
-    console.log(`   📊 Reject scenario completed in ${duration}s`);
-    console.log(`   🍪 Cookies before consent: ${cookiesBeforeConsent.length}`);
-    console.log(`   🍪 Cookies after reject: ${cookiesAfterReject.length}`);
-    console.log(`   🖱️  Clicks required: ${clickCount}`);
-    console.log(`   📍 Path: ${clickPath.join(' → ')}`);
+    logger.debug('consent-sim-progress', { message: `   📊 Reject scenario completed in ${duration}s` });
+    logger.debug('consent-sim-progress', { message: `   🍪 Cookies before consent: ${cookiesBeforeConsent.length}` });
+    logger.debug('consent-sim-progress', { message: `   🍪 Cookies after reject: ${cookiesAfterReject.length}` });
+    logger.debug('consent-sim-progress', { message: `   🖱️  Clicks required: ${clickCount}` });
+    logger.debug('consent-sim-progress', { message: `   📍 Path: ${clickPath.join(' → ')}` });
 
     return {
       scenario: 'reject',
@@ -967,18 +967,18 @@ async function runAcceptScenario(websiteUrl) {
   let browser = null;
 
   try {
-    console.log('');
-    console.log('✅ === ACCEPT SCENARIO ===');
-    console.log(`   Testing: ${websiteUrl}`);
+
+    logger.debug('consent-sim-progress', { message: '✅ === ACCEPT SCENARIO ===' });
+    logger.debug('consent-sim-progress', { message: `   Testing: ${websiteUrl}` });
 
     // Launch NEW browser (separate context) with EXTENDED protocolTimeout
     browser = await launchBrowser({ protocolTimeout: 60000 }); // 60s protocol timeout
     const page = await createPage(browser);
 
     // NAVIGATION - BLOCKING (consent simulation REQUIRES valid page)
-    console.log(`   📡 Navigating to page (hard requirement)...`);
+    logger.debug('consent-sim-progress', { message: `   📡 Navigating to page (hard requirement)...` });
     await navigateToUrl(page, websiteUrl, 'accept-scenario', { timeout: 30000 });
-    console.log(`   ✅ Navigation successful - page is valid`);
+    logger.debug('consent-sim-progress', { message: `   ✅ Navigation successful - page is valid` });
 
     // DIAGNOSTIC: Verify DOM content
     const DEBUG = process.env.DEBUG_CONSENT === 'true';
@@ -991,11 +991,11 @@ async function runAcceptScenario(websiteUrl) {
         htmlLength: html.length
       };
     });
-    console.log(`   🔍 DOM Check:`, domCheck);
+    logger.debug('consent-sim-detail', { message: `   🔍 DOM Check:`, data: domCheck });
 
     if (DEBUG) {
       await page.screenshot({ path: `/tmp/accept-after-nav-${Date.now()}.png` });
-      console.log(`   📸 Screenshot saved (after navigation)`);
+      logger.debug('consent-sim-progress', { message: `   📸 Screenshot saved (after navigation)` });
     }
 
     // STATE CHECK: Wait for consent UI to be ready (HARD DEADLINE: 30s)
@@ -1006,7 +1006,7 @@ async function runAcceptScenario(websiteUrl) {
 
     // Extract cookies BEFORE any interaction (immediate snapshot)
     const cookiesBeforeConsent = await extractCookies(page, { skipDelay: true });
-    console.log(`   📸 Baseline cookies: ${cookiesBeforeConsent.length}`);
+    logger.debug('consent-sim-progress', { message: `   📸 Baseline cookies: ${cookiesBeforeConsent.length}` });
 
     // Find banner buttons (UI is ready, buttons must exist)
     const buttons = await findBannerButtons(page);
@@ -1016,12 +1016,12 @@ async function runAcceptScenario(websiteUrl) {
 
     // Try to accept
     if (buttons.acceptButton) {
-      console.log(`   ✅ Found "Accept" button: "${buttons.acceptButton.text}"`);
+      logger.debug('consent-sim-progress', { message: `   ✅ Found "Accept" button: "${buttons.acceptButton.text}"` });
       await clickButton(page, buttons.acceptButton);
       clickPath.push('Click Accept All');
       clickCount = 1;
     } else {
-      console.log(`   ❌ No Accept button found`);
+      logger.debug('consent-sim-progress', { message: `   ❌ No Accept button found` });
     }
 
     // STATE CHECK: Wait for consent transition to complete
@@ -1030,7 +1030,7 @@ async function runAcceptScenario(websiteUrl) {
     // TRACKING RUNTIME PROPAGATION: Wait for tracking logic to initialize and load cookies
     // Google Analytics, Facebook Pixel, etc. initialize AFTER consent is granted
     // This is NOT a procedural delay - it's waiting for runtime initialization
-    console.log(`   ⏱️  Waiting 5s for tracking runtime initialization...`);
+    logger.debug('consent-sim-progress', { message: `   ⏱️  Waiting 5s for tracking runtime initialization...` });
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     // Extract cookies AFTER tracking runtimes have initialized
@@ -1041,11 +1041,11 @@ async function runAcceptScenario(websiteUrl) {
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 
-    console.log(`   📊 Accept scenario completed in ${duration}s`);
-    console.log(`   🍪 Cookies before consent: ${cookiesBeforeConsent.length}`);
-    console.log(`   🍪 Cookies after accept: ${cookiesAfterAccept.length}`);
-    console.log(`   🖱️  Clicks required: ${clickCount}`);
-    console.log(`   📍 Path: ${clickPath.join(' → ')}`);
+    logger.debug('consent-sim-progress', { message: `   📊 Accept scenario completed in ${duration}s` });
+    logger.debug('consent-sim-progress', { message: `   🍪 Cookies before consent: ${cookiesBeforeConsent.length}` });
+    logger.debug('consent-sim-progress', { message: `   🍪 Cookies after accept: ${cookiesAfterAccept.length}` });
+    logger.debug('consent-sim-progress', { message: `   🖱️  Clicks required: ${clickCount}` });
+    logger.debug('consent-sim-progress', { message: `   📍 Path: ${clickPath.join(' → ')}` });
 
     return {
       scenario: 'accept',
@@ -1087,23 +1087,23 @@ async function runAcceptScenario(websiteUrl) {
  * @returns {Object} Comparison analysis
  */
 function compareScenarios(rejectResults, acceptResults) {
-  console.log('');
-  console.log('📊 === SCENARIO COMPARISON ===');
+
+  logger.debug('consent-sim-progress', { message: '📊 === SCENARIO COMPARISON ===' });
 
   // Click imbalance (GDPR Article 7(3) violation)
   const clickImbalance = rejectResults.clickCount - acceptResults.clickCount;
   const clickViolation = clickImbalance > 0;
 
-  console.log(`   Accept clicks: ${acceptResults.clickCount}`);
-  console.log(`   Reject clicks: ${rejectResults.clickCount}`);
-  console.log(`   Imbalance: ${clickImbalance} extra clicks to reject`);
-  console.log(`   ⚠️  GDPR Art. 7(3) violation: ${clickViolation ? 'YES' : 'NO'}`);
+  logger.debug('consent-sim-progress', { message: `   Accept clicks: ${acceptResults.clickCount}` });
+  logger.debug('consent-sim-progress', { message: `   Reject clicks: ${rejectResults.clickCount}` });
+  logger.debug('consent-sim-progress', { message: `   Imbalance: ${clickImbalance} extra clicks to reject` });
+  logger.debug('consent-sim-progress', { message: `   ⚠️  GDPR Art. 7(3) violation: ${clickViolation ? 'YES' : 'NO'}` });
 
   // Cookies loaded before consent (tracking before consent)
   const cookiesBeforeConsent = rejectResults.cookiesBeforeConsent.filter(c =>
     !c.name.startsWith('_') || c.name.includes('_ga') || c.name.includes('_fb')
   );
-  console.log(`   🍪 Cookies before consent: ${cookiesBeforeConsent.length}`);
+  logger.debug('consent-sim-progress', { message: `   🍪 Cookies before consent: ${cookiesBeforeConsent.length}` });
 
   // Cookies in Reject scenario (should be minimal)
   const cookiesAfterReject = rejectResults.cookiesAfterConsent;
@@ -1113,24 +1113,24 @@ function compareScenarios(rejectResults, acceptResults) {
     c.name.includes('doubleclick') || c.name.includes('_utm')
   );
 
-  console.log(`   🍪 Tracking cookies after REJECT: ${trackingCookiesInReject.length}`);
+  logger.debug('consent-sim-progress', { message: `   🍪 Tracking cookies after REJECT: ${trackingCookiesInReject.length}` });
   if (trackingCookiesInReject.length > 0) {
-    console.log(`   ⚠️  VIOLATION: Tracking cookies present after rejection!`);
+    logger.debug('consent-sim-progress', { message: `   ⚠️  VIOLATION: Tracking cookies present after rejection!` });
     trackingCookiesInReject.forEach(c => {
-      console.log(`      - ${c.name} (${c.domain || c.source})`);
+      logger.debug('consent-sim-progress', { message: `      - ${c.name} (${c.domain || c.source})` });
     });
   }
 
   // Cookies in Accept scenario
   const cookiesAfterAccept = acceptResults.cookiesAfterConsent;
-  console.log(`   🍪 Cookies after ACCEPT: ${cookiesAfterAccept.length}`);
+  logger.debug('consent-sim-progress', { message: `   🍪 Cookies after ACCEPT: ${cookiesAfterAccept.length}` });
 
   // Cookie difference (Accept should have MORE than Reject)
   const cookieDifference = cookiesAfterAccept.length - cookiesAfterReject.length;
-  console.log(`   📈 Cookie increase (Accept vs Reject): ${cookieDifference}`);
+  logger.debug('consent-sim-progress', { message: `   📈 Cookie increase (Accept vs Reject): ${cookieDifference}` });
 
   if (cookieDifference <= 0) {
-    console.log(`   ⚠️  SUSPICIOUS: No difference between Accept and Reject!`);
+    logger.debug('consent-sim-progress', { message: `   ⚠️  SUSPICIOUS: No difference between Accept and Reject!` });
   }
 
   // Violations summary
@@ -1164,9 +1164,8 @@ function compareScenarios(rejectResults, acceptResults) {
     });
   }
 
-  console.log('');
-  console.log(`   Total violations: ${violations.length}`);
-  console.log('═══════════════════════════════════════════════════════');
+  logger.debug('consent-sim-progress', { message: `   Total violations: ${violations.length}` });
+  logger.debug('consent-sim-progress', { message: '═══════════════════════════════════════════════════════' });
 
   return {
     clickImbalance: clickImbalance,
@@ -1188,10 +1187,10 @@ function compareScenarios(rejectResults, acceptResults) {
  * @returns {Promise<Object>} Full simulation results
  */
 async function runConsentSimulation(websiteUrl) {
-  console.log('');
-  console.log('═══════════════════════════════════════════════════════');
-  console.log('🎭 CONSENT SIMULATION - Accept vs Reject');
-  console.log('═══════════════════════════════════════════════════════');
+
+  logger.debug('consent-sim-progress', { message: '═══════════════════════════════════════════════════════' });
+  logger.debug('consent-sim-progress', { message: '🎭 CONSENT SIMULATION - Accept vs Reject' });
+  logger.debug('consent-sim-progress', { message: '═══════════════════════════════════════════════════════' });
 
   const startTime = Date.now();
 
