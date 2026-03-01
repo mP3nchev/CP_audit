@@ -288,7 +288,10 @@ function updateProgress(auditId, currentStep, totalSteps, message, startTime = D
       WHERE id = ?
     `).run(JSON.stringify(progress), auditId);
   } catch (error) {
-    console.warn('⚠️  Failed to update progress:', error.message);
+    logger.warn('progress-update-failed', {
+      error: '⚠️ ' + error.message,
+      auditId
+    });
   }
 }
 
@@ -354,8 +357,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       console.log(`   ✅ Consent monitor wrappers injected (gtag, dataLayer, localStorage)`);
       console.log(`   🎯 Ready to capture: consent calls, tracking events, storage writes`);
     } catch (error) {
-      console.error(`   ⚠️  Consent monitor injection failed: ${error.message}`);
-      console.error(`   ⚠️  Continuing without consent monitoring...`);
+      logger.error('consent-monitor-injection-failed', {
+        error: '⚠️ ' + error.message,
+        auditId,
+        stack: error.stack
+      });
     }
     console.log(`   ✅ Consent monitoring setup in ${Date.now() - stepStartTime}ms`);
 
@@ -634,7 +640,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       }
 
     } catch (error) {
-      console.error(`   ⚠️  Consent monitoring failed: ${error.message}`);
+      logger.error('consent-monitoring-failed', {
+        error: '⚠️ ' + error.message,
+        auditId,
+        stack: error.stack
+      });
     }
 
     console.log(`   ✅ Consent monitoring + vendor fingerprinting completed in ${Date.now() - stepStartTime}ms`);
@@ -904,7 +914,11 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
       // Add consent simulation results to main results
       results.consentSimulation = consentSimulation;
     } catch (error) {
-      console.error(`   ⚠️  Consent simulation failed: ${error.message}`);
+      logger.error('consent-simulation-failed', {
+        error: '⚠️ ' + error.message,
+        auditId,
+        stack: error.stack
+      });
       // Don't fail the entire scan if simulation fails
       results.consentSimulation = {
         error: error.message,
@@ -1082,7 +1096,11 @@ async function saveScanResults(auditId, results) {
       stmt.run(...insertValues);
     } catch (err) {
       if (err.code === 'SCHEMA_VALIDATION_FAILED') {
-        console.error('❌ Scan result schema validation failed:', err.validationErrors);
+        logger.error('scan-schema-validation-failed', {
+          error: '❌ Schema validation failed',
+          auditId,
+          validationErrors: err.validationErrors
+        });
         throw err;
       }
       throw Object.assign(err, { code: 'DB_WRITE_FAILED' });
@@ -1104,14 +1122,21 @@ async function saveScanResults(auditId, results) {
           auditId
         );
       } catch (scoreUpdateError) {
-        console.warn('⚠️  Could not update overall_score in audits table (columns may not exist yet)');
+        logger.warn('score-update-skipped', {
+          message: '⚠️ Could not update overall_score (columns may not exist yet)',
+          auditId
+        });
       }
     }
 
     console.log('✅ Scan results saved to database');
   } catch (error) {
-    console.error('❌ Failed to save scan results:', error.message);
-    console.error('   Full error:', error);
+    logger.error('scan-save-failed', {
+      error: '❌ ' + error.message,
+      auditId,
+      fullError: error.toString(),
+      stack: error.stack
+    });
     throw error;
   }
 }
@@ -1145,7 +1170,10 @@ function savePartialResults(auditId, results) {
 
     console.log('   ✅ Partial results saved');
   } catch (error) {
-    console.warn('   ⚠️  Could not save partial results:', error.message);
+    logger.warn('partial-results-save-failed', {
+      error: '⚠️ ' + error.message,
+      auditId
+    });
   }
 }
 
@@ -1216,7 +1244,12 @@ async function continueAuditFromStep17(auditId, websiteUrl) {
     console.log('');
 
   } catch (error) {
-    console.error('❌ Failed to resume audit:', error);
+    logger.error('audit-resume-failed', {
+      error: '❌ ' + error.message,
+      auditId,
+      fullError: error.toString(),
+      stack: error.stack
+    });
     throw error;
   }
 }
