@@ -2,6 +2,9 @@ const { analyzePrivacyPolicy, buildFallbackAnalysis } = require('../integrations
 const { extractTextFromBuffer, getFileType, cleanText } = require('../utils/text-extractor');
 const { getDatabase } = require('../database/db');
 const { validateSchema } = require('../utils/schema-validator');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('policy-analyzer');
 
 /**
  * Privacy Policy Analyzer
@@ -20,20 +23,22 @@ async function analyzePolicyFile(fileBuffer, filename, auditId, policyType = 'pr
   const startTime = Date.now();
 
   try {
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log(`📋 Analyzing ${policyType} policy: ${filename}`);
-    console.log('═══════════════════════════════════════════════════════');
+    logger.info('policy-analysis-start', {
+      auditId,
+      policyType,
+      filename,
+      fileType: getFileType(filename)
+    });
 
     // Step 1: Extract text from file
-    console.log(`📥 Step 1: Extracting text from ${getFileType(filename)} file...`);
+    logger.info('policy-text-extraction-start', { auditId, fileType: getFileType(filename) });
     const rawText = await extractTextFromBuffer(fileBuffer, filename);
 
     // Step 2: Clean text
-    console.log('🧹 Step 2: Cleaning and normalizing text...');
+    logger.info('policy-text-cleaning', { auditId });
     const policyText = cleanText(rawText);
 
-    console.log(`   Extracted ${policyText.length} characters`);
+    logger.info('policy-text-extracted', { auditId, charCount: policyText.length });
 
     // Check minimum length
     if (policyText.length < 500) {
@@ -42,18 +47,18 @@ async function analyzePolicyFile(fileBuffer, filename, auditId, policyType = 'pr
 
     // Check maximum length (Claude limit is ~200k tokens ≈ 800k characters)
     if (policyText.length > 500000) {
-      console.warn('⚠️  Policy text very long, truncating to 500k characters');
+      logger.warn('policy-text-truncated', { auditId, original: policyText.length, truncated: 500000 });
       policyText = policyText.substring(0, 500000);
     }
 
     // Step 3: Analyze with Claude API (with circuit breaker fallback)
-    console.log('🤖 Step 3: Sending to Claude API for analysis...');
+    logger.info('policy-api-analysis-start', { auditId });
     let result;
     try {
       result = await analyzePrivacyPolicy(policyText);
     } catch (err) {
       if (err.code === 'CIRCUIT_OPEN' || err.code === 'CLAUDE_TIMEOUT') {
-        console.warn(`⚠️  Claude API unavailable (${err.code}), using fallback analysis`);
+        logger.warn('policy-api-fallback', { auditId, reason: err.code });
         result = buildFallbackAnalysis();
       } else {
         throw err;
@@ -61,19 +66,20 @@ async function analyzePolicyFile(fileBuffer, filename, auditId, policyType = 'pr
     }
 
     // Step 4: Save to database
-    console.log('💾 Step 4: Saving analysis results to database...');
+    logger.info('policy-db-save-start', { auditId });
     await savePolicyAnalysis(auditId, policyType, result.analysis, policyText, result.usage, result.duration);
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('✅ Privacy policy analysis complete');
-    console.log(`   Total duration: ${totalDuration}s`);
-    console.log(`   API cost: $${result.usage.cost_usd.toFixed(4)}`);
-    console.log(`   Score: ${result.analysis.total_score}/${result.analysis.max_score} (${result.analysis.percentage?.toFixed(1)}%)`);
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('');
+    logger.info('policy-analysis-complete', {
+      auditId,
+      durationSeconds: totalDuration,
+      apiCost: result.usage.cost_usd.toFixed(4),
+      score: result.analysis.total_score,
+      maxScore: result.analysis.max_score,
+      percentage: result.analysis.percentage?.toFixed(1),
+      category: result.analysis.category
+    });
 
     return {
       success: true,
@@ -91,12 +97,12 @@ async function analyzePolicyFile(fileBuffer, filename, auditId, policyType = 'pr
   } catch (error) {
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    console.error('');
-    console.error('═══════════════════════════════════════════════════════');
-    console.error(`❌ Privacy policy analysis failed: ${error.message}`);
-    console.error(`   Duration: ${totalDuration}s`);
-    console.error('═══════════════════════════════════════════════════════');
-    console.error('');
+    logger.error('policy-analysis-failed', {
+      error: '❌ ' + error.message,
+      auditId,
+      durationSeconds: totalDuration,
+      stack: error.stack
+    });
 
     throw error;
   }
@@ -151,19 +157,19 @@ async function savePolicyAnalysis(auditId, policyType, analysis, policyText, usa
       Math.round(duration)
     );
 
-    console.log('✅ Policy analysis saved to database');
+    logger.info('policy-analysis-saved', { auditId, policyType });
 
     // Check for cost alerts
     if (usage.cost_usd > 0.20) {
-      console.warn(`⚠️  WARNING: Single analysis cost $${usage.cost_usd.toFixed(4)} (threshold: $0.20)`);
+      logger.warn('policy-cost-high', { auditId, cost: usage.cost_usd.toFixed(4), threshold: 0.20 });
     }
 
     if (usage.cached_tokens === 0 && usage.cache_creation_tokens === 0) {
-      console.warn('⚠️  WARNING: No prompt caching detected! Check prompt caching configuration.');
+      logger.warn('policy-no-caching', { auditId, message: 'No prompt caching detected' });
     }
 
   } catch (error) {
-    console.error('❌ Failed to save policy analysis:', error.message);
+    logger.error('policy-save-failed', { error: '❌ ' + error.message, auditId });
     throw error;
   }
 }
@@ -193,7 +199,7 @@ function getPolicyAnalysis(auditId, policyType) {
       top_recommendations: JSON.parse(analysis.top_recommendations_json || '[]')
     };
   } catch (error) {
-    console.error('❌ Failed to get policy analysis:', error.message);
+    logger.error('policy-get-failed', { error: '❌ ' + error.message, auditId });
     return null;
   }
 }

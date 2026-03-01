@@ -1,5 +1,8 @@
 const { analyzeWithClaude } = require('../integrations/claude-api');
 const { extractTextFromBuffer } = require('../utils/text-extractor');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('cookie-comparator');
 
 /**
  * Compare Cookie Policy declarations with detected cookies
@@ -11,7 +14,7 @@ const { extractTextFromBuffer } = require('../utils/text-extractor');
  */
 async function compareCookiePolicy(policyBuffer, filename, detectedCookies, auditId) {
   try {
-    console.log('🍪 Comparing Cookie Policy with detected cookies...');
+    logger.info('cookie-comparison-start', { auditId, filename, detectedCount: detectedCookies.length });
 
     // Step 1: Extract text from Cookie Policy
     const policyText = await extractTextFromBuffer(policyBuffer, filename);
@@ -20,11 +23,11 @@ async function compareCookiePolicy(policyBuffer, filename, detectedCookies, audi
       throw new Error('Cookie Policy text extraction failed or document too short');
     }
 
-    console.log(`  📄 Extracted ${policyText.length} characters from Cookie Policy`);
+    logger.info('cookie-policy-extracted', { auditId, charCount: policyText.length });
 
     // Step 2: Extract declared cookies using Claude API
     const declaredCookies = await extractDeclaredCookies(policyText);
-    console.log(`  ✅ Found ${declaredCookies.length} declared cookies in policy`);
+    logger.info('cookies-declared-found', { auditId, declaredCount: declaredCookies.length });
 
     // Step 3: Match declared vs detected
     const comparison = matchCookies(declaredCookies, detectedCookies);
@@ -32,10 +35,13 @@ async function compareCookiePolicy(policyBuffer, filename, detectedCookies, audi
     // Step 4: Calculate accuracy score
     const accuracyScore = calculateAccuracyScore(comparison, detectedCookies.length);
 
-    console.log(`  📊 Cookie Policy Accuracy: ${accuracyScore}%`);
-    console.log(`     - Correctly declared: ${comparison.matched.length}`);
-    console.log(`     - Undeclared: ${comparison.undeclared.length}`);
-    console.log(`     - Missing: ${comparison.missing.length}`);
+    logger.info('cookie-comparison-complete', {
+      auditId,
+      accuracyScore,
+      matched: comparison.matched.length,
+      undeclared: comparison.undeclared.length,
+      missing: comparison.missing.length
+    });
 
     return {
       declaredCookies,
@@ -48,7 +54,7 @@ async function compareCookiePolicy(policyBuffer, filename, detectedCookies, audi
       totalDetected: detectedCookies.length
     };
   } catch (error) {
-    console.error('❌ Cookie Policy comparison failed:', error.message);
+    logger.error('cookie-comparison-failed', { error: '❌ ' + error.message, auditId });
     throw error;
   }
 }
@@ -109,14 +115,16 @@ ${policyText}
         declaredCookies = JSON.parse(result.text);
       }
     } catch (parseError) {
-      console.error('Failed to parse Claude response as JSON:', parseError.message);
-      console.error('Response:', result.text.substring(0, 500));
+      logger.error('cookie-declaration-parse-failed', {
+        error: parseError.message,
+        responsePreview: result.text.substring(0, 200)
+      });
       declaredCookies = [];
     }
 
     // Validate structure
     if (!Array.isArray(declaredCookies)) {
-      console.error('Claude response is not an array');
+      logger.error('cookie-declaration-invalid', { message: 'Claude response is not an array' });
       return [];
     }
 
@@ -129,7 +137,7 @@ ${policyText}
       expiry: cookie.expiry || null
     }));
   } catch (error) {
-    console.error('Failed to extract declared cookies:', error.message);
+    logger.error('cookie-extraction-failed', { error: error.message });
     return [];
   }
 }
@@ -324,9 +332,9 @@ function saveComparison(db, auditId, comparison) {
       JSON.stringify(comparison.missing)  // Using this field for missing cookies
     );
 
-    console.log('✅ Cookie comparison saved to database');
+    logger.info('cookie-comparison-saved', { auditId });
   } catch (error) {
-    console.error('❌ Failed to save cookie comparison:', error.message);
+    logger.error('cookie-comparison-save-failed', { error: '❌ ' + error.message, auditId });
     throw error;
   }
 }
