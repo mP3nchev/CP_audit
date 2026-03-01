@@ -9,6 +9,7 @@ const auditRoutes = require('./routes/audit.routes');
 const constants = require('./config/constants');
 const { errorHandler } = require('./config/error-codes');
 const { authMiddleware } = require('./middleware/auth');
+const { requestIdMiddleware } = require('./middleware/requestId');
 
 // Environment variable validation
 const requiredEnvVars = ['CLAUDE_API_KEY', 'VERCEL_BLOB_TOKEN'];
@@ -56,9 +57,12 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Request ID middleware (for log correlation)
+app.use(requestIdMiddleware);
+
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} [${req.requestId}]`);
   next();
 });
 
