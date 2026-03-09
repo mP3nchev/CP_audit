@@ -152,6 +152,40 @@ async function waitForBannerVisible(page, timeout = 10000) {
 }
 
 /**
+ * Detect banner with mobile viewport retry
+ * If banner is not found at desktop viewport, resize to mobile (375x812) and retry.
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time per attempt (default: 10000ms)
+ * @returns {Promise<Object>} Structured banner detection status
+ */
+async function detectBannerWithRetry(page, timeout = 10000) {
+  // Try desktop viewport first
+  const desktopResult = await waitForBannerVisible(page, timeout);
+  if (desktopResult.found) return desktopResult;
+
+  // Retry with mobile viewport
+  logger.info('banner-mobile-retry', { reason: 'Desktop detection failed, retrying at mobile viewport 375x812' });
+  const originalViewport = page.viewport();
+  await page.setViewport({ width: 375, height: 812 });
+  // Wait 2 seconds for responsive reflow
+  await new Promise(r => setTimeout(r, 2000));
+
+  const mobileResult = await waitForBannerVisible(page, timeout);
+  mobileResult.viewport = 'mobile';
+
+  // Restore original viewport
+  if (originalViewport) {
+    await page.setViewport(originalViewport);
+  } else {
+    await page.setViewport({ width: 1280, height: 800 });
+  }
+  // Wait 1 second for reflow back
+  await new Promise(r => setTimeout(r, 1000));
+
+  return mobileResult;
+}
+
+/**
  * Analyze cookie banner for noyb 8-point checklist violations
  * @param {Page} page - Puppeteer page
  * @param {string} auditId - Audit ID for debug logging
@@ -169,6 +203,17 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       debugSessionId = await initDebugSession(auditId);
       logger.info('banner-debug-enabled', { sessionId: debugSessionId });
     }
+
+    // Detect banner with mobile viewport retry
+    const bannerDetectionStatus = await detectBannerWithRetry(page);
+    logger.info('banner-detection-result', {
+      auditId,
+      found: bannerDetectionStatus.found,
+      viewport: bannerDetectionStatus.viewport,
+      selector: bannerDetectionStatus.selector,
+      location: bannerDetectionStatus.location,
+      timeMs: bannerDetectionStatus.timeMs
+    });
 
     const violations = [];
     const passedChecks = [];
@@ -254,6 +299,8 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
     }
 
     return {
+      bannerDetected: bannerDetectionStatus.found,
+      bannerDetectionStatus,
       violations,
       passedChecks,
       skippedChecks,
