@@ -408,13 +408,7 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
         result = await checkLegitimateInterestForAds(page, violation, debugSessionId);
         break;
       case 'type_i':
-        // Type I (Misclassified Cookies) - DISABLED for now
-        result = {
-          detected: false,
-          skipped: true,
-          skipReason: 'Type I check disabled - requires CMP-specific category extraction',
-          evidence: null
-        };
+        result = checkMisclassifiedEssentialCookies(cookies, violation);
         break;
       case 'type_k':
         result = await checkDifficultConsentWithdrawal(page, violation, debugSessionId);
