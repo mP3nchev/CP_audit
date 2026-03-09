@@ -1,0 +1,213 @@
+/**
+ * Sample network request fixtures for detection-confidence.js tests.
+ *
+ * Every request object uses EXACT field names from:
+ *   - network-monitor.js: url, method, resourceType, timestamp, beforeConsent, isTracking, domain, responseStatus, failed
+ *   - detection-confidence.js: pathname, urlObj, vendor, isResource, postData, firedBeforeConsent, pageLoadTimestamp
+ *
+ * Real domains from tracking-domains.json and vendor-patterns.json.
+ */
+
+'use strict';
+
+/**
+ * Helper: build an enriched request object matching what detection-confidence expects
+ */
+function buildRequest(overrides = {}) {
+  const url = overrides.url || 'https://example.com/';
+  let urlObj;
+  try { urlObj = new URL(url); } catch { urlObj = null; }
+
+  return {
+    url,
+    pathname: urlObj?.pathname || '/',
+    urlObj,
+    method: 'GET',
+    resourceType: 'xhr',
+    vendor: null,
+    isResource: false,
+    responseStatus: 200,
+    failed: false,
+    postData: null,
+    firedBeforeConsent: false,
+    timestamp: 0.5,
+    pageLoadTimestamp: 0,
+    beforeConsent: true,
+    isTracking: false,
+    headers: {},
+    ...overrides
+  };
+}
+
+// ─── Known Tracking Requests (should score ≥70, Category A) ──────────
+
+const knownTrackingRequests = [
+  // 1. GA4 /g/collect — L4: vendor+endpoint=75, L2: cid(identity)+sr(fingerprint), L3: pre-consent+early, L1: POST+xhr
+  buildRequest({
+    url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-XXXXX&cid=123456.7890&_fid=abc123def456ghi&t=pageview&sr=1920x1080&ul=en-us&sd=24',
+    vendor: 'Google Analytics 4',
+    resourceType: 'xhr',
+    method: 'POST',
+    beforeConsent: true,
+    firedBeforeConsent: true,
+    isTracking: true,
+    domain: 'www.google-analytics.com',
+    timestamp: 0.3,
+    pageLoadTimestamp: 0
+  }),
+
+  // 2. Meta Pixel /tr — L4: vendor+/tr=75, L2: fbp(identity), L3: pre-consent+early, L1: POST+ping=beacon
+  buildRequest({
+    url: 'https://www.facebook.com/tr?id=123456789&ev=PageView&fbp=fb.1.1234567890.987654321&noscript=1&cd[page_title]=Test',
+    vendor: 'Meta Pixel',
+    resourceType: 'ping',
+    method: 'POST',
+    beforeConsent: true,
+    firedBeforeConsent: true,
+    isTracking: true,
+    domain: 'www.facebook.com',
+    timestamp: 0.2,
+    pageLoadTimestamp: 0
+  }),
+
+  // 3. Hotjar /api/v2/client/ — L4: vendor+endpoint=75, L2: _hjid(identity), L3: pre-consent, L1: POST+xhr
+  buildRequest({
+    url: 'https://vc.hotjar.com/api/v2/client/sites/123456/visit-data?sv=7&_hjid=a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    vendor: 'Hotjar',
+    resourceType: 'xhr',
+    method: 'POST',
+    beforeConsent: true,
+    firedBeforeConsent: true,
+    isTracking: true,
+    domain: 'vc.hotjar.com',
+    timestamp: 0.4,
+    pageLoadTimestamp: 0
+  }),
+
+  // 4. DoubleClick — L4: vendor+endpoint, L2: gclid(identity), L3: pre-consent+early, L1: POST+ping
+  buildRequest({
+    url: 'https://pagead2.googlesyndication.com/pagead/gen_204?id=tcfe&gclid=CjwKCAjw1234567890abcdef&v=1',
+    vendor: 'Google Ads',
+    resourceType: 'ping',
+    method: 'POST',
+    beforeConsent: true,
+    firedBeforeConsent: true,
+    isTracking: true,
+    domain: 'pagead2.googlesyndication.com',
+    timestamp: 0.5,
+    pageLoadTimestamp: 0
+  }),
+
+  // 5. LinkedIn /collect/ — L4: vendor+/collect=75, L2: pid+visitor_id(identity), L3: pre-consent+early, L1: POST
+  buildRequest({
+    url: 'https://px.ads.linkedin.com/collect/?pid=123456&fmt=js&time=1234567890&visitor_id=abc123xyz789def',
+    vendor: 'LinkedIn',
+    resourceType: 'xhr',
+    method: 'POST',
+    beforeConsent: true,
+    firedBeforeConsent: true,
+    isTracking: true,
+    domain: 'px.ads.linkedin.com',
+    timestamp: 0.15,
+    pageLoadTimestamp: 0
+  })
+];
+
+// ─── Known Benign Requests (should score <40, Category C) ────────────
+
+const knownBenignRequests = [
+  // 1. Same-origin CSS file
+  buildRequest({
+    url: 'https://example.com/style.css',
+    resourceType: 'stylesheet',
+    isResource: true,
+    beforeConsent: false
+  }),
+
+  // 2. Google Font file
+  buildRequest({
+    url: 'https://fonts.gstatic.com/s/roboto/v30/font.woff2',
+    resourceType: 'font',
+    isResource: true,
+    beforeConsent: false
+  }),
+
+  // 3. Same-origin API call
+  buildRequest({
+    url: 'https://example.com/api/products',
+    resourceType: 'xhr',
+    beforeConsent: false
+  }),
+
+  // 4. Same-origin image
+  buildRequest({
+    url: 'https://example.com/logo.png',
+    resourceType: 'image',
+    isResource: true,
+    beforeConsent: false
+  }),
+
+  // 5. CDN JavaScript (non-tracking)
+  buildRequest({
+    url: 'https://cdnjs.cloudflare.com/ajax/libs/lodash/4.17.21/lodash.min.js',
+    resourceType: 'script',
+    isResource: true,
+    beforeConsent: false
+  })
+];
+
+// ─── Known Consent Pings (should be identified as consent-only) ──────
+
+const knownConsentPings = [
+  // 1. GA4 consent ping with all signals denied (gcs=G100)
+  buildRequest({
+    url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-XXXXX&gcs=G100&gcd=11t1t1t1t5&npa=1&dma=1',
+    vendor: 'Google Analytics 4',
+    resourceType: 'xhr',
+    beforeConsent: true,
+    firedBeforeConsent: true
+  }),
+
+  // 2. GA4 consent ping with gcs=G110
+  buildRequest({
+    url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-XXXXX&gcs=G110&gcd=11t1t1&dma_cps=syi&are=1',
+    vendor: 'Google Analytics 4',
+    resourceType: 'xhr',
+    beforeConsent: true,
+    firedBeforeConsent: true
+  })
+];
+
+// ─── Known Blocked Requests (should score low due to failed delivery) ──
+
+const knownBlockedRequests = [
+  // 1. Blocked tracking request (ad blocker)
+  buildRequest({
+    url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-XXXXX&cid=123',
+    vendor: 'Google Analytics 4',
+    resourceType: 'xhr',
+    responseStatus: 0,
+    failed: true,
+    beforeConsent: true,
+    firedBeforeConsent: true
+  }),
+
+  // 2. Blocked Facebook pixel
+  buildRequest({
+    url: 'https://www.facebook.com/tr?id=999&ev=PageView',
+    vendor: 'Meta Pixel',
+    resourceType: 'image',
+    responseStatus: 0,
+    failed: true,
+    beforeConsent: true,
+    firedBeforeConsent: true
+  })
+];
+
+module.exports = {
+  buildRequest,
+  knownTrackingRequests,
+  knownBenignRequests,
+  knownConsentPings,
+  knownBlockedRequests
+};

@@ -5,8 +5,12 @@
  * Errors in any step are caught per-step, logged, and stored as partial results.
  * Steps marked as critical abort the pipeline on failure.
  *
- * Each step entry: { name, stepNumber, execute: async function(context), critical: boolean }
- * The steps array is ordered — execution is sequential.
+ * Step array accepts two entry types:
+ *   Sequential: { name, stepNumber, execute: async (context) => void, critical: boolean }
+ *   Parallel:   { parallel: true, name: string, steps: [sequential_step, ...] }
+ *
+ * Parallel groups execute via Promise.allSettled(). A critical failure in any
+ * parallel step aborts the pipeline AFTER the entire group finishes (not mid-execution).
  */
 
 const { createLogger } = require('../utils/logger');
