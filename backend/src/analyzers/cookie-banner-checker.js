@@ -215,10 +215,59 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       timeMs: bannerDetectionStatus.timeMs
     });
 
+    // Gate: If no banner detected at any viewport, skip all violation checks
+    if (!bannerDetectionStatus.found) {
+      logger.warn('banner-not-detected', {
+        auditId,
+        desktopViewport: 'not found',
+        mobileViewport: bannerDetectionStatus.viewport === 'mobile' ? 'not found' : 'not attempted'
+      });
+
+      return {
+        bannerDetected: false,
+        bannerDetectionStatus,
+        violations: [],
+        passedChecks: [],
+        skippedChecks: [],
+        overallResult: {
+          finding: 'BANNER_NOT_DETECTED',
+          description: 'No cookie consent banner was detected at desktop or mobile viewports. This is a GDPR violation: no consent mechanism was presented to the user.',
+          severity: 'critical',
+          gdprArticles: ['Art. 6(1)(a)', 'Art. 7', 'ePrivacy Art. 5(3)']
+        },
+        totalChecks: noybViolations.violations.length,
+        passedCount: 0,
+        violationCount: 0,
+        skippedCount: noybViolations.violations.length,
+        compliancePercentage: 0,
+        checksRun: 0,
+        hasCriticalViolations: false,
+        debugSessionId: DEBUG_VIOLATIONS ? debugSessionId : null
+      };
+    }
+
     const violations = [];
     const passedChecks = [];
     const skippedChecks = [];
     const debugLogs = [];
+
+    // Add BANNER_MOBILE_ONLY finding if banner found only on mobile
+    if (bannerDetectionStatus.found && bannerDetectionStatus.viewport === 'mobile') {
+      violations.push({
+        id: 'BANNER_MOBILE_ONLY',
+        name: 'Banner renders only on mobile viewport',
+        severity: 'high',
+        description: 'Cookie consent banner renders only on mobile viewport. Desktop users are not presented with a consent mechanism.',
+        legal_basis: 'GDPR Art. 7, ePrivacy Art. 5(3)',
+        evidence: {
+          message: 'Banner detected at mobile viewport (375x812) but not at desktop viewport',
+          viewport: 'mobile',
+          selector: bannerDetectionStatus.selector,
+          location: bannerDetectionStatus.location
+        }
+      });
+      logger.warn('banner-mobile-only', { auditId, selector: bannerDetectionStatus.selector });
+    }
 
     // Check each violation type
     for (const violation of noybViolations.violations) {
