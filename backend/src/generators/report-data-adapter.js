@@ -42,6 +42,7 @@ async function adaptAuditDataToReportModel(auditUid) {
   const timelineData = scanResults?.timeline_json ? JSON.parse(scanResults.timeline_json) : null;
   const consentSimulation = scanResults?.consent_simulation_json ? JSON.parse(scanResults.consent_simulation_json) : null;
   const requestCategorization = scanResults?.request_categorization_json ? JSON.parse(scanResults.request_categorization_json) : null;
+  const bannerDetection = scanResults?.banner_detection_json ? JSON.parse(scanResults.banner_detection_json) : null;
 
   // Merge post-consent cookies (from consent simulation Accept scenario) into main list
   // Google Consent Mode V2 blocks _ga, _gcl_au, _gid until user accepts — these only
@@ -90,6 +91,7 @@ async function adaptAuditDataToReportModel(auditUid) {
     consentModeV2: buildConsentModeV2Section(consentModeStatus),
     humanAssisted: buildHumanAssistedSection(consentSimulation),
     riskBreakdown: buildRiskBreakdown(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, cookies),
+    bannerDetection,
     gdprPrecedents
   };
 }
