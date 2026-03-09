@@ -999,6 +999,7 @@ async function saveScanResults(auditId, results) {
     const hasDetectedVendors = columnNames.includes('detected_vendors_json');
     const hasVendorSummary = columnNames.includes('vendor_summary_json');
     const hasNetworkStorageCorr = columnNames.includes('network_storage_correlations_json');
+    const hasBannerDetection = columnNames.includes('banner_detection_json');
 
     // Idempotent migration: add column if not present
     if (!hasNetworkStorageCorr) {
@@ -1080,6 +1081,12 @@ async function saveScanResults(auditId, results) {
       insertColumns += ',\n      network_storage_correlations_json';
       insertPlaceholders += ', ?';
       insertValues.push(JSON.stringify(results.networkStorageCorrelations || null));
+    }
+
+    if (hasBannerDetection) {
+      insertColumns += ',\n      banner_detection_json';
+      insertPlaceholders += ', ?';
+      insertValues.push(JSON.stringify(results.bannerAnalysis?.bannerDetectionStatus || null));
     }
 
     // Validate critical payload shapes before writing to DB

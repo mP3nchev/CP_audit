@@ -78,7 +78,7 @@ async function waitForBannerVisible(page, timeout = 10000) {
           const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
           if (!iframeDoc) continue;
 
-          // ✅ CRITICAL: Verify iframe has loaded content (not empty)
+          // CRITICAL: Verify iframe has loaded content (not empty)
           const bodyHasContent = iframeDoc.body && iframeDoc.body.children.length > 0;
           if (!bodyHasContent) continue; // Skip empty iframe
 
@@ -106,9 +106,14 @@ async function waitForBannerVisible(page, timeout = 10000) {
     });
 
     if (result.visible) {
+      const timeMs = Date.now() - startTime;
+      const location = result.method === 'iframe' ? 'iframe' : 'main';
+
       logger.info('banner-found', {
         method: result.method,
         selector: result.selector,
+        location,
+        timeMs,
         iframeSrc: result.method === 'iframe' ? result.iframeSrc : undefined,
         buttonCount: result.method === 'iframe' ? result.buttonCount : undefined
       });
@@ -119,14 +124,65 @@ async function waitForBannerVisible(page, timeout = 10000) {
         screenshot = await page.screenshot({ fullPage: false, type: 'png' });
       } catch (e) {}
 
-      return { visible: true, method: result.method, screenshot };
+      return {
+        found: true,
+        visible: true,
+        selector: result.selector || null,
+        location,
+        viewport: 'desktop',
+        timeMs,
+        method: result.method,
+        screenshot
+      };
     }
 
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  logger.warn('banner-wait-timeout', { timeoutMs: timeout });
-  return { visible: false };
+  const timeMs = Date.now() - startTime;
+  logger.warn('banner-wait-timeout', { timeoutMs: timeout, timeMs });
+  return {
+    found: false,
+    visible: false,
+    selector: null,
+    location: null,
+    viewport: 'desktop',
+    timeMs
+  };
+}
+
+/**
+ * Detect banner with mobile viewport retry
+ * If banner is not found at desktop viewport, resize to mobile (375x812) and retry.
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time per attempt (default: 10000ms)
+ * @returns {Promise<Object>} Structured banner detection status
+ */
+async function detectBannerWithRetry(page, timeout = 10000) {
+  // Try desktop viewport first
+  const desktopResult = await waitForBannerVisible(page, timeout);
+  if (desktopResult.found) return desktopResult;
+
+  // Retry with mobile viewport
+  logger.info('banner-mobile-retry', { reason: 'Desktop detection failed, retrying at mobile viewport 375x812' });
+  const originalViewport = page.viewport();
+  await page.setViewport({ width: 375, height: 812 });
+  // Wait 2 seconds for responsive reflow
+  await new Promise(r => setTimeout(r, 2000));
+
+  const mobileResult = await waitForBannerVisible(page, timeout);
+  mobileResult.viewport = 'mobile';
+
+  // Restore original viewport
+  if (originalViewport) {
+    await page.setViewport(originalViewport);
+  } else {
+    await page.setViewport({ width: 1280, height: 800 });
+  }
+  // Wait 1 second for reflow back
+  await new Promise(r => setTimeout(r, 1000));
+
+  return mobileResult;
 }
 
 /**
@@ -148,10 +204,70 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       logger.info('banner-debug-enabled', { sessionId: debugSessionId });
     }
 
+    // Detect banner with mobile viewport retry
+    const bannerDetectionStatus = await detectBannerWithRetry(page);
+    logger.info('banner-detection-result', {
+      auditId,
+      found: bannerDetectionStatus.found,
+      viewport: bannerDetectionStatus.viewport,
+      selector: bannerDetectionStatus.selector,
+      location: bannerDetectionStatus.location,
+      timeMs: bannerDetectionStatus.timeMs
+    });
+
+    // Gate: If no banner detected at any viewport, skip all violation checks
+    if (!bannerDetectionStatus.found) {
+      logger.warn('banner-not-detected', {
+        auditId,
+        desktopViewport: 'not found',
+        mobileViewport: bannerDetectionStatus.viewport === 'mobile' ? 'not found' : 'not attempted'
+      });
+
+      return {
+        bannerDetected: false,
+        bannerDetectionStatus,
+        violations: [],
+        passedChecks: [],
+        skippedChecks: [],
+        overallResult: {
+          finding: 'BANNER_NOT_DETECTED',
+          description: 'No cookie consent banner was detected at desktop or mobile viewports. This is a GDPR violation: no consent mechanism was presented to the user.',
+          severity: 'critical',
+          gdprArticles: ['Art. 6(1)(a)', 'Art. 7', 'ePrivacy Art. 5(3)']
+        },
+        totalChecks: noybViolations.violations.length,
+        passedCount: 0,
+        violationCount: 0,
+        skippedCount: noybViolations.violations.length,
+        compliancePercentage: 0,
+        checksRun: 0,
+        hasCriticalViolations: false,
+        debugSessionId: DEBUG_VIOLATIONS ? debugSessionId : null
+      };
+    }
+
     const violations = [];
     const passedChecks = [];
     const skippedChecks = [];
     const debugLogs = [];
+
+    // Add BANNER_MOBILE_ONLY finding if banner found only on mobile
+    if (bannerDetectionStatus.found && bannerDetectionStatus.viewport === 'mobile') {
+      violations.push({
+        id: 'BANNER_MOBILE_ONLY',
+        name: 'Banner renders only on mobile viewport',
+        severity: 'high',
+        description: 'Cookie consent banner renders only on mobile viewport. Desktop users are not presented with a consent mechanism.',
+        legal_basis: 'GDPR Art. 7, ePrivacy Art. 5(3)',
+        evidence: {
+          message: 'Banner detected at mobile viewport (375x812) but not at desktop viewport',
+          viewport: 'mobile',
+          selector: bannerDetectionStatus.selector,
+          location: bannerDetectionStatus.location
+        }
+      });
+      logger.warn('banner-mobile-only', { auditId, selector: bannerDetectionStatus.selector });
+    }
 
     // Check each violation type
     for (const violation of noybViolations.violations) {
@@ -232,6 +348,8 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
     }
 
     return {
+      bannerDetected: bannerDetectionStatus.found,
+      bannerDetectionStatus,
       violations,
       passedChecks,
       skippedChecks,
@@ -290,13 +408,7 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
         result = await checkLegitimateInterestForAds(page, violation, debugSessionId);
         break;
       case 'type_i':
-        // Type I (Misclassified Cookies) - DISABLED for now
-        result = {
-          detected: false,
-          skipped: true,
-          skipReason: 'Type I check disabled - requires CMP-specific category extraction',
-          evidence: null
-        };
+        result = checkMisclassifiedEssentialCookies(cookies, violation);
         break;
       case 'type_k':
         result = await checkDifficultConsentWithdrawal(page, violation, debugSessionId);
