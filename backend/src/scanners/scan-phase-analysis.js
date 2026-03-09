@@ -5,7 +5,13 @@
  * banner compliance, consent monitoring, consent mode detection/validation,
  * page metadata, timeline, network categorization, and correlation.
  *
- * Each step reads from and writes to the shared context object.
+ * Execution order:
+ *   1. stepPreliminaryNetworkStats (sequential — accumulates network data)
+ *   2. PARALLEL BATCH: stepFinalCookieExtraction, stepClientSideTracking,
+ *      stepBannerCompliance, stepConsentModeDetection, stepPageMetadata
+ *      (all read-only on page, write to independent context keys)
+ *   3. Sequential tail: stepConsentMonitorData → stepConsentModeValidation →
+ *      stepTimelineConstruction → stepNetworkCategorization → stepNetworkStorageCorrelation
  */
 
 const {
@@ -386,19 +392,30 @@ const stepNetworkStorageCorrelation = {
   }
 };
 
-// Export ordered step array
+// Export ordered step array with parallel batch for independent page reads
 const analysisSteps = [
-  stepFinalCookieExtraction,
+  // Sequential: must run before parallel batch (accumulates network data)
   stepPreliminaryNetworkStats,
-  stepClientSideTracking,
-  stepBannerCompliance,
-  stepConsentMonitorData,
-  stepConsentModeDetection,
-  stepConsentModeValidation,
-  stepPageMetadata,
-  stepTimelineConstruction,
-  stepNetworkCategorization,
-  stepNetworkStorageCorrelation
+
+  // Parallel batch: independent page reads — each writes to different context keys
+  {
+    parallel: true,
+    name: 'parallel-analysis-batch',
+    steps: [
+      stepFinalCookieExtraction,     // Step 7  → context.cookies, cookieStats, trackingCookies
+      stepClientSideTracking,        // Step 9  → context.trackingData, trackingAnalysis
+      stepBannerCompliance,          // Step 10 → context.bannerAnalysis
+      stepConsentModeDetection,      // Step 10.5 → context.consentModeAudit
+      stepPageMetadata,              // Step 13 → context.metadata
+    ]
+  },
+
+  // Sequential: steps that depend on parallel batch outputs
+  stepConsentMonitorData,            // Step 10.4 — vendor fingerprinting (reads monitoringData from page)
+  stepConsentModeValidation,         // Step 10.6 — depends on Step 10.5 output
+  stepTimelineConstruction,          // Step 13.5 — depends on cookies + network data
+  stepNetworkCategorization,         // Step 13.6 — replaces preliminary tracking with re-categorized
+  stepNetworkStorageCorrelation      // Step 13.7 — depends on 13.5 + 13.6
 ];
 
 module.exports = {
