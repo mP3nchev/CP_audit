@@ -78,7 +78,7 @@ async function waitForBannerVisible(page, timeout = 10000) {
           const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
           if (!iframeDoc) continue;
 
-          // ✅ CRITICAL: Verify iframe has loaded content (not empty)
+          // CRITICAL: Verify iframe has loaded content (not empty)
           const bodyHasContent = iframeDoc.body && iframeDoc.body.children.length > 0;
           if (!bodyHasContent) continue; // Skip empty iframe
 
@@ -106,9 +106,14 @@ async function waitForBannerVisible(page, timeout = 10000) {
     });
 
     if (result.visible) {
+      const timeMs = Date.now() - startTime;
+      const location = result.method === 'iframe' ? 'iframe' : 'main';
+
       logger.info('banner-found', {
         method: result.method,
         selector: result.selector,
+        location,
+        timeMs,
         iframeSrc: result.method === 'iframe' ? result.iframeSrc : undefined,
         buttonCount: result.method === 'iframe' ? result.buttonCount : undefined
       });
@@ -119,14 +124,31 @@ async function waitForBannerVisible(page, timeout = 10000) {
         screenshot = await page.screenshot({ fullPage: false, type: 'png' });
       } catch (e) {}
 
-      return { visible: true, method: result.method, screenshot };
+      return {
+        found: true,
+        visible: true,
+        selector: result.selector || null,
+        location,
+        viewport: 'desktop',
+        timeMs,
+        method: result.method,
+        screenshot
+      };
     }
 
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  logger.warn('banner-wait-timeout', { timeoutMs: timeout });
-  return { visible: false };
+  const timeMs = Date.now() - startTime;
+  logger.warn('banner-wait-timeout', { timeoutMs: timeout, timeMs });
+  return {
+    found: false,
+    visible: false,
+    selector: null,
+    location: null,
+    viewport: 'desktop',
+    timeMs
+  };
 }
 
 /**
