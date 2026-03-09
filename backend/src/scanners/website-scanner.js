@@ -259,10 +259,26 @@ function estimateRemainingTime(step, totalSteps, elapsedSeconds) {
  * @param {string} message - Progress message
  * @param {number} startTime - Scan start time (Date.now())
  */
-function updateProgress(auditId, currentStep, totalSteps, message, startTime = Date.now(), extraMetadata = {}) {
+function updateProgress(auditId, currentStepOrInfo, totalSteps, message, startTime = Date.now(), extraMetadata = {}) {
   try {
     const db = getDatabase();
     const now = Date.now();
+
+    // Accept both old format (number args) and new format (step object from runner)
+    let currentStep, stepMessage;
+    if (typeof currentStepOrInfo === 'object' && currentStepOrInfo !== null) {
+      // New format: updateProgress(auditId, { stepNumber, name })
+      currentStep = parseFloat(currentStepOrInfo.stepNumber) || 0;
+      stepMessage = currentStepOrInfo.name || `Step ${currentStep}`;
+      // When called from runner, totalSteps/message/startTime may not be passed
+      totalSteps = totalSteps || 17;
+      message = message || stepMessage;
+      startTime = startTime || Date.now();
+    } else {
+      // Old format: updateProgress(auditId, currentStep, totalSteps, message, startTime, extraMetadata)
+      currentStep = currentStepOrInfo;
+    }
+
     const elapsedSeconds = Math.round((now - startTime) / 1000);
 
     // Use extraMetadata.state if provided (for WAITING_MANUAL_CONSENT)
