@@ -27,8 +27,6 @@ const { getDatabase } = require('../database/db');
 const { validateSchema } = require('../utils/schema-validator');
 const { createLogger } = require('../utils/logger');
 
-const constants = require('../config/constants');
-
 const logger = createLogger('scanner');
 
 /**
