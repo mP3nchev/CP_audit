@@ -42,59 +42,74 @@ function buildRequest(overrides = {}) {
 // ─── Known Tracking Requests (should score ≥70, Category A) ──────────
 
 const knownTrackingRequests = [
-  // 1. Google Analytics /g/collect (GA4 measurement protocol)
+  // 1. GA4 /g/collect — L4: vendor+endpoint=75, L2: cid(identity)+sr(fingerprint), L3: pre-consent+early, L1: POST+xhr
   buildRequest({
-    url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-XXXXX&cid=123456.7890&t=pageview&sr=1920x1080&ul=en-us',
+    url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-XXXXX&cid=123456.7890&_fid=abc123def456ghi&t=pageview&sr=1920x1080&ul=en-us&sd=24',
     vendor: 'Google Analytics 4',
     resourceType: 'xhr',
+    method: 'POST',
     beforeConsent: true,
     firedBeforeConsent: true,
     isTracking: true,
-    domain: 'www.google-analytics.com'
+    domain: 'www.google-analytics.com',
+    timestamp: 0.3,
+    pageLoadTimestamp: 0
   }),
 
-  // 2. Meta Pixel /tr (Facebook tracking pixel)
+  // 2. Meta Pixel /tr — L4: vendor+/tr=75, L2: fbp(identity), L3: pre-consent+early, L1: POST+ping=beacon
   buildRequest({
-    url: 'https://www.facebook.com/tr?id=123456789&ev=PageView&noscript=1&cd[page_title]=Test',
+    url: 'https://www.facebook.com/tr?id=123456789&ev=PageView&fbp=fb.1.1234567890.987654321&noscript=1&cd[page_title]=Test',
     vendor: 'Meta Pixel',
-    resourceType: 'image',
+    resourceType: 'ping',
+    method: 'POST',
     beforeConsent: true,
     firedBeforeConsent: true,
     isTracking: true,
-    domain: 'www.facebook.com'
+    domain: 'www.facebook.com',
+    timestamp: 0.2,
+    pageLoadTimestamp: 0
   }),
 
-  // 3. Hotjar API call
+  // 3. Hotjar /api/v2/client/ — L4: vendor+endpoint=75, L2: _hjid(identity), L3: pre-consent, L1: POST+xhr
   buildRequest({
-    url: 'https://vc.hotjar.com/api/v2/client/sites/123456/visit-data?sv=7',
+    url: 'https://vc.hotjar.com/api/v2/client/sites/123456/visit-data?sv=7&_hjid=a1b2c3d4-e5f6-7890-abcd-ef1234567890',
     vendor: 'Hotjar',
     resourceType: 'xhr',
+    method: 'POST',
     beforeConsent: true,
     firedBeforeConsent: true,
     isTracking: true,
-    domain: 'vc.hotjar.com'
+    domain: 'vc.hotjar.com',
+    timestamp: 0.4,
+    pageLoadTimestamp: 0
   }),
 
-  // 4. DoubleClick /pagead/ (Google Ads)
+  // 4. DoubleClick — L4: vendor+endpoint, L2: gclid(identity), L3: pre-consent+early, L1: POST+ping
   buildRequest({
-    url: 'https://pagead2.googlesyndication.com/pagead/gen_204?id=tcfe&v=1',
+    url: 'https://pagead2.googlesyndication.com/pagead/gen_204?id=tcfe&gclid=CjwKCAjw1234567890abcdef&v=1',
     vendor: 'Google Ads',
-    resourceType: 'xhr',
+    resourceType: 'ping',
+    method: 'POST',
     beforeConsent: true,
     firedBeforeConsent: true,
     isTracking: true,
-    domain: 'pagead2.googlesyndication.com'
+    domain: 'pagead2.googlesyndication.com',
+    timestamp: 0.5,
+    pageLoadTimestamp: 0
   }),
 
-  // 5. LinkedIn Insight Tag
+  // 5. LinkedIn /collect/ — L4: vendor+/collect=75, L2: pid+visitor_id(identity), L3: pre-consent+early, L1: POST
   buildRequest({
-    url: 'https://px.ads.linkedin.com/collect/?pid=123456&fmt=js&time=1234567890',
+    url: 'https://px.ads.linkedin.com/collect/?pid=123456&fmt=js&time=1234567890&visitor_id=abc123xyz789def',
     vendor: 'LinkedIn',
     resourceType: 'xhr',
+    method: 'POST',
     beforeConsent: true,
     firedBeforeConsent: true,
     isTracking: true,
-    domain: 'px.ads.linkedin.com'
+    domain: 'px.ads.linkedin.com',
+    timestamp: 0.15,
+    pageLoadTimestamp: 0
   })
 ];
 
