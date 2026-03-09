@@ -981,8 +981,35 @@ async function scanWebsite(websiteUrl, auditId, auditUid) {
 
 /**
  * Save scan results to database
+ *
+ * CONTEXT FIELD MAPPING (generated during refactor — Commit 5a):
+ * saveScanResults reads          → context/results key                  → assigned in step
+ * ─────────────────────────────────────────────────────────────────────────────────────────
+ * auditId                        → context.auditId / param             → createScanContext
+ * cookies                        → context.cookies                     → Step 7 (stepFinalCookieExtraction)
+ * networkRequests                → networkMonitor.getRequests()         → Step 1.1 (stepInjectMonitoring)
+ * trackingBeforeConsent          → trackingAnalysis.trackingBeforeConsent → Step 9 (stepClientSideTracking)
+ * bannerViolations               → bannerAnalysis.violations           → Step 10 (stepBannerCompliance)
+ * bannerAnalysis                 → context.bannerAnalysis              → Step 10 (stepBannerCompliance)
+ * consentModeAudit               → context.consentModeAudit            → Step 10.5 (stepConsentModeDetection)
+ * timeline                       → context.timeline                    → Step 13.5 (stepTimelineConstruction)
+ * screenshots.full               → context.screenshotUrls.fullPageUrl  → Step 11 (disabled)
+ * screenshots.banner             → context.screenshotUrls.bannerUrl    → Step 11 (disabled)
+ * scanDuration                   → context.scanDuration                → calculated at persist time
+ * complianceScore                → context.complianceScore             → Step 17 (stepComplianceScore)
+ * trackingSummary                → context.trackingSummary             → Step 13.6 (stepNetworkCategorization)
+ * consentSimulation              → context.consentSimulation           → Step 16 (stepConsentSimulation)
+ * monitoringData                 → context.monitoringData              → Step 10.4 (stepConsentMonitorData)
+ * monitoringAnalysis             → context.monitoringAnalysis          → Step 10.4 (stepConsentMonitorData)
+ * detectedVendors                → context.detectedVendors             → Step 10.4 (stepConsentMonitorData)
+ * vendorSummary                  → context.vendorSummary               → Step 10.4 (stepConsentMonitorData)
+ * networkStorageCorrelations     → context.networkStorageCorrelations   → Step 13.7 (stepNetworkStorageCorrelation)
+ * bannerDetectionStatus          → bannerAnalysis.bannerDetectionStatus → Step 10 (via detectBannerWithRetry)
+ *
+ * Total: 20 fields mapped (14 JSON blob columns + 6 scalar/derived fields)
+ *
  * @param {number} auditId - Audit ID
- * @param {Object} results - Scan results
+ * @param {Object} results - Scan results (legacy format or context-derived)
  */
 async function saveScanResults(auditId, results) {
   const db = getDatabase();
