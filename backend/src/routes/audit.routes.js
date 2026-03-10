@@ -723,57 +723,15 @@ router.get('/api/audit/:audit_id/policy-analysis', (req, res) => {
 });
 
 /**
- * Generate and view HTML report (LEGACY - DEPRECATED)
+ * Legacy report endpoint — redirects to React v2
  * GET /api/audit/:audit_id/report
  *
- * @deprecated This endpoint uses the legacy Handlebars template system.
- * Please migrate to /api/audit/:audit_id/report-v2 for the React-based report.
- * This endpoint will be removed in a future version.
+ * @deprecated Permanently redirected to /api/audit/:audit_id/report-v2
  */
-router.get('/api/audit/:audit_id/report', async (req, res) => {
-  try {
-    const { audit_id } = req.params;
-
-    console.log(`📊 [DEPRECATED] Generating legacy report for audit ${audit_id}...`);
-
-    // Verify audit exists
-    const db = getDatabase();
-    const audit = db.prepare(`
-      SELECT * FROM audits WHERE audit_uid = ?
-    `).get(audit_id);
-
-    if (!audit) {
-      return res.status(404).json({
-        error: 'Audit not found',
-        code: 'E404'
-      });
-    }
-
-    // Check if audit is completed
-    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
-      return res.status(400).json({
-        error: 'Audit not completed',
-        message: 'Report cannot be generated until audit is complete',
-        status: audit.status
-      });
-    }
-
-    // Generate HTML report (legacy Handlebars template)
-    const html = await generateReport(audit_id);
-
-    // Return HTML with deprecation warning
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('X-API-Warn', 'This endpoint is deprecated. Use /api/audit/:audit_id/report-v2 instead.');
-    res.setHeader('Deprecation', 'true');
-    res.send(html);
-
-  } catch (error) {
-    console.error('❌ Failed to generate report:', error);
-    res.status(500).json({
-      error: 'Failed to generate report',
-      message: error.message
-    });
-  }
+router.get('/api/audit/:audit_id/report', (req, res) => {
+  const { audit_id } = req.params;
+  logger.info('legacy-report-redirect', { auditUid: audit_id });
+  res.redirect(301, `/api/audit/${audit_id}/report-v2`);
 });
 
 /**
