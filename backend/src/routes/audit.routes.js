@@ -8,7 +8,6 @@ const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-pol
 const { assessRisk, saveRiskAssessment } = require('../analyzers/risk-assessor');
 const { generateSolutions } = require('../analyzers/solution-generator');
 const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
-const { generateReport } = require('../generators/html-report-builder'); // Legacy HTML builder
 const { renderReactReportToHTML, renderReactReportToPDF } = require('../generators/react-report-renderer');
 const { uploadBlob } = require('../integrations/blob-storage');
 const { checkBudget } = require('../integrations/claude-api');
@@ -766,29 +765,17 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
       });
     }
 
-    // Generate HTML report using React v2 renderer (with legacy fallback)
+    // Generate HTML report using React v2 renderer
     let html;
-    let renderMethod = 'react-v2';
-
-    try {
-      // NEW: Try React v2 report rendering via headless Chromium
-      console.log('   Attempting React v2 report rendering...');
-      html = await renderReactReportToHTML(audit_id);
-      console.log('   ✅ React v2 rendering successful');
-    } catch (renderError) {
-      // FALLBACK: Use legacy Handlebars HTML builder if Chromium fails
-      console.warn('   ⚠️  React v2 rendering failed, falling back to legacy HTML builder');
-      console.warn(`   Error: ${renderError.message}`);
-      html = await generateReport(audit_id);
-      renderMethod = 'legacy-handlebars';
-      console.log('   ✅ Legacy HTML builder successful');
-    }
+    console.log('   Rendering React v2 report...');
+    html = await renderReactReportToHTML(audit_id);
+    console.log('   React v2 rendering successful');
 
     // Upload to Vercel Blob
     const filename = `report-${audit_id}-${Date.now()}.html`;
     const blobUrl = await uploadBlob(Buffer.from(html, 'utf8'), filename);
 
-    console.log(`✅ Report uploaded: ${blobUrl} (method: ${renderMethod})`);
+    console.log(`✅ Report uploaded: ${blobUrl}`);
 
     // Return v2 Vercel URL as primary, blob as fallback
     const v2Url = `https://cp-audit.vercel.app/report-v2/${audit_id}`;
