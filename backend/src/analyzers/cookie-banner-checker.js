@@ -43,27 +43,46 @@ function findElementByTextHybrid(elements, keywords) {
  * @param {number} timeout - Max wait time (default: 10000ms)
  * @returns {Promise<Object>} { visible, method, screenshot }
  */
-async function waitForBannerVisible(page, timeout = 10000) {
+async function waitForBannerVisible(page, timeout = 15000) {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
     const result = await page.evaluate(() => {
-      // Generic CMP patterns (CookieScript, OneTrust, Cookiebot, Usercentrics, CookieYes, Consentmo)
+      // Generic CMP patterns — covers CookieScript, OneTrust, Cookiebot, Usercentrics,
+      // CookieYes, Consentmo, Iubenda, CookieNotice, Complianz, TrustArc, and custom GDPR banners
       const selectors = [
+        // CMP-specific selectors (most reliable — match first)
+        '#cookiescript_injected',
+        '#onetrust-banner-sdk',
+        '#CybotCookiebotDialog',
+        '[data-testid="uc-privacy-banner"]',
+        '#iubenda-cs-banner',
+        '.cc-window', '.cc-banner',
+        '#cmplz-cookiebanner-container',
+        '#truste-consent-track',
+        '#cookie-law-info-bar',
+        '#gdpr-cookie-notice',
+        // Generic attribute patterns (broader match)
         '[id*="cookie"]', '[class*="cookie"]',
         '[id*="consent"]', '[class*="consent"]',
         '[id*="cmp"]', '[class*="cmp"]',
         '[id*="onetrust"]', '[class*="onetrust"]',
+        '[id*="gdpr"]', '[class*="gdpr"]',
+        '[id*="privacy"]', '[class*="privacy"]',
         '[class*="Cybot"]',
+        '[data-nosnippet]',
         '[role="dialog"]', '[role="alertdialog"]'
       ];
+
+      // Clickable element query — includes span/div with onclick and input buttons
+      const clickableQuery = 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]';
 
       // STEP 1: Search main document
       for (const selector of selectors) {
         try {
           const el = document.querySelector(selector);
           if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-            const buttons = el.querySelectorAll('button, a, [role="button"]');
+            const buttons = el.querySelectorAll(clickableQuery);
             if (buttons.length > 0) {
               return { visible: true, method: 'main_document', selector };
             }
@@ -85,7 +104,7 @@ async function waitForBannerVisible(page, timeout = 10000) {
           for (const selector of selectors) {
             const el = iframeDoc.querySelector(selector);
             if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-              const buttons = iframeDoc.querySelectorAll('button, a, [role="button"]');
+              const buttons = iframeDoc.querySelectorAll(clickableQuery);
               if (buttons.length > 0) {
                 return {
                   visible: true,
@@ -158,7 +177,7 @@ async function waitForBannerVisible(page, timeout = 10000) {
  * @param {number} timeout - Max wait time per attempt (default: 10000ms)
  * @returns {Promise<Object>} Structured banner detection status
  */
-async function detectBannerWithRetry(page, timeout = 10000) {
+async function detectBannerWithRetry(page, timeout = 15000) {
   // Try desktop viewport first
   const desktopResult = await waitForBannerVisible(page, timeout);
   if (desktopResult.found) return desktopResult;
