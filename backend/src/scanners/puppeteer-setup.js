@@ -96,7 +96,7 @@ async function launchBrowser(customOptions = {}) {
     console.log(`   🖥️  Viewport: ${resolution.width}x${resolution.height}`);
 
     const launchOptions = {
-      headless: constants.PUPPETEER_HEADLESS,
+      headless: constants.PUPPETEER_HEADLESS ? 'new' : false, // 'new' headless mode — harder to detect than old headless
       protocolTimeout: customOptions.protocolTimeout || 10000, // Default 10s, override for consent simulation
       args: [
         '--no-sandbox',
@@ -105,6 +105,7 @@ async function launchBrowser(customOptions = {}) {
         '--disable-gpu',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-blink-features=AutomationControlled', // Prevent CMP bot detection via automation flags
         `--window-size=${resolution.width},${resolution.height}`
       ],
       defaultViewport: {
@@ -144,15 +145,19 @@ async function createPage(browser) {
   const page = await browser.newPage();
 
   // Override Puppeteer detection markers BEFORE page loads
+  // These prevent CMPs (OneTrust, Cookiebot, etc.) from detecting headless and hiding banners
   await page.evaluateOnNewDocument(() => {
-    // 1. Delete navigator.webdriver (primary Puppeteer flag)
+    // 1. Delete navigator.webdriver (primary Puppeteer/automation flag)
     Object.defineProperty(navigator, 'webdriver', {
       get: () => false
     });
 
-    // 2. Add chrome.runtime (advanced fingerprinting bypass)
+    // 2. Add realistic window.chrome object (CMPs check for chrome.app, chrome.csi)
     window.chrome = {
-      runtime: {}
+      runtime: {},
+      app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
+      csi: function() { return {}; },
+      loadTimes: function() { return {}; }
     };
 
     // 3. Fix permissions API (Puppeteer detection vector)
@@ -162,11 +167,29 @@ async function createPage(browser) {
         ? Promise.resolve({ state: Notification.permission })
         : originalQuery(parameters)
     );
+
+    // 4. Fake navigator.plugins (empty plugins array = bot signal for CMPs)
+    Object.defineProperty(navigator, 'plugins', {
+      get: () => {
+        const plugins = [
+          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+          { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+          { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+        ];
+        plugins.refresh = () => {};
+        return plugins;
+      }
+    });
+
+    // 5. Fake navigator.languages (missing languages = bot signal)
+    Object.defineProperty(navigator, 'languages', {
+      get: () => ['en-US', 'en', 'bg']
+    });
   });
 
-  // Set user agent (real Chrome, no Bot identifier to avoid CMP detection)
+  // Set user agent (current Chrome version — outdated versions are a bot signal for CMPs)
   await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
   );
 
   // Set extra HTTP headers (real browser headers to avoid CMP bot detection)
