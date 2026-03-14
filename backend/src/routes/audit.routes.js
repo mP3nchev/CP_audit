@@ -902,10 +902,17 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
         auditUid = existingAudit.audit_uid;
         console.log(`   📝 Updating existing audit: ${auditUid} (ID: ${auditId})`);
       } else {
-        return res.status(404).json({
-          error: `Audit not found: ${providedAuditId}`,
-          code: 'E004'
-        });
+        // Audit not found on this server — create new audit instead of failing
+        // This handles cross-environment uploads (e.g. local audit ID → production server)
+        console.warn(`   ⚠️  Audit ${providedAuditId} not found on this server, creating new audit`);
+        auditUid = `aud_${crypto.randomBytes(8).toString('hex')}`;
+        const auditStmt = db.prepare(`
+          INSERT INTO audits (audit_uid, website_url, status, created_at, updated_at)
+          VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        `);
+        const newResult = auditStmt.run(auditUid, websiteUrl, constants.AUDIT_STATUS.PROCESSING);
+        auditId = newResult.lastInsertRowid;
+        console.log(`   📝 Created new audit: ${auditUid} (ID: ${auditId}) [original ID: ${providedAuditId}]`);
       }
     } else {
       // Create new audit
