@@ -1,6 +1,12 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const constants = require('../config/constants');
 const { saveErrorScreenshot } = require('../utils/error-logger');
+
+// Apply stealth plugin — handles 15+ bot detection vectors automatically:
+// navigator.webdriver, chrome.app/csi/loadTimes, plugins, languages,
+// WebGL, canvas fingerprinting, iframe.contentWindow, etc.
+puppeteer.use(StealthPlugin());
 
 /**
  * Find Chromium executable on Railway/Nixpacks
@@ -144,48 +150,9 @@ async function launchBrowser(customOptions = {}) {
 async function createPage(browser) {
   const page = await browser.newPage();
 
-  // Override Puppeteer detection markers BEFORE page loads
-  // These prevent CMPs (OneTrust, Cookiebot, etc.) from detecting headless and hiding banners
-  await page.evaluateOnNewDocument(() => {
-    // 1. Delete navigator.webdriver (primary Puppeteer/automation flag)
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => false
-    });
-
-    // 2. Add realistic window.chrome object (CMPs check for chrome.app, chrome.csi)
-    window.chrome = {
-      runtime: {},
-      app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
-      csi: function() { return {}; },
-      loadTimes: function() { return {}; }
-    };
-
-    // 3. Fix permissions API (Puppeteer detection vector)
-    const originalQuery = window.navigator.permissions.query;
-    window.navigator.permissions.query = (parameters) => (
-      parameters.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission })
-        : originalQuery(parameters)
-    );
-
-    // 4. Fake navigator.plugins (empty plugins array = bot signal for CMPs)
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => {
-        const plugins = [
-          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-          { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-          { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
-        ];
-        plugins.refresh = () => {};
-        return plugins;
-      }
-    });
-
-    // 5. Fake navigator.languages (missing languages = bot signal)
-    Object.defineProperty(navigator, 'languages', {
-      get: () => ['en-US', 'en', 'bg']
-    });
-  });
+  // Stealth plugin (applied at browser level) handles:
+  // navigator.webdriver, chrome.app/csi/loadTimes, plugins, languages,
+  // WebGL, canvas fingerprinting, permissions API, etc.
 
   // Set user agent (current Chrome version — outdated versions are a bot signal for CMPs)
   await page.setUserAgent(

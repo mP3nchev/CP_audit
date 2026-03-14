@@ -397,6 +397,10 @@ const analysisSteps = [
   // Sequential: must run before parallel batch (accumulates network data)
   stepPreliminaryNetworkStats,
 
+  // Banner compliance runs SEQUENTIALLY (before parallel batch) because it
+  // mutates viewport (mobile retry) which would race with other parallel steps
+  stepBannerCompliance,              // Step 10 → context.bannerAnalysis
+
   // Parallel batch: independent page reads — each writes to different context keys
   {
     parallel: true,
@@ -404,7 +408,6 @@ const analysisSteps = [
     steps: [
       stepFinalCookieExtraction,     // Step 7  → context.cookies, cookieStats, trackingCookies
       stepClientSideTracking,        // Step 9  → context.trackingData, trackingAnalysis
-      stepBannerCompliance,          // Step 10 → context.bannerAnalysis
       stepConsentModeDetection,      // Step 10.5 → context.consentModeAudit
       stepPageMetadata,              // Step 13 → context.metadata
     ]
