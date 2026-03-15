@@ -90,10 +90,11 @@ const CONSENT_TRIGGERS = [
 ];
 
 /**
- * CMP-specific selectors — fallback when anchor detection doesn't find a match.
- * Includes 72 CMP patterns from Consent Observatory's CMPGatherer.
+ * CMP-specific selectors — Tier 1: Known CMP banner IDs/classes.
+ * These are highly specific and only match actual CMP banner containers.
+ * Run first in detection (Phase A) for maximum precision.
  */
-const CMP_SELECTORS = [
+const CMP_SELECTORS_SPECIFIC = [
   '#cookiescript_injected', '#onetrust-banner-sdk', '#CybotCookiebotDialog',
   '[data-testid="uc-privacy-banner"]', '#iubenda-cs-banner',
   '.cc-window', '.cc-banner', '#cmplz-cookiebanner-container',
@@ -101,12 +102,20 @@ const CMP_SELECTORS = [
   '#tarteaucitronRoot', '.borlabs-cookie', '#cmpbox', '#didomi-host',
   '#axeptio_overlay', '#sp_message_container', '#qc-cmp2-ui',
   '.cookie-permission--container', '.shopify-pc__banner',
+  '[class*="Cybot"]'
+];
+
+/**
+ * CMP-specific selectors — Tier 2: Fuzzy/broad patterns.
+ * These can match non-banner elements (footer links, nav items, privacy sections).
+ * Run AFTER anchor detection (Phase C), with additional overlay positioning validation.
+ */
+const CMP_SELECTORS_FUZZY = [
   '[id*="cookie"]', '[class*="cookie"]',
   '[id*="consent"]', '[class*="consent"]',
   '[id*="cmp"]', '[class*="cmp"]',
   '[id*="gdpr"]', '[class*="gdpr"]',
   '[id*="privacy"]', '[class*="privacy"]',
-  '[class*="Cybot"]',
   '[role="dialog"]', '[role="alertdialog"]'
 ];
 
@@ -128,17 +137,39 @@ async function waitForBannerVisible(page, timeout = 15000) {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
-    const result = await page.evaluate((triggers, cmpSelectors) => {
+    const result = await page.evaluate((triggers, specificSelectors, fuzzySelectors) => {
       const clickableQuery = 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]';
       const buttonOnlyQuery = 'button, [role="button"], input[type="button"], input[type="submit"]';
       const diagnostics = []; // Collect anchor candidates for logging
 
-      // ──── PHASE A: CMP-specific selectors (highest precision, no false positives) ────
-      // Run BEFORE anchor detection to avoid false positives on nav/header elements.
-      for (const selector of cmpSelectors) {
+      // ── Visibility helper: checks opacity, visibility, display, dimensions ──
+      function isReallyVisible(el) {
+        if (!el || el.offsetHeight === 0 || el.offsetWidth === 0) return false;
+        try {
+          const style = getComputedStyle(el);
+          if (style.opacity === '0') return false;
+          if (style.visibility === 'hidden') return false;
+          if (style.display === 'none') return false;
+        } catch (e) {}
+        return true;
+      }
+
+      // ── Overlay visibility helper: visible AND positioned above page content ──
+      function isOverlayVisible(el) {
+        if (!isReallyVisible(el)) return false;
+        try {
+          const style = getComputedStyle(el);
+          const zIndex = parseInt(style.zIndex);
+          return style.position === 'fixed' || style.position === 'sticky' || (!isNaN(zIndex) && zIndex > 10);
+        } catch (e) {}
+        return false;
+      }
+
+      // ──── PHASE A: Specific CMP selectors (highest precision, no false positives) ────
+      for (const selector of specificSelectors) {
         try {
           const el = document.querySelector(selector);
-          if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+          if (isReallyVisible(el)) {
             const buttons = el.querySelectorAll(clickableQuery);
             if (buttons.length > 0) {
               return { visible: true, method: 'selector', selector, buttonCount: buttons.length, diagnostics };
@@ -147,8 +178,7 @@ async function waitForBannerVisible(page, timeout = 15000) {
         } catch (e) {}
       }
 
-      // ──── PHASE B: Anchor-based detection (fallback for unknown CMPs) ────
-      // Find elements with position:fixed or high z-index — potential overlays/banners
+      // ──── PHASE B: Anchor-based detection (for unknown/unlisted CMPs) ────
       function findAnchors(root) {
         const anchors = [];
         function recurse(el) {
@@ -161,11 +191,10 @@ async function waitForBannerVisible(page, timeout = 15000) {
               (!isNaN(zIndex) && zIndex > 10)
             ) {
               anchors.push(el);
-              return; // Don't recurse — the container itself is the anchor
+              return;
             }
           } catch (e) {}
           for (const child of el.children) recurse(child);
-          // Pierce open Shadow DOM
           if (el.shadowRoot) {
             for (const child of el.shadowRoot.children) recurse(child);
           }
@@ -177,24 +206,21 @@ async function waitForBannerVisible(page, timeout = 15000) {
       const anchors = findAnchors(document.body);
 
       for (const anchor of anchors) {
-        const style = getComputedStyle(anchor);
         const classAndId = (Array.from(anchor.classList).join(' ') + ' ' + (anchor.id || '')).toLowerCase();
         const role = anchor.getAttribute('role') || '';
         const tag = anchor.tagName;
-
-        // ── Diagnostic info for this candidate (always collected) ──
         const text = (anchor.textContent || '').toLowerCase();
         const keywordMatch = triggers.find(t => text.includes(t)) || null;
         const actualButtons = anchor.querySelectorAll(buttonOnlyQuery);
         const linkCount = anchor.querySelectorAll('a').length;
 
-        // ── Filter 1: Must be visible ──
-        if (anchor.offsetHeight === 0 || anchor.offsetWidth === 0) {
+        // Filter 1: Must be truly visible (opacity, visibility, display)
+        if (!isReallyVisible(anchor)) {
           diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'hidden', selected: false });
           continue;
         }
 
-        // ── Filter 2: Skip navigation/header elements ──
+        // Filter 2: Skip navigation/header elements
         const isNavigation = (
           tag === 'NAV' || tag === 'HEADER' ||
           role === 'navigation' ||
@@ -205,19 +231,19 @@ async function waitForBannerVisible(page, timeout = 15000) {
           continue;
         }
 
-        // ── Filter 3: Must contain consent keywords ──
+        // Filter 3: Must contain consent keywords
         if (!keywordMatch) {
           diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'no-consent-keyword', selected: false });
           continue;
         }
 
-        // ── Filter 4: Must have at least one real button (not just nav links) ──
+        // Filter 4: Must have real buttons (not just nav links)
         if (actualButtons.length === 0) {
           diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'no-buttons-only-links', keywordMatch, linkCount, selected: false });
           continue;
         }
 
-        // ── This anchor passes all filters — build selector ──
+        // Build selector
         let selector = null;
         if (anchor.id) {
           selector = '#' + CSS.escape(anchor.id);
@@ -248,7 +274,29 @@ async function waitForBannerVisible(page, timeout = 15000) {
         };
       }
 
-      // ──── PHASE C: Iframe search ────
+      // ──── PHASE C: Fuzzy selectors (broad patterns, require overlay positioning + consent keywords) ────
+      for (const selector of fuzzySelectors) {
+        try {
+          const els = document.querySelectorAll(selector);
+          for (const el of els) {
+            // Fuzzy selectors require OVERLAY positioning (fixed/sticky/high z-index)
+            if (!isOverlayVisible(el)) continue;
+            // Must contain consent keywords to distinguish from unrelated elements
+            const elText = (el.textContent || '').toLowerCase();
+            const hasConsent = triggers.some(t => elText.includes(t));
+            if (!hasConsent) continue;
+            const buttons = el.querySelectorAll(clickableQuery);
+            if (buttons.length > 0) {
+              // Build selector for this element
+              let matchSelector = selector;
+              if (el.id) matchSelector = '#' + CSS.escape(el.id);
+              return { visible: true, method: 'fuzzy-selector', selector: matchSelector, buttonCount: buttons.length, diagnostics };
+            }
+          }
+        } catch (e) {}
+      }
+
+      // ──── PHASE D: Iframe search ────
       const iframes = document.querySelectorAll('iframe');
       for (const iframe of iframes) {
         try {
@@ -276,7 +324,7 @@ async function waitForBannerVisible(page, timeout = 15000) {
       }
 
       return { visible: false, diagnostics };
-    }, CONSENT_TRIGGERS, CMP_SELECTORS);
+    }, CONSENT_TRIGGERS, CMP_SELECTORS_SPECIFIC, CMP_SELECTORS_FUZZY);
 
     // Log anchor candidates evaluated (diagnostic — helps debug false positives)
     if (result.diagnostics && result.diagnostics.length > 0) {
