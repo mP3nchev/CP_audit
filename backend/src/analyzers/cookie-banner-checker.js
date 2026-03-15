@@ -130,9 +130,25 @@ async function waitForBannerVisible(page, timeout = 15000) {
   while (Date.now() - startTime < timeout) {
     const result = await page.evaluate((triggers, cmpSelectors) => {
       const clickableQuery = 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]';
+      const buttonOnlyQuery = 'button, [role="button"], input[type="button"], input[type="submit"]';
+      const diagnostics = []; // Collect anchor candidates for logging
 
-      // ──── PHASE A: Anchor-based detection (Consent Observatory approach) ────
-      // Find elements with position:fixed or high z-index — these are overlays/banners
+      // ──── PHASE A: CMP-specific selectors (highest precision, no false positives) ────
+      // Run BEFORE anchor detection to avoid false positives on nav/header elements.
+      for (const selector of cmpSelectors) {
+        try {
+          const el = document.querySelector(selector);
+          if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+            const buttons = el.querySelectorAll(clickableQuery);
+            if (buttons.length > 0) {
+              return { visible: true, method: 'selector', selector, buttonCount: buttons.length, diagnostics };
+            }
+          }
+        } catch (e) {}
+      }
+
+      // ──── PHASE B: Anchor-based detection (fallback for unknown CMPs) ────
+      // Find elements with position:fixed or high z-index — potential overlays/banners
       function findAnchors(root) {
         const anchors = [];
         function recurse(el) {
@@ -145,7 +161,7 @@ async function waitForBannerVisible(page, timeout = 15000) {
               (!isNaN(zIndex) && zIndex > 10)
             ) {
               anchors.push(el);
-              return; // Don't recurse into anchors — they are the container
+              return; // Don't recurse — the container itself is the anchor
             }
           } catch (e) {}
           for (const child of el.children) recurse(child);
@@ -160,23 +176,52 @@ async function waitForBannerVisible(page, timeout = 15000) {
 
       const anchors = findAnchors(document.body);
 
-      // Check each anchor for consent keywords
       for (const anchor of anchors) {
-        if (anchor.offsetHeight === 0 || anchor.offsetWidth === 0) continue;
+        const style = getComputedStyle(anchor);
+        const classAndId = (Array.from(anchor.classList).join(' ') + ' ' + (anchor.id || '')).toLowerCase();
+        const role = anchor.getAttribute('role') || '';
+        const tag = anchor.tagName;
+
+        // ── Diagnostic info for this candidate (always collected) ──
         const text = (anchor.textContent || '').toLowerCase();
-        const hasConsentKeyword = triggers.some(t => text.includes(t));
-        if (!hasConsentKeyword) continue;
+        const keywordMatch = triggers.find(t => text.includes(t)) || null;
+        const actualButtons = anchor.querySelectorAll(buttonOnlyQuery);
+        const linkCount = anchor.querySelectorAll('a').length;
 
-        // Anchor contains consent keywords — check for clickable elements
-        const buttons = anchor.querySelectorAll(clickableQuery);
-        if (buttons.length === 0) continue;
+        // ── Filter 1: Must be visible ──
+        if (anchor.offsetHeight === 0 || anchor.offsetWidth === 0) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'hidden', selected: false });
+          continue;
+        }
 
-        // Build a CSS selector for this anchor
+        // ── Filter 2: Skip navigation/header elements ──
+        const isNavigation = (
+          tag === 'NAV' || tag === 'HEADER' ||
+          role === 'navigation' ||
+          /\bnav(bar)?\b|\bheader\b|\bmenu\b|\bnavigation\b/.test(classAndId)
+        );
+        if (isNavigation) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'navigation-excluded', keywordMatch, buttonCount: actualButtons.length, linkCount, selected: false });
+          continue;
+        }
+
+        // ── Filter 3: Must contain consent keywords ──
+        if (!keywordMatch) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'no-consent-keyword', selected: false });
+          continue;
+        }
+
+        // ── Filter 4: Must have at least one real button (not just nav links) ──
+        if (actualButtons.length === 0) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'no-buttons-only-links', keywordMatch, linkCount, selected: false });
+          continue;
+        }
+
+        // ── This anchor passes all filters — build selector ──
         let selector = null;
         if (anchor.id) {
           selector = '#' + CSS.escape(anchor.id);
         } else {
-          // Try to find a unique class
           for (const cls of anchor.classList) {
             if (document.querySelectorAll('.' + CSS.escape(cls)).length === 1) {
               selector = '.' + CSS.escape(cls);
@@ -184,32 +229,23 @@ async function waitForBannerVisible(page, timeout = 15000) {
             }
           }
         }
-        if (!selector) {
-          // Fallback: use data attributes or role
-          if (anchor.getAttribute('role')) selector = `[role="${anchor.getAttribute('role')}"]`;
+        if (!selector && anchor.getAttribute('role')) {
+          selector = `[role="${anchor.getAttribute('role')}"]`;
         }
+
+        const allClickable = anchor.querySelectorAll(clickableQuery);
+        diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'selected', keywordMatch, buttonCount: actualButtons.length, linkCount, textSnippet: text.substring(0, 80), selected: true });
 
         return {
           visible: true,
           method: 'anchor',
-          selector: selector,
-          anchorTag: anchor.tagName,
-          buttonCount: buttons.length,
-          textSnippet: text.substring(0, 100)
+          selector,
+          anchorTag: tag,
+          buttonCount: allClickable.length,
+          keywordMatch,
+          textSnippet: text.substring(0, 100),
+          diagnostics
         };
-      }
-
-      // ──── PHASE B: CMP selector fallback ────
-      for (const selector of cmpSelectors) {
-        try {
-          const el = document.querySelector(selector);
-          if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-            const buttons = el.querySelectorAll(clickableQuery);
-            if (buttons.length > 0) {
-              return { visible: true, method: 'selector', selector, buttonCount: buttons.length };
-            }
-          }
-        } catch (e) {}
       }
 
       // ──── PHASE C: Iframe search ────
@@ -230,7 +266,8 @@ async function waitForBannerVisible(page, timeout = 15000) {
               method: 'iframe',
               selector: null,
               iframeSrc: iframe.src || 'about:blank',
-              buttonCount: buttons.length
+              buttonCount: buttons.length,
+              diagnostics
             };
           }
         } catch (e) {
@@ -238,8 +275,13 @@ async function waitForBannerVisible(page, timeout = 15000) {
         }
       }
 
-      return { visible: false };
+      return { visible: false, diagnostics };
     }, CONSENT_TRIGGERS, CMP_SELECTORS);
+
+    // Log anchor candidates evaluated (diagnostic — helps debug false positives)
+    if (result.diagnostics && result.diagnostics.length > 0) {
+      logger.debug('anchor-candidates-evaluated', { count: result.diagnostics.length, candidates: result.diagnostics });
+    }
 
     if (result.visible) {
       const timeMs = Date.now() - startTime;
@@ -251,6 +293,8 @@ async function waitForBannerVisible(page, timeout = 15000) {
         location,
         timeMs,
         buttonCount: result.buttonCount,
+        keywordMatch: result.keywordMatch,
+        anchorTag: result.anchorTag,
         iframeSrc: result.method === 'iframe' ? result.iframeSrc : undefined,
         textSnippet: result.textSnippet
       });
