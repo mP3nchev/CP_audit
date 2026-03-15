@@ -734,9 +734,44 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null, options
       logger.warn('banner-mobile-only', { auditId, selector: bannerDetectionStatus.selector });
     }
 
+    // === DIAGNOSTIC: Is the banner actually in the DOM when checks start? ===
+    const bannerDOMState = await analysisPage.evaluate((sel) => {
+      if (!sel) return { selector: null, inDOM: false, visible: false };
+      const el = document.querySelector(sel);
+      if (!el) return { selector: sel, inDOM: false, visible: false };
+      const rect = el.getBoundingClientRect();
+      return {
+        selector: sel,
+        inDOM: true,
+        isConnected: el.isConnected,
+        visible: rect.width > 0 && rect.height > 0,
+        dimensions: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
+        display: getComputedStyle(el).display,
+        visibility: getComputedStyle(el).visibility,
+        childCount: el.children.length
+      };
+    }, bannerDetectionStatus.selector);
+    logger.debug('noyb-banner-pre-check', { auditId, ...bannerDOMState });
+    if (!bannerDOMState.inDOM) {
+      logger.warn('noyb-banner-missing', { auditId, selector: bannerDOMState.selector, message: 'Banner NOT in DOM when NOYB checks start — all checks may auto-pass!' });
+    } else if (!bannerDOMState.visible) {
+      logger.warn('noyb-banner-hidden', { auditId, selector: bannerDOMState.selector, message: 'Banner in DOM but NOT visible (0x0 or display:none) — checks may search wrong scope' });
+    }
+
+    const checkDiagnostics = []; // Track scopedTo for each check
+
     // Check each violation type
     for (const violation of noybViolations.violations) {
       const result = await checkViolation(analysisPage, violation, debugSessionId, cookies, bannerDetectionStatus.selector);
+
+      // Track diagnostic: did this check actually scope to the banner?
+      checkDiagnostics.push({
+        id: violation.id,
+        detected: result.detected,
+        skipped: result.skipped || false,
+        scopedTo: result.evidence?.scopedTo || result.scopedTo || 'unknown',
+        hadContainer: result.evidence?.scopedTo !== 'document' && result.scopedTo !== 'document'
+      });
 
       if (result.skipped) {
         skippedChecks.push({
@@ -780,6 +815,29 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null, options
           evidence: result.evidence
         });
       }
+    }
+
+    // === DIAGNOSTIC SUMMARY: Which checks actually validated the banner? ===
+    const passedWithoutContainer = checkDiagnostics
+      .filter(d => !d.detected && !d.skipped && !d.hadContainer)
+      .map(d => d.id);
+    logger.debug('noyb-checks-summary', {
+      auditId,
+      bannerSelector: bannerDetectionStatus.selector,
+      bannerInDOM: bannerDOMState.inDOM,
+      bannerVisible: bannerDOMState.visible,
+      checksRun: checkDiagnostics.length,
+      passed: passedChecks.map(c => c.id),
+      failed: violations.map(v => v.id),
+      skipped: skippedChecks.map(c => c.id),
+      passedWithoutContainer
+    });
+    if (passedWithoutContainer.length > 0) {
+      logger.warn('noyb-rubber-stamp-warning', {
+        auditId,
+        message: `${passedWithoutContainer.length} checks PASSED without finding banner container — results may be unreliable`,
+        checks: passedWithoutContainer
+      });
     }
 
     // Restore desktop viewport if we switched to mobile for banner detection
@@ -1019,11 +1077,16 @@ async function checkNoRejectButton(page, violation, bannerSelector = null) {
       scopedTo: result.scopedTo
     });
 
+    if (result.scopedTo === 'document') {
+      logger.warn('noyb-type-a-no-container', { message: 'Type A: banner container NOT found, searched entire document instead' });
+    }
+
     // Violation detected if accept button exists but reject button doesn't
     const detected = result.hasAcceptButton && !result.hasRejectButton;
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Accept button found without equally prominent Reject button',
         acceptButton: result.acceptText,
@@ -1076,6 +1139,7 @@ async function checkPreTickedBoxes(page, violation, bannerSelector = null) {
       });
 
       return {
+        scopedTo: container ? selector : 'document',
         totalChecked: checkedBoxes.length,
         nonEssentialChecked: nonEssentialChecked.length,
         details: nonEssentialChecked.map(cb => ({
@@ -1086,10 +1150,17 @@ async function checkPreTickedBoxes(page, violation, bannerSelector = null) {
       };
     }, bannerSelector);
 
+    logger.debug('noyb-type-b-result', {
+      scopedTo: result.scopedTo,
+      totalChecked: result.totalChecked,
+      nonEssentialChecked: result.nonEssentialChecked
+    });
+
     const detected = result.nonEssentialChecked > 0;
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: `${result.nonEssentialChecked} non-essential checkboxes are pre-ticked`,
         preTickedBoxes: result.details
@@ -1133,8 +1204,10 @@ async function checkDeceptiveLinkDesign(page, violation, bannerSelector = null) 
                tagName === 'a'; // It's a link, not a button
       });
 
+      const scopedTo = container ? selector : 'document';
+
       if (!acceptButton || !settingsLink) {
-        return { mismatch: false };
+        return { mismatch: false, scopedTo, acceptFound: !!acceptButton, settingsFound: !!settingsLink };
       }
 
       const acceptStyle = window.getComputedStyle(acceptButton);
@@ -1146,6 +1219,7 @@ async function checkDeceptiveLinkDesign(page, violation, bannerSelector = null) 
 
       return {
         mismatch: true,
+        scopedTo,
         acceptTagName: acceptButton.tagName,
         settingsTagName: settingsLink.tagName,
         fontSizeRatio: fontSizeRatio,
@@ -1153,6 +1227,14 @@ async function checkDeceptiveLinkDesign(page, violation, bannerSelector = null) 
         settingsFontSize: settingsFontSize
       };
     }, BUTTON_KEYWORDS, bannerSelector);
+
+    logger.debug('noyb-type-c-result', {
+      scopedTo: result.scopedTo,
+      acceptFound: result.acceptFound !== undefined ? result.acceptFound : true,
+      settingsFound: result.settingsFound !== undefined ? result.settingsFound : true,
+      mismatch: result.mismatch,
+      fontSizeRatio: result.fontSizeRatio
+    });
 
     // Violation if settings is a link while accept is a button AND font size ratio < 0.7
     const detected = result.mismatch &&
@@ -1162,11 +1244,13 @@ async function checkDeceptiveLinkDesign(page, violation, bannerSelector = null) 
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Settings link is significantly smaller than Accept button',
         acceptElement: result.acceptTagName,
         settingsElement: result.settingsTagName,
-        fontSizeRatio: result.fontSizeRatio.toFixed(2)
+        fontSizeRatio: result.fontSizeRatio.toFixed(2),
+        scopedTo: result.scopedTo
       } : null
     };
   } catch (error) {
@@ -1205,8 +1289,10 @@ async function checkDeceptiveButtonColors(page, violation, bannerSelector = null
         return data.keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
+      const scopedTo = container ? data.selector : 'document';
+
       if (!acceptButton || !rejectButton) {
-        return { hasButtons: false };
+        return { hasButtons: false, scopedTo, acceptFound: !!acceptButton, rejectFound: !!rejectButton };
       }
 
       const acceptBg = window.getComputedStyle(acceptButton).backgroundColor;
@@ -1250,6 +1336,7 @@ async function checkDeceptiveButtonColors(page, violation, bannerSelector = null
 
       return {
         hasButtons: true,
+        scopedTo,
         acceptColor: rgbToHex(acceptBg),
         rejectColor: rgbToHex(rejectBg),
         acceptHsl: rgbToHsl(acceptBg),
@@ -1257,8 +1344,19 @@ async function checkDeceptiveButtonColors(page, violation, bannerSelector = null
       };
     }, { keywords: BUTTON_KEYWORDS, colorPatterns: violation.color_patterns, selector: bannerSelector });
 
+    logger.debug('noyb-type-d-result', {
+      hasButtons: result.hasButtons,
+      scopedTo: result.scopedTo,
+      acceptFound: result.acceptFound,
+      rejectFound: result.rejectFound,
+      acceptColor: result.acceptColor,
+      rejectColor: result.rejectColor,
+      acceptHsl: result.acceptHsl,
+      rejectHsl: result.rejectHsl
+    });
+
     if (!result.hasButtons) {
-      return { detected: false, evidence: null };
+      return { detected: false, scopedTo: result.scopedTo, evidence: null };
     }
 
     // Strategy 1: Exact match (legacy)
@@ -1302,13 +1400,15 @@ async function checkDeceptiveButtonColors(page, violation, bannerSelector = null
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Accept button uses attractive color while Reject is muted',
         acceptColor: result.acceptColor,
         rejectColor: result.rejectColor,
         acceptHsl: result.acceptHsl,
         rejectHsl: result.rejectHsl,
-        detectionMethod: exactMatch ? 'exact_match' : 'hsl_similarity'
+        detectionMethod: exactMatch ? 'exact_match' : 'hsl_similarity',
+        scopedTo: result.scopedTo
       } : null
     };
   } catch (error) {
@@ -1346,8 +1446,10 @@ async function checkDeceptiveButtonContrast(page, violation, bannerSelector = nu
         return keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
+      const scopedTo = container ? selector : 'document';
+
       if (!acceptButton || !rejectButton) {
-        return { hasButtons: false };
+        return { hasButtons: false, scopedTo, acceptFound: !!acceptButton, rejectFound: !!rejectButton };
       }
 
       const acceptStyle = window.getComputedStyle(acceptButton);
@@ -1372,6 +1474,7 @@ async function checkDeceptiveButtonContrast(page, violation, bannerSelector = nu
 
       return {
         hasButtons: true,
+        scopedTo,
         sizeRatio,
         weightDiff,
         paddingRatio,
@@ -1380,8 +1483,19 @@ async function checkDeceptiveButtonContrast(page, violation, bannerSelector = nu
       };
     }, BUTTON_KEYWORDS, bannerSelector);
 
+    logger.debug('noyb-type-e-result', {
+      hasButtons: result.hasButtons,
+      scopedTo: result.scopedTo,
+      acceptFound: result.acceptFound,
+      rejectFound: result.rejectFound,
+      sizeRatio: result.sizeRatio,
+      weightDiff: result.weightDiff,
+      acceptSize: result.acceptSize,
+      rejectSize: result.rejectSize
+    });
+
     if (!result.hasButtons) {
-      return { detected: false, evidence: null };
+      return { detected: false, scopedTo: result.scopedTo, evidence: null };
     }
 
     // Check if accept is significantly more prominent
@@ -1393,6 +1507,7 @@ async function checkDeceptiveButtonContrast(page, violation, bannerSelector = nu
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Accept button is significantly more prominent than Reject',
         sizeRatio: result.sizeRatio.toFixed(2),
@@ -1446,9 +1561,17 @@ async function checkLegitimateInterestForAds(page, violation) {
       const hasAdContext = adKeywords.some(keyword => bodyText.includes(keyword));
 
       return {
-        found: hasLegitimateInterest && hasAdContext
+        found: hasLegitimateInterest && hasAdContext,
+        hasLegitimateInterest,
+        hasAdContext
       };
     }, violation.text_patterns);
+
+    logger.debug('noyb-type-h-result', {
+      found: result.found,
+      hasLegitimateInterest: result.hasLegitimateInterest,
+      hasAdContext: result.hasAdContext
+    });
 
     return {
       detected: result.found,
@@ -1494,6 +1617,13 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
       return violation.tracking_patterns_forbidden.some(pattern =>
         cookie.name.includes(pattern)
       );
+    });
+
+    logger.debug('noyb-type-i-result', {
+      cookiesProvided: cookies.length,
+      essentialCount: essentialCookies.length,
+      misclassifiedCount: misclassified.length,
+      misclassifiedNames: misclassified.map(c => c.name)
     });
 
     const detected = misclassified.length > 0;
@@ -1572,6 +1702,12 @@ async function checkDifficultConsentWithdrawal(page, violation) {
         settingsLinksCount: settingsLinks.length
       };
     }, BUTTON_KEYWORDS);
+
+    logger.debug('noyb-type-k-result', {
+      hasWithdrawalMechanism: result.hasWithdrawalMechanism,
+      foundElements: result.foundElements,
+      settingsLinksCount: result.settingsLinksCount
+    });
 
     const detected = !result.hasWithdrawalMechanism;
 
