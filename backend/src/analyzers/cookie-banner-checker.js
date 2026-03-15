@@ -585,7 +585,7 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null, options
         logger.info('banner-incognito-start', { auditId, url: options.url });
         const loadStart = Date.now();
 
-        incognitoContext = await options.browser.createIncognitoBrowserContext();
+        incognitoContext = await (options.browser.createBrowserContext || options.browser.createIncognitoBrowserContext).call(options.browser);
         analysisPage = await incognitoContext.newPage();
         await analysisPage.setViewport({ width: 1920, height: 1080 });
 

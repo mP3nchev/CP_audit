@@ -253,7 +253,7 @@ async function runScenario(browser, websiteUrl, scenarioType) {
   logger.debug('consent-sim-v1-progress', { message: `   Testing: ${websiteUrl}` });
 
   // Create incognito context (isolated cookies/storage)
-  const context = await browser.createIncognitoBrowserContext();
+  const context = await (browser.createBrowserContext || browser.createIncognitoBrowserContext).call(browser);
   const page = await context.newPage();
 
   // Setup network listener BEFORE navigation

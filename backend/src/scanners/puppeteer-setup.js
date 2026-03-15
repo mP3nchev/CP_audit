@@ -71,7 +71,7 @@ function getSystemResolution() {
 
   try {
     // Linux: xrandr
-    const output = execSync('xrandr | grep "*" | head -n1', { encoding: 'utf8' });
+    const output = execSync('xrandr | grep "*" | head -n1', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
     const match = output.match(/(\d+)x(\d+)/);
     if (match) {
       return { width: parseInt(match[1]), height: parseInt(match[2]) };
@@ -80,7 +80,7 @@ function getSystemResolution() {
 
   try {
     // macOS: system_profiler
-    const output = execSync('system_profiler SPDisplaysDataType | grep Resolution', { encoding: 'utf8' });
+    const output = execSync('system_profiler SPDisplaysDataType | grep Resolution', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
     const match = output.match(/(\d+) x (\d+)/);
     if (match) {
       return { width: parseInt(match[1]), height: parseInt(match[2]) };
