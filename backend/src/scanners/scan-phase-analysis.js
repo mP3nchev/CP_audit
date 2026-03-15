@@ -150,7 +150,11 @@ const stepBannerCompliance = {
   stepNumber: '10',
   critical: false,
   async execute(context) {
-    context.bannerAnalysis = await analyzeCookieBanner(context.page, context.auditId, context.cookies);
+    context.bannerAnalysis = await analyzeCookieBanner(context.page, context.auditId, context.cookies, {
+      browser: context.browser,
+      url: context.websiteUrl,
+      bannerAppearTime: context.bannerAppearTime
+    });
 
     logger.debug('scan-progress', { message: `Violations found: ${context.bannerAnalysis.violationCount}/${context.bannerAnalysis.totalChecks}`, auditId: context.auditId });
     if (context.bannerAnalysis.skippedCount > 0) {

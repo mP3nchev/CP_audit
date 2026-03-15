@@ -136,7 +136,69 @@ const CMP_SELECTORS_FUZZY = [
 async function waitForBannerVisible(page, timeout = 15000) {
   const startTime = Date.now();
 
+  // Inject MutationObserver for early detection of late-injected banners.
+  // This catches CMP banners that appear between 500ms polling intervals.
+  try {
+    await page.evaluate((specificSelectors) => {
+      if (window.__bannerObserverHit !== undefined) return; // Already injected
+      window.__bannerObserverHit = null;
+      const observer = new MutationObserver(() => {
+        for (const sel of specificSelectors) {
+          try {
+            const el = document.querySelector(sel);
+            if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+              window.__bannerObserverHit = { selector: sel, time: Date.now() };
+              observer.disconnect();
+              return;
+            }
+          } catch (e) {}
+        }
+      });
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
+      // Auto-disconnect after 20s to prevent memory leak
+      setTimeout(() => observer.disconnect(), 20000);
+    }, CMP_SELECTORS_SPECIFIC);
+  } catch (e) {
+    // Non-critical — observer injection may fail on about:blank or detached pages
+  }
+
   while (Date.now() - startTime < timeout) {
+    // Fast path: check if MutationObserver already caught a banner injection
+    try {
+      const observerHit = await page.evaluate(() => window.__bannerObserverHit);
+      if (observerHit) {
+        const timeMs = Date.now() - startTime;
+        logger.info('banner-found', {
+          method: 'observer',
+          selector: observerHit.selector,
+          location: 'main',
+          timeMs,
+          observerTimeMs: observerHit.time
+        });
+        // Verify it's still visible and has buttons
+        const verified = await page.evaluate((sel, clickableQuery) => {
+          const el = document.querySelector(sel);
+          if (!el || el.offsetHeight === 0 || el.offsetWidth === 0) return null;
+          const buttons = el.querySelectorAll(clickableQuery);
+          return buttons.length > 0 ? { buttonCount: buttons.length } : null;
+        }, observerHit.selector, 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]');
+
+        if (verified) {
+          return {
+            found: true,
+            visible: true,
+            selector: observerHit.selector,
+            location: 'main',
+            viewport: 'desktop',
+            timeMs,
+            method: 'observer'
+          };
+        }
+      }
+    } catch (e) {}
+
     const result = await page.evaluate((triggers, specificSelectors, fuzzySelectors) => {
       const clickableQuery = 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]';
       const buttonOnlyQuery = 'button, [role="button"], input[type="button"], input[type="submit"]';
@@ -165,10 +227,29 @@ async function waitForBannerVisible(page, timeout = 15000) {
         return false;
       }
 
+      // ── Shadow DOM piercing helper: searches all shadow roots for a selector ──
+      function querySelectorDeep(sel) {
+        const result = document.querySelector(sel);
+        if (result) return result;
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) {
+              const found = el.shadowRoot.querySelector(sel);
+              if (found) return found;
+              const deep = walk(el.shadowRoot);
+              if (deep) return deep;
+            }
+          }
+          return null;
+        };
+        return walk(document);
+      }
+
       // ──── PHASE A: Specific CMP selectors (highest precision, no false positives) ────
+      // Uses querySelectorDeep to pierce shadow DOM for CMP banners hosted in web components
       for (const selector of specificSelectors) {
         try {
-          const el = document.querySelector(selector);
+          const el = querySelectorDeep(selector);
           if (isReallyVisible(el)) {
             const buttons = el.querySelectorAll(clickableQuery);
             if (buttons.length > 0) {
@@ -331,6 +412,53 @@ async function waitForBannerVisible(page, timeout = 15000) {
       logger.debug('anchor-candidates-evaluated', { count: result.diagnostics.length, candidates: result.diagnostics });
     }
 
+    // ──── PHASE E: Cross-origin iframe detection via Puppeteer frame API ────
+    // Phase D (inside page.evaluate) can only access same-origin iframes.
+    // This checks cross-origin CMP iframes (TrustArc, OneTrust, Didomi hosted).
+    if (!result.visible) {
+      try {
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          try {
+            const frameHasConsent = await frame.evaluate((triggers) => {
+              const text = (document.body?.textContent || '').toLowerCase();
+              const hasKeyword = triggers.some(t => text.includes(t));
+              if (!hasKeyword) return null;
+              const buttons = document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]');
+              if (buttons.length === 0) return null;
+              return { buttonCount: buttons.length };
+            }, CONSENT_TRIGGERS);
+
+            if (frameHasConsent) {
+              const timeMs = Date.now() - startTime;
+              logger.info('banner-found', {
+                method: 'cross-origin-iframe',
+                selector: null,
+                location: 'iframe',
+                timeMs,
+                buttonCount: frameHasConsent.buttonCount,
+                iframeSrc: frame.url()
+              });
+              return {
+                found: true,
+                visible: true,
+                selector: null,
+                location: 'iframe',
+                viewport: 'desktop',
+                timeMs,
+                method: 'iframe',
+                iframeSrc: frame.url()
+              };
+            }
+          } catch (e) {
+            // Cross-origin or detached frame — expected, skip
+          }
+        }
+      } catch (e) {
+        // page.frames() failed — non-critical
+      }
+    }
+
     if (result.visible) {
       const timeMs = Date.now() - startTime;
       const location = result.method === 'iframe' ? 'iframe' : 'main';
@@ -383,22 +511,39 @@ async function waitForBannerVisible(page, timeout = 15000) {
  * Detect banner with mobile viewport retry
  * If banner is not found at desktop viewport, resize to mobile (375x812) and retry.
  * @param {Page} page - Puppeteer page
- * @param {number} timeout - Max wait time per attempt (default: 10000ms)
+ * @param {number} timeout - Max wait time per attempt (default: 15000ms)
+ * @param {Object} hints - Optional hints from earlier detection steps
+ * @param {number} hints.bannerAppearTime - If set, banner is known to exist (from Step 6.5)
  * @returns {Promise<Object>} Structured banner detection status
  */
-async function detectBannerWithRetry(page, timeout = 15000) {
+async function detectBannerWithRetry(page, timeout = 15000, hints = {}) {
+  // Optimize timeouts using hints from Step 6.5
+  let desktopTimeout = timeout;
+  let mobileTimeout = timeout;
+
+  if (hints.bannerAppearTime) {
+    // Banner is known to exist — use adaptive timeout based on when it appeared
+    desktopTimeout = Math.min(Math.max(hints.bannerAppearTime * 2, 8000), 15000);
+    mobileTimeout = 5000; // Short mobile timeout — banner was seen at desktop originally
+    logger.debug('banner-timeout-optimized', {
+      desktopTimeout,
+      mobileTimeout,
+      bannerAppearTime: hints.bannerAppearTime
+    });
+  }
+
   // Try desktop viewport first
-  const desktopResult = await waitForBannerVisible(page, timeout);
+  const desktopResult = await waitForBannerVisible(page, desktopTimeout);
   if (desktopResult.found) return desktopResult;
 
-  // Retry with mobile viewport
+  // Retry with mobile viewport (only if desktop failed)
   logger.info('banner-mobile-retry', { reason: 'Desktop detection failed, retrying at mobile viewport 375x812' });
   const originalViewport = page.viewport();
   await page.setViewport({ width: 375, height: 812 });
   // Wait 2 seconds for responsive reflow
   await new Promise(r => setTimeout(r, 2000));
 
-  const mobileResult = await waitForBannerVisible(page, timeout);
+  const mobileResult = await waitForBannerVisible(page, mobileTimeout);
   mobileResult.viewport = 'mobile';
   // Store original viewport so caller can restore after checks complete
   mobileResult.originalViewport = originalViewport || { width: 1280, height: 800 };
@@ -416,8 +561,10 @@ async function detectBannerWithRetry(page, timeout = 15000) {
  * @param {Array} cookies - Optional cookies array for Type I check
  * @returns {Promise<Object>} Violations detected
  */
-async function analyzeCookieBanner(page, auditId = null, cookies = null) {
+async function analyzeCookieBanner(page, auditId = null, cookies = null, options = {}) {
   let debugSessionId = null;
+  let incognitoContext = null;
+  let analysisPage = page;
 
   try {
     logger.info('banner-analysis-start', { auditId, hasCookies: !!cookies });
@@ -428,33 +575,96 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       logger.info('banner-debug-enabled', { sessionId: debugSessionId });
     }
 
-    // Clear CMP consent cookies to ensure banner appears fresh
-    try {
-      const consentCookiePatterns = ['CookieScriptConsent', 'cookieconsent_status',
-        'CookieConsent', 'OptanonConsent', 'eupubconsent', 'CookiebotConsent',
-        'didomi_token', 'iubenda_cs', 'cmplz_'];
-      const currentCookies = await page.cookies();
-      const consentCookies = currentCookies.filter(c =>
-        consentCookiePatterns.some(p => c.name.includes(p))
-      );
-      if (consentCookies.length > 0) {
-        await page.deleteCookie(...consentCookies);
-        logger.info('cleared-consent-cookies', { count: consentCookies.length, names: consentCookies.map(c => c.name) });
-      }
-    } catch (e) {
-      logger.warn('consent-cookie-clear-failed', { error: e.message });
-    }
+    // ── CLEAN PIPELINE: Incognito context with fresh page load ──
+    // When browser + url are provided (main audit pipeline), create a fresh
+    // incognito context so CookieScript sees NO prior consent cookie on page load.
+    // This eliminates the race condition where CookieScript auto-dismisses the
+    // banner before we can analyze it.
+    if (options.browser && options.url) {
+      try {
+        logger.info('banner-incognito-start', { auditId, url: options.url });
+        const loadStart = Date.now();
 
-    // Simulate mouse movement to trigger lazy-loaded CMPs
-    try {
-      await page.mouse.move(100, 100, { steps: 5 });
-      await page.mouse.move(300, 300, { steps: 5 });
-    } catch (e) {
-      // Non-critical — some pages may not support mouse events
+        incognitoContext = await options.browser.createIncognitoBrowserContext();
+        analysisPage = await incognitoContext.newPage();
+        await analysisPage.setViewport({ width: 1920, height: 1080 });
+
+        await analysisPage.goto(options.url, { waitUntil: 'load', timeout: 30000 });
+
+        // Validate navigation succeeded
+        const currentUrl = analysisPage.url();
+        if (currentUrl === 'about:blank') {
+          throw new Error('Navigation failed - page is about:blank');
+        }
+
+        const loadTimeMs = Date.now() - loadStart;
+        logger.info('banner-incognito-loaded', { auditId, url: options.url, loadTimeMs });
+
+        if (options.bannerAppearTime) {
+          logger.info('banner-hint-available', { auditId, bannerAppearTimeMs: options.bannerAppearTime });
+        }
+      } catch (incognitoError) {
+        // Fallback to legacy flow if incognito fails
+        logger.warn('banner-incognito-fallback', {
+          auditId,
+          error: incognitoError.message,
+          reason: 'Falling back to legacy cookie-clearing flow'
+        });
+
+        // Clean up failed incognito context
+        if (incognitoContext) {
+          try { await incognitoContext.close(); } catch (e) {}
+          incognitoContext = null;
+        }
+        analysisPage = page;
+
+        // Legacy flow: clear cookies on existing page
+        try {
+          const consentCookiePatterns = ['CookieScriptConsent', 'cookieconsent_status',
+            'CookieConsent', 'OptanonConsent', 'eupubconsent', 'CookiebotConsent',
+            'didomi_token', 'iubenda_cs', 'cmplz_'];
+          const currentCookies = await page.cookies();
+          const consentCookies = currentCookies.filter(c =>
+            consentCookiePatterns.some(p => c.name.includes(p))
+          );
+          if (consentCookies.length > 0) {
+            await page.deleteCookie(...consentCookies);
+            logger.info('cleared-consent-cookies', { count: consentCookies.length, names: consentCookies.map(c => c.name) });
+          }
+        } catch (e) {
+          logger.warn('consent-cookie-clear-failed', { error: e.message });
+        }
+      }
+    } else {
+      // ── LEGACY FLOW: Used by consent-simulator-v1.js which has its own incognito context ──
+      try {
+        const consentCookiePatterns = ['CookieScriptConsent', 'cookieconsent_status',
+          'CookieConsent', 'OptanonConsent', 'eupubconsent', 'CookiebotConsent',
+          'didomi_token', 'iubenda_cs', 'cmplz_'];
+        const currentCookies = await page.cookies();
+        const consentCookies = currentCookies.filter(c =>
+          consentCookiePatterns.some(p => c.name.includes(p))
+        );
+        if (consentCookies.length > 0) {
+          await page.deleteCookie(...consentCookies);
+          logger.info('cleared-consent-cookies', { count: consentCookies.length, names: consentCookies.map(c => c.name) });
+        }
+      } catch (e) {
+        logger.warn('consent-cookie-clear-failed', { error: e.message });
+      }
+
+      // Simulate mouse movement to trigger lazy-loaded CMPs
+      try {
+        await analysisPage.mouse.move(100, 100, { steps: 5 });
+        await analysisPage.mouse.move(300, 300, { steps: 5 });
+      } catch (e) {
+        // Non-critical — some pages may not support mouse events
+      }
     }
 
     // Detect banner with mobile viewport retry
-    const bannerDetectionStatus = await detectBannerWithRetry(page);
+    const hints = options.bannerAppearTime ? { bannerAppearTime: options.bannerAppearTime } : {};
+    const bannerDetectionStatus = await detectBannerWithRetry(analysisPage, 15000, hints);
     logger.info('banner-detection-result', {
       auditId,
       found: bannerDetectionStatus.found,
@@ -471,6 +681,12 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
         desktopViewport: 'not found',
         mobileViewport: bannerDetectionStatus.viewport === 'mobile' ? 'not found' : 'not attempted'
       });
+
+      // Clean up incognito context before early return
+      if (incognitoContext) {
+        try { await incognitoContext.close(); } catch (e) {}
+        logger.info('banner-incognito-closed', { auditId });
+      }
 
       return {
         bannerDetected: false,
@@ -520,7 +736,7 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
 
     // Check each violation type
     for (const violation of noybViolations.violations) {
-      const result = await checkViolation(page, violation, debugSessionId, cookies, bannerDetectionStatus.selector);
+      const result = await checkViolation(analysisPage, violation, debugSessionId, cookies, bannerDetectionStatus.selector);
 
       if (result.skipped) {
         skippedChecks.push({
@@ -568,9 +784,20 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
 
     // Restore desktop viewport if we switched to mobile for banner detection
     if (bannerDetectionStatus.viewport === 'mobile' && bannerDetectionStatus.originalViewport) {
-      await page.setViewport(bannerDetectionStatus.originalViewport);
+      await analysisPage.setViewport(bannerDetectionStatus.originalViewport);
       await new Promise(r => setTimeout(r, 500));
       logger.info('viewport-restored', { viewport: bannerDetectionStatus.originalViewport });
+    }
+
+    // Clean up incognito context (fresh page no longer needed after checks complete)
+    if (incognitoContext) {
+      try {
+        await incognitoContext.close();
+        logger.info('banner-incognito-closed', { auditId });
+      } catch (e) {
+        logger.warn('banner-incognito-close-failed', { auditId, error: e.message });
+      }
+      incognitoContext = null;
     }
 
     const totalChecks = noybViolations.violations.length;
@@ -619,6 +846,11 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
     };
   } catch (error) {
     logger.error('banner-analysis-failed', { error: '❌ ' + error.message, auditId, stack: error.stack });
+
+    // Clean up incognito context on error
+    if (incognitoContext) {
+      try { await incognitoContext.close(); } catch (e) {}
+    }
 
     // Log error if debug enabled
     if (DEBUG_VIOLATIONS && debugSessionId) {
