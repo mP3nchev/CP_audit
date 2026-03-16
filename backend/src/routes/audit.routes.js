@@ -8,7 +8,6 @@ const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-pol
 const { assessRisk, saveRiskAssessment } = require('../analyzers/risk-assessor');
 const { generateSolutions } = require('../analyzers/solution-generator');
 const { calculateOverallScore } = require('../analyzers/compliance-score-calculator');
-const { generateReport } = require('../generators/html-report-builder'); // Legacy HTML builder
 const { renderReactReportToHTML, renderReactReportToPDF } = require('../generators/react-report-renderer');
 const { uploadBlob } = require('../integrations/blob-storage');
 const { checkBudget } = require('../integrations/claude-api');
@@ -723,57 +722,15 @@ router.get('/api/audit/:audit_id/policy-analysis', (req, res) => {
 });
 
 /**
- * Generate and view HTML report (LEGACY - DEPRECATED)
+ * Legacy report endpoint — redirects to React v2
  * GET /api/audit/:audit_id/report
  *
- * @deprecated This endpoint uses the legacy Handlebars template system.
- * Please migrate to /api/audit/:audit_id/report-v2 for the React-based report.
- * This endpoint will be removed in a future version.
+ * @deprecated Permanently redirected to /api/audit/:audit_id/report-v2
  */
-router.get('/api/audit/:audit_id/report', async (req, res) => {
-  try {
-    const { audit_id } = req.params;
-
-    console.log(`📊 [DEPRECATED] Generating legacy report for audit ${audit_id}...`);
-
-    // Verify audit exists
-    const db = getDatabase();
-    const audit = db.prepare(`
-      SELECT * FROM audits WHERE audit_uid = ?
-    `).get(audit_id);
-
-    if (!audit) {
-      return res.status(404).json({
-        error: 'Audit not found',
-        code: 'E404'
-      });
-    }
-
-    // Check if audit is completed
-    if (audit.status !== constants.AUDIT_STATUS.COMPLETED) {
-      return res.status(400).json({
-        error: 'Audit not completed',
-        message: 'Report cannot be generated until audit is complete',
-        status: audit.status
-      });
-    }
-
-    // Generate HTML report (legacy Handlebars template)
-    const html = await generateReport(audit_id);
-
-    // Return HTML with deprecation warning
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('X-API-Warn', 'This endpoint is deprecated. Use /api/audit/:audit_id/report-v2 instead.');
-    res.setHeader('Deprecation', 'true');
-    res.send(html);
-
-  } catch (error) {
-    console.error('❌ Failed to generate report:', error);
-    res.status(500).json({
-      error: 'Failed to generate report',
-      message: error.message
-    });
-  }
+router.get('/api/audit/:audit_id/report', (req, res) => {
+  const { audit_id } = req.params;
+  logger.info('legacy-report-redirect', { auditUid: audit_id });
+  res.redirect(301, `/api/audit/${audit_id}/report-v2`);
 });
 
 /**
@@ -808,29 +765,17 @@ router.get('/api/audit/:audit_id/share', async (req, res) => {
       });
     }
 
-    // Generate HTML report using React v2 renderer (with legacy fallback)
+    // Generate HTML report using React v2 renderer
     let html;
-    let renderMethod = 'react-v2';
-
-    try {
-      // NEW: Try React v2 report rendering via headless Chromium
-      console.log('   Attempting React v2 report rendering...');
-      html = await renderReactReportToHTML(audit_id);
-      console.log('   ✅ React v2 rendering successful');
-    } catch (renderError) {
-      // FALLBACK: Use legacy Handlebars HTML builder if Chromium fails
-      console.warn('   ⚠️  React v2 rendering failed, falling back to legacy HTML builder');
-      console.warn(`   Error: ${renderError.message}`);
-      html = await generateReport(audit_id);
-      renderMethod = 'legacy-handlebars';
-      console.log('   ✅ Legacy HTML builder successful');
-    }
+    console.log('   Rendering React v2 report...');
+    html = await renderReactReportToHTML(audit_id);
+    console.log('   React v2 rendering successful');
 
     // Upload to Vercel Blob
     const filename = `report-${audit_id}-${Date.now()}.html`;
     const blobUrl = await uploadBlob(Buffer.from(html, 'utf8'), filename);
 
-    console.log(`✅ Report uploaded: ${blobUrl} (method: ${renderMethod})`);
+    console.log(`✅ Report uploaded: ${blobUrl}`);
 
     // Return v2 Vercel URL as primary, blob as fallback
     const v2Url = `https://cp-audit.vercel.app/report-v2/${audit_id}`;
@@ -957,10 +902,17 @@ router.post('/api/audit/manual-consent/upload', express.json({ limit: '50mb' }),
         auditUid = existingAudit.audit_uid;
         console.log(`   📝 Updating existing audit: ${auditUid} (ID: ${auditId})`);
       } else {
-        return res.status(404).json({
-          error: `Audit not found: ${providedAuditId}`,
-          code: 'E004'
-        });
+        // Audit not found on this server — create new audit instead of failing
+        // This handles cross-environment uploads (e.g. local audit ID → production server)
+        console.warn(`   ⚠️  Audit ${providedAuditId} not found on this server, creating new audit`);
+        auditUid = `aud_${crypto.randomBytes(8).toString('hex')}`;
+        const auditStmt = db.prepare(`
+          INSERT INTO audits (audit_uid, website_url, status, created_at, updated_at)
+          VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        `);
+        const newResult = auditStmt.run(auditUid, websiteUrl, constants.AUDIT_STATUS.PROCESSING);
+        auditId = newResult.lastInsertRowid;
+        console.log(`   📝 Created new audit: ${auditUid} (ID: ${auditId}) [original ID: ${providedAuditId}]`);
       }
     } else {
       // Create new audit

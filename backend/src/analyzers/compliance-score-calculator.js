@@ -175,6 +175,17 @@ function calculateCookieBannerScore(results) {
     };
   }
 
+  // BANNER_NOT_DETECTED: banner component scores 0
+  if (bannerAnalysis.bannerDetected === false) {
+    return {
+      score: 0,
+      details: 'No cookie consent banner detected at desktop or mobile viewports — GDPR violation'
+    };
+  }
+
+  // BANNER_MOBILE_ONLY: apply 50% penalty to the banner score
+  const mobileOnlyPenalty = (bannerAnalysis.bannerDetectionStatus?.viewport === 'mobile') ? 0.5 : 1.0;
+
   const totalChecks = bannerAnalysis.totalChecks || 8;
   let passedChecks = bannerAnalysis.passedCount || 0;
 
@@ -201,11 +212,13 @@ function calculateCookieBannerScore(results) {
     baseScore = Math.max(0, baseScore - clickPenalty - symmetryPenalty);
   }
 
-  const score = baseScore;
+  // Apply mobile-only penalty (50% reduction if banner only renders on mobile)
+  const score = Math.round(baseScore * mobileOnlyPenalty);
 
+  const mobileNote = mobileOnlyPenalty < 1 ? ', mobile-only banner (50% penalty)' : '';
   return {
     score,
-    details: `${bannerAnalysis.passedCount}/${totalChecks} noyb checks passed${criticalViolations.length > 0 ? ` (${criticalViolations.length} critical)` : ''}${consentSim && consentSim.comparison ? `, ${consentSim.comparison.clickImbalance} click imbalance` : ''}`
+    details: `${bannerAnalysis.passedCount}/${totalChecks} noyb checks passed${criticalViolations.length > 0 ? ` (${criticalViolations.length} critical)` : ''}${consentSim && consentSim.comparison ? `, ${consentSim.comparison.clickImbalance} click imbalance` : ''}${mobileNote}`
   };
 }
 

@@ -4,6 +4,7 @@ const cors = require('cors');
 const { initDatabase, getDatabase, closeDatabase } = require('./database/db');
 const { migrate: migrateScoring } = require('./database/migrate-add-scoring');
 const { migrate: migrateMonitoring } = require('./database/migrate-add-monitoring');
+const { migrate: migrateBannerDetection } = require('./database/migrate-add-banner-detection');
 const healthRoutes = require('./routes/health.routes');
 const auditRoutes = require('./routes/audit.routes');
 const constants = require('./config/constants');
@@ -80,6 +81,7 @@ try {
   const db = getDatabase();
   migrateScoring(db);
   migrateMonitoring(db);
+  migrateBannerDetection(db);
 } catch (error) {
   console.error('⚠️  Migration warning:', error.message);
   console.log('   Continuing with server startup...');

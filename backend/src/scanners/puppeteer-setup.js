@@ -1,6 +1,12 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const constants = require('../config/constants');
 const { saveErrorScreenshot } = require('../utils/error-logger');
+
+// Apply stealth plugin — handles 15+ bot detection vectors automatically:
+// navigator.webdriver, chrome.app/csi/loadTimes, plugins, languages,
+// WebGL, canvas fingerprinting, iframe.contentWindow, etc.
+puppeteer.use(StealthPlugin());
 
 /**
  * Find Chromium executable on Railway/Nixpacks
@@ -65,7 +71,7 @@ function getSystemResolution() {
 
   try {
     // Linux: xrandr
-    const output = execSync('xrandr | grep "*" | head -n1', { encoding: 'utf8' });
+    const output = execSync('xrandr | grep "*" | head -n1', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
     const match = output.match(/(\d+)x(\d+)/);
     if (match) {
       return { width: parseInt(match[1]), height: parseInt(match[2]) };
@@ -74,7 +80,7 @@ function getSystemResolution() {
 
   try {
     // macOS: system_profiler
-    const output = execSync('system_profiler SPDisplaysDataType | grep Resolution', { encoding: 'utf8' });
+    const output = execSync('system_profiler SPDisplaysDataType | grep Resolution', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
     const match = output.match(/(\d+) x (\d+)/);
     if (match) {
       return { width: parseInt(match[1]), height: parseInt(match[2]) };
@@ -96,7 +102,7 @@ async function launchBrowser(customOptions = {}) {
     console.log(`   🖥️  Viewport: ${resolution.width}x${resolution.height}`);
 
     const launchOptions = {
-      headless: constants.PUPPETEER_HEADLESS,
+      headless: constants.PUPPETEER_HEADLESS ? 'new' : false, // 'new' headless mode — harder to detect than old headless
       protocolTimeout: customOptions.protocolTimeout || 10000, // Default 10s, override for consent simulation
       args: [
         '--no-sandbox',
@@ -105,6 +111,7 @@ async function launchBrowser(customOptions = {}) {
         '--disable-gpu',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-blink-features=AutomationControlled', // Prevent CMP bot detection via automation flags
         `--window-size=${resolution.width},${resolution.height}`
       ],
       defaultViewport: {
@@ -143,30 +150,13 @@ async function launchBrowser(customOptions = {}) {
 async function createPage(browser) {
   const page = await browser.newPage();
 
-  // Override Puppeteer detection markers BEFORE page loads
-  await page.evaluateOnNewDocument(() => {
-    // 1. Delete navigator.webdriver (primary Puppeteer flag)
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => false
-    });
+  // Stealth plugin (applied at browser level) handles:
+  // navigator.webdriver, chrome.app/csi/loadTimes, plugins, languages,
+  // WebGL, canvas fingerprinting, permissions API, etc.
 
-    // 2. Add chrome.runtime (advanced fingerprinting bypass)
-    window.chrome = {
-      runtime: {}
-    };
-
-    // 3. Fix permissions API (Puppeteer detection vector)
-    const originalQuery = window.navigator.permissions.query;
-    window.navigator.permissions.query = (parameters) => (
-      parameters.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission })
-        : originalQuery(parameters)
-    );
-  });
-
-  // Set user agent (real Chrome, no Bot identifier to avoid CMP detection)
+  // Set user agent (current Chrome version — outdated versions are a bot signal for CMPs)
   await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
   );
 
   // Set extra HTTP headers (real browser headers to avoid CMP bot detection)

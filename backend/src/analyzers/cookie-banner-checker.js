@@ -38,95 +38,520 @@ function findElementByTextHybrid(elements, keywords) {
 }
 
 /**
- * Wait for cookie banner to be visible (iframe-aware)
- * @param {Page} page - Puppeteer page
- * @param {number} timeout - Max wait time (default: 10000ms)
- * @returns {Promise<Object>} { visible, method, screenshot }
+ * Consent keyword corpus for anchor-based banner detection.
+ * Inspired by Consent Observatory's WordBoxGatherer (CHI 2025).
+ * Covers EU/EEA languages. Used to identify consent banners by content, not just selectors.
  */
-async function waitForBannerVisible(page, timeout = 10000) {
+const CONSENT_TRIGGERS = [
+  // International / English
+  'cookie', 'cookies', 'consent', 'gdpr', 'privacy', 'accept', 'agree',
+  // German
+  'datenschutz', 'akzeptieren', 'zustimmen',
+  // French
+  'confidentialité', 'accepter',
+  // Spanish
+  'privacidad', 'aceptar',
+  // Italian
+  'consenso', 'accetta',
+  // Portuguese
+  'consentimento', 'aceitar',
+  // Dutch
+  'accepteren', 'toestemming',
+  // Bulgarian
+  'бисквитки', 'бисквитките', 'поверителност', 'приемам', 'съгласие', 'съгласен',
+  // Polish
+  'plików', 'akceptuję',
+  // Czech
+  'souhlasím', 'souhlas',
+  // Romanian
+  'cookie-uri', 'consimțământ',
+  // Hungarian
+  'elfogadom', 'hozzájárulás', 'sütik',
+  // Swedish
+  'acceptera', 'kakor',
+  // Danish
+  'samtykke', 'acceptér',
+  // Finnish
+  'evästeitä', 'hyväksy',
+  // Croatian
+  'prihvaćam', 'kolačići',
+  // Slovak
+  'súhlasím',
+  // Slovenian
+  'piškotki', 'strinjam',
+  // Lithuanian
+  'slapukai', 'sutinku',
+  // Latvian
+  'sīkdatnes', 'piekrītu',
+  // Estonian
+  'küpsised', 'nõustun',
+  // Greek
+  'απορρήτου', 'αποδοχή', 'συμφωνώ'
+];
+
+/**
+ * CMP-specific selectors — Tier 1: Known CMP banner IDs/classes.
+ * These are highly specific and only match actual CMP banner containers.
+ * Run first in detection (Phase A) for maximum precision.
+ */
+const CMP_SELECTORS_SPECIFIC = [
+  '#cookiescript_injected', '#onetrust-banner-sdk', '#CybotCookiebotDialog',
+  '[data-testid="uc-privacy-banner"]', '#iubenda-cs-banner',
+  '.cc-window', '.cc-banner', '#cmplz-cookiebanner-container',
+  '#truste-consent-track', '#cookie-law-info-bar', '#gdpr-cookie-notice',
+  '#tarteaucitronRoot', '.borlabs-cookie', '#cmpbox', '#didomi-host',
+  '#axeptio_overlay', '#sp_message_container', '#qc-cmp2-ui',
+  '.cookie-permission--container', '.shopify-pc__banner',
+  '[class*="Cybot"]'
+];
+
+/**
+ * CMP-specific selectors — Tier 2: Fuzzy/broad patterns.
+ * These can match non-banner elements (footer links, nav items, privacy sections).
+ * Run AFTER anchor detection (Phase C), with additional overlay positioning validation.
+ */
+const CMP_SELECTORS_FUZZY = [
+  '[id*="cookie"]', '[class*="cookie"]',
+  '[id*="consent"]', '[class*="consent"]',
+  '[id*="cmp"]', '[class*="cmp"]',
+  '[id*="gdpr"]', '[class*="gdpr"]',
+  '[id*="privacy"]', '[class*="privacy"]',
+  '[role="dialog"]', '[role="alertdialog"]'
+];
+
+/**
+ * Wait for cookie banner to be visible using anchor-based detection.
+ *
+ * Two-phase approach inspired by Consent Observatory's WordBoxGatherer:
+ * Phase A: Find DOM elements with position:fixed or z-index > 10 (anchors),
+ *          then check if they contain consent keywords → high confidence match.
+ * Phase B: Fall back to CMP-specific selectors if anchor detection fails.
+ *
+ * Returns the matched banner CSS selector so checks can be scoped to it.
+ *
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time (default: 15000ms)
+ * @returns {Promise<Object>} { found, visible, selector, location, viewport, timeMs, method }
+ */
+async function waitForBannerVisible(page, timeout = 15000) {
   const startTime = Date.now();
 
-  while (Date.now() - startTime < timeout) {
-    const result = await page.evaluate(() => {
-      // Generic CMP patterns (CookieScript, OneTrust, Cookiebot, Usercentrics, CookieYes, Consentmo)
-      const selectors = [
-        '[id*="cookie"]', '[class*="cookie"]',
-        '[id*="consent"]', '[class*="consent"]',
-        '[id*="cmp"]', '[class*="cmp"]',
-        '[id*="onetrust"]', '[class*="onetrust"]',
-        '[class*="Cybot"]',
-        '[role="dialog"]', '[role="alertdialog"]'
-      ];
+  // Inject MutationObserver for early detection of late-injected banners.
+  // This catches CMP banners that appear between 500ms polling intervals.
+  try {
+    await page.evaluate((specificSelectors) => {
+      if (window.__bannerObserverHit !== undefined) return; // Already injected
+      window.__bannerObserverHit = null;
+      const observer = new MutationObserver(() => {
+        for (const sel of specificSelectors) {
+          try {
+            const el = document.querySelector(sel);
+            if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
+              window.__bannerObserverHit = { selector: sel, time: Date.now() };
+              observer.disconnect();
+              return;
+            }
+          } catch (e) {}
+        }
+      });
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
+      // Auto-disconnect after 20s to prevent memory leak
+      setTimeout(() => observer.disconnect(), 20000);
+    }, CMP_SELECTORS_SPECIFIC);
+  } catch (e) {
+    // Non-critical — observer injection may fail on about:blank or detached pages
+  }
 
-      // STEP 1: Search main document
-      for (const selector of selectors) {
+  while (Date.now() - startTime < timeout) {
+    // Fast path: check if MutationObserver already caught a banner injection
+    try {
+      const observerHit = await page.evaluate(() => window.__bannerObserverHit);
+      if (observerHit) {
+        const timeMs = Date.now() - startTime;
+        logger.info('banner-found', {
+          method: 'observer',
+          selector: observerHit.selector,
+          location: 'main',
+          timeMs,
+          observerTimeMs: observerHit.time
+        });
+        // Verify it's still visible and has buttons
+        const verified = await page.evaluate((sel, clickableQuery) => {
+          const el = document.querySelector(sel);
+          if (!el || el.offsetHeight === 0 || el.offsetWidth === 0) return null;
+          const buttons = el.querySelectorAll(clickableQuery);
+          return buttons.length > 0 ? { buttonCount: buttons.length } : null;
+        }, observerHit.selector, 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]');
+
+        if (verified) {
+          return {
+            found: true,
+            visible: true,
+            selector: observerHit.selector,
+            location: 'main',
+            viewport: 'desktop',
+            timeMs,
+            method: 'observer'
+          };
+        }
+      }
+    } catch (e) {}
+
+    const result = await page.evaluate((triggers, specificSelectors, fuzzySelectors) => {
+      const clickableQuery = 'button, a, [role="button"], input[type="button"], input[type="submit"], [onclick], span[tabindex], div[tabindex]';
+      const buttonOnlyQuery = 'button, [role="button"], input[type="button"], input[type="submit"]';
+      const diagnostics = []; // Collect anchor candidates for logging
+
+      // ── Visibility helper: checks opacity, visibility, display, dimensions ──
+      function isReallyVisible(el) {
+        if (!el || el.offsetHeight === 0 || el.offsetWidth === 0) return false;
         try {
-          const el = document.querySelector(selector);
-          if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-            const buttons = el.querySelectorAll('button, a, [role="button"]');
+          const style = getComputedStyle(el);
+          if (style.opacity === '0') return false;
+          if (style.visibility === 'hidden') return false;
+          if (style.display === 'none') return false;
+        } catch (e) {}
+        return true;
+      }
+
+      // ── Overlay visibility helper: visible AND positioned above page content ──
+      function isOverlayVisible(el) {
+        if (!isReallyVisible(el)) return false;
+        try {
+          const style = getComputedStyle(el);
+          const zIndex = parseInt(style.zIndex);
+          return style.position === 'fixed' || style.position === 'sticky' || (!isNaN(zIndex) && zIndex > 10);
+        } catch (e) {}
+        return false;
+      }
+
+      // ── Shadow DOM piercing helper: searches all shadow roots for a selector ──
+      function querySelectorDeep(sel) {
+        const result = document.querySelector(sel);
+        if (result) return result;
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) {
+              const found = el.shadowRoot.querySelector(sel);
+              if (found) return found;
+              const deep = walk(el.shadowRoot);
+              if (deep) return deep;
+            }
+          }
+          return null;
+        };
+        return walk(document);
+      }
+
+      // ──── PHASE A: Specific CMP selectors (highest precision, no false positives) ────
+      // Uses querySelectorDeep to pierce shadow DOM for CMP banners hosted in web components
+      for (const selector of specificSelectors) {
+        try {
+          const el = querySelectorDeep(selector);
+          if (isReallyVisible(el)) {
+            const buttons = el.querySelectorAll(clickableQuery);
             if (buttons.length > 0) {
-              return { visible: true, method: 'main_document', selector };
+              return { visible: true, method: 'selector', selector, buttonCount: buttons.length, diagnostics };
             }
           }
         } catch (e) {}
       }
 
-      // STEP 2: Search iframes (CookieScript, OneTrust)
+      // ──── PHASE B: Anchor-based detection (for unknown/unlisted CMPs) ────
+      function findAnchors(root) {
+        const anchors = [];
+        function recurse(el) {
+          if (!el || el === document.documentElement) return;
+          try {
+            const style = getComputedStyle(el);
+            const zIndex = parseInt(style.zIndex);
+            if (
+              (style.position === 'fixed' || style.position === 'sticky') ||
+              (!isNaN(zIndex) && zIndex > 10)
+            ) {
+              anchors.push(el);
+              return;
+            }
+          } catch (e) {}
+          for (const child of el.children) recurse(child);
+          if (el.shadowRoot) {
+            for (const child of el.shadowRoot.children) recurse(child);
+          }
+        }
+        recurse(root);
+        return anchors;
+      }
+
+      const anchors = findAnchors(document.body);
+
+      for (const anchor of anchors) {
+        const classAndId = (Array.from(anchor.classList).join(' ') + ' ' + (anchor.id || '')).toLowerCase();
+        const role = anchor.getAttribute('role') || '';
+        const tag = anchor.tagName;
+        const text = (anchor.textContent || '').toLowerCase();
+        const keywordMatch = triggers.find(t => text.includes(t)) || null;
+        const actualButtons = anchor.querySelectorAll(buttonOnlyQuery);
+        const linkCount = anchor.querySelectorAll('a').length;
+
+        // Filter 1: Must be truly visible (opacity, visibility, display)
+        if (!isReallyVisible(anchor)) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'hidden', selected: false });
+          continue;
+        }
+
+        // Filter 2: Skip navigation/header elements
+        const isNavigation = (
+          tag === 'NAV' || tag === 'HEADER' ||
+          role === 'navigation' ||
+          /\bnav(bar)?\b|\bheader\b|\bmenu\b|\bnavigation\b/.test(classAndId)
+        );
+        if (isNavigation) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'navigation-excluded', keywordMatch, buttonCount: actualButtons.length, linkCount, selected: false });
+          continue;
+        }
+
+        // Filter 3: Must contain consent keywords
+        if (!keywordMatch) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'no-consent-keyword', selected: false });
+          continue;
+        }
+
+        // Filter 4: Must have real buttons (not just nav links)
+        if (actualButtons.length === 0) {
+          diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'no-buttons-only-links', keywordMatch, linkCount, selected: false });
+          continue;
+        }
+
+        // Build selector
+        let selector = null;
+        if (anchor.id) {
+          selector = '#' + CSS.escape(anchor.id);
+        } else {
+          for (const cls of anchor.classList) {
+            if (document.querySelectorAll('.' + CSS.escape(cls)).length === 1) {
+              selector = '.' + CSS.escape(cls);
+              break;
+            }
+          }
+        }
+        if (!selector && anchor.getAttribute('role')) {
+          selector = `[role="${anchor.getAttribute('role')}"]`;
+        }
+
+        const allClickable = anchor.querySelectorAll(clickableQuery);
+        diagnostics.push({ tag, id: anchor.id || null, classes: classAndId.trim().substring(0, 60), reason: 'selected', keywordMatch, buttonCount: actualButtons.length, linkCount, textSnippet: text.substring(0, 80), selected: true });
+
+        return {
+          visible: true,
+          method: 'anchor',
+          selector,
+          anchorTag: tag,
+          buttonCount: allClickable.length,
+          keywordMatch,
+          textSnippet: text.substring(0, 100),
+          diagnostics
+        };
+      }
+
+      // ──── PHASE C: Fuzzy selectors (broad patterns, require overlay positioning + consent keywords) ────
+      for (const selector of fuzzySelectors) {
+        try {
+          const els = document.querySelectorAll(selector);
+          for (const el of els) {
+            // Fuzzy selectors require OVERLAY positioning (fixed/sticky/high z-index)
+            if (!isOverlayVisible(el)) continue;
+            // Must contain consent keywords to distinguish from unrelated elements
+            const elText = (el.textContent || '').toLowerCase();
+            const hasConsent = triggers.some(t => elText.includes(t));
+            if (!hasConsent) continue;
+            const buttons = el.querySelectorAll(clickableQuery);
+            if (buttons.length > 0) {
+              // Build selector for this element
+              let matchSelector = selector;
+              if (el.id) matchSelector = '#' + CSS.escape(el.id);
+              return { visible: true, method: 'fuzzy-selector', selector: matchSelector, buttonCount: buttons.length, diagnostics };
+            }
+          }
+        } catch (e) {}
+      }
+
+      // ──── PHASE D: Iframe search ────
       const iframes = document.querySelectorAll('iframe');
       for (const iframe of iframes) {
         try {
           const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (!iframeDoc) continue;
+          if (!iframeDoc || !iframeDoc.body || iframeDoc.body.children.length === 0) continue;
 
-          // ✅ CRITICAL: Verify iframe has loaded content (not empty)
-          const bodyHasContent = iframeDoc.body && iframeDoc.body.children.length > 0;
-          if (!bodyHasContent) continue; // Skip empty iframe
+          const text = (iframeDoc.body.textContent || '').toLowerCase();
+          const hasConsentKeyword = triggers.some(t => text.includes(t));
+          if (!hasConsentKeyword) continue;
 
-          for (const selector of selectors) {
-            const el = iframeDoc.querySelector(selector);
-            if (el && el.offsetHeight > 0 && el.offsetWidth > 0) {
-              const buttons = iframeDoc.querySelectorAll('button, a, [role="button"]');
-              if (buttons.length > 0) {
-                return {
-                  visible: true,
-                  method: 'iframe',
-                  selector,
-                  iframeSrc: iframe.src || 'about:blank',
-                  buttonCount: buttons.length
-                };
-              }
-            }
+          const buttons = iframeDoc.querySelectorAll(clickableQuery);
+          if (buttons.length > 0) {
+            return {
+              visible: true,
+              method: 'iframe',
+              selector: null,
+              iframeSrc: iframe.src || 'about:blank',
+              buttonCount: buttons.length,
+              diagnostics
+            };
           }
         } catch (e) {
-          // Cross-origin iframe - expected, skip
+          // Cross-origin iframe — expected, skip
         }
       }
 
-      return { visible: false };
-    });
+      return { visible: false, diagnostics };
+    }, CONSENT_TRIGGERS, CMP_SELECTORS_SPECIFIC, CMP_SELECTORS_FUZZY);
+
+    // Log anchor candidates evaluated (diagnostic — helps debug false positives)
+    if (result.diagnostics && result.diagnostics.length > 0) {
+      logger.debug('anchor-candidates-evaluated', { count: result.diagnostics.length, candidates: result.diagnostics });
+    }
+
+    // ──── PHASE E: Cross-origin iframe detection via Puppeteer frame API ────
+    // Phase D (inside page.evaluate) can only access same-origin iframes.
+    // This checks cross-origin CMP iframes (TrustArc, OneTrust, Didomi hosted).
+    if (!result.visible) {
+      try {
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          try {
+            const frameHasConsent = await frame.evaluate((triggers) => {
+              const text = (document.body?.textContent || '').toLowerCase();
+              const hasKeyword = triggers.some(t => text.includes(t));
+              if (!hasKeyword) return null;
+              const buttons = document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]');
+              if (buttons.length === 0) return null;
+              return { buttonCount: buttons.length };
+            }, CONSENT_TRIGGERS);
+
+            if (frameHasConsent) {
+              const timeMs = Date.now() - startTime;
+              logger.info('banner-found', {
+                method: 'cross-origin-iframe',
+                selector: null,
+                location: 'iframe',
+                timeMs,
+                buttonCount: frameHasConsent.buttonCount,
+                iframeSrc: frame.url()
+              });
+              return {
+                found: true,
+                visible: true,
+                selector: null,
+                location: 'iframe',
+                viewport: 'desktop',
+                timeMs,
+                method: 'iframe',
+                iframeSrc: frame.url()
+              };
+            }
+          } catch (e) {
+            // Cross-origin or detached frame — expected, skip
+          }
+        }
+      } catch (e) {
+        // page.frames() failed — non-critical
+      }
+    }
 
     if (result.visible) {
+      const timeMs = Date.now() - startTime;
+      const location = result.method === 'iframe' ? 'iframe' : 'main';
+
       logger.info('banner-found', {
         method: result.method,
         selector: result.selector,
+        location,
+        timeMs,
+        buttonCount: result.buttonCount,
+        keywordMatch: result.keywordMatch,
+        anchorTag: result.anchorTag,
         iframeSrc: result.method === 'iframe' ? result.iframeSrc : undefined,
-        buttonCount: result.method === 'iframe' ? result.buttonCount : undefined
+        textSnippet: result.textSnippet
       });
 
-      // Capture screenshot for evidence (optional, may fail)
       let screenshot = null;
       try {
         screenshot = await page.screenshot({ fullPage: false, type: 'png' });
       } catch (e) {}
 
-      return { visible: true, method: result.method, screenshot };
+      return {
+        found: true,
+        visible: true,
+        selector: result.selector || null,
+        location,
+        viewport: 'desktop',
+        timeMs,
+        method: result.method,
+        screenshot
+      };
     }
 
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  logger.warn('banner-wait-timeout', { timeoutMs: timeout });
-  return { visible: false };
+  const timeMs = Date.now() - startTime;
+  logger.warn('banner-wait-timeout', { timeoutMs: timeout, timeMs });
+  return {
+    found: false,
+    visible: false,
+    selector: null,
+    location: null,
+    viewport: 'desktop',
+    timeMs
+  };
+}
+
+/**
+ * Detect banner with mobile viewport retry
+ * If banner is not found at desktop viewport, resize to mobile (375x812) and retry.
+ * @param {Page} page - Puppeteer page
+ * @param {number} timeout - Max wait time per attempt (default: 15000ms)
+ * @param {Object} hints - Optional hints from earlier detection steps
+ * @param {number} hints.bannerAppearTime - If set, banner is known to exist (from Step 6.5)
+ * @returns {Promise<Object>} Structured banner detection status
+ */
+async function detectBannerWithRetry(page, timeout = 15000, hints = {}) {
+  // Optimize timeouts using hints from Step 6.5
+  let desktopTimeout = timeout;
+  let mobileTimeout = timeout;
+
+  if (hints.bannerAppearTime) {
+    // Banner is known to exist — use adaptive timeout based on when it appeared
+    desktopTimeout = Math.min(Math.max(hints.bannerAppearTime * 2, 8000), 15000);
+    mobileTimeout = 5000; // Short mobile timeout — banner was seen at desktop originally
+    logger.debug('banner-timeout-optimized', {
+      desktopTimeout,
+      mobileTimeout,
+      bannerAppearTime: hints.bannerAppearTime
+    });
+  }
+
+  // Try desktop viewport first
+  const desktopResult = await waitForBannerVisible(page, desktopTimeout);
+  if (desktopResult.found) return desktopResult;
+
+  // Retry with mobile viewport (only if desktop failed)
+  logger.info('banner-mobile-retry', { reason: 'Desktop detection failed, retrying at mobile viewport 375x812' });
+  const originalViewport = page.viewport();
+  await page.setViewport({ width: 375, height: 812 });
+  // Wait 2 seconds for responsive reflow
+  await new Promise(r => setTimeout(r, 2000));
+
+  const mobileResult = await waitForBannerVisible(page, mobileTimeout);
+  mobileResult.viewport = 'mobile';
+  // Store original viewport so caller can restore after checks complete
+  mobileResult.originalViewport = originalViewport || { width: 1280, height: 800 };
+
+  // DO NOT restore desktop viewport here — banner would disappear.
+  // analyzeCookieBanner() restores viewport AFTER all noyb checks complete.
+
+  return mobileResult;
 }
 
 /**
@@ -136,8 +561,10 @@ async function waitForBannerVisible(page, timeout = 10000) {
  * @param {Array} cookies - Optional cookies array for Type I check
  * @returns {Promise<Object>} Violations detected
  */
-async function analyzeCookieBanner(page, auditId = null, cookies = null) {
+async function analyzeCookieBanner(page, auditId = null, cookies = null, options = {}) {
   let debugSessionId = null;
+  let incognitoContext = null;
+  let analysisPage = page;
 
   try {
     logger.info('banner-analysis-start', { auditId, hasCookies: !!cookies });
@@ -148,14 +575,203 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       logger.info('banner-debug-enabled', { sessionId: debugSessionId });
     }
 
+    // ── CLEAN PIPELINE: Incognito context with fresh page load ──
+    // When browser + url are provided (main audit pipeline), create a fresh
+    // incognito context so CookieScript sees NO prior consent cookie on page load.
+    // This eliminates the race condition where CookieScript auto-dismisses the
+    // banner before we can analyze it.
+    if (options.browser && options.url) {
+      try {
+        logger.info('banner-incognito-start', { auditId, url: options.url });
+        const loadStart = Date.now();
+
+        incognitoContext = await (options.browser.createBrowserContext || options.browser.createIncognitoBrowserContext).call(options.browser);
+        analysisPage = await incognitoContext.newPage();
+        await analysisPage.setViewport({ width: 1920, height: 1080 });
+
+        await analysisPage.goto(options.url, { waitUntil: 'load', timeout: 30000 });
+
+        // Validate navigation succeeded
+        const currentUrl = analysisPage.url();
+        if (currentUrl === 'about:blank') {
+          throw new Error('Navigation failed - page is about:blank');
+        }
+
+        const loadTimeMs = Date.now() - loadStart;
+        logger.info('banner-incognito-loaded', { auditId, url: options.url, loadTimeMs });
+
+        if (options.bannerAppearTime) {
+          logger.info('banner-hint-available', { auditId, bannerAppearTimeMs: options.bannerAppearTime });
+        }
+      } catch (incognitoError) {
+        // Fallback to legacy flow if incognito fails
+        logger.warn('banner-incognito-fallback', {
+          auditId,
+          error: incognitoError.message,
+          reason: 'Falling back to legacy cookie-clearing flow'
+        });
+
+        // Clean up failed incognito context
+        if (incognitoContext) {
+          try { await incognitoContext.close(); } catch (e) {}
+          incognitoContext = null;
+        }
+        analysisPage = page;
+
+        // Legacy flow: clear cookies on existing page
+        try {
+          const consentCookiePatterns = ['CookieScriptConsent', 'cookieconsent_status',
+            'CookieConsent', 'OptanonConsent', 'eupubconsent', 'CookiebotConsent',
+            'didomi_token', 'iubenda_cs', 'cmplz_'];
+          const currentCookies = await page.cookies();
+          const consentCookies = currentCookies.filter(c =>
+            consentCookiePatterns.some(p => c.name.includes(p))
+          );
+          if (consentCookies.length > 0) {
+            await page.deleteCookie(...consentCookies);
+            logger.info('cleared-consent-cookies', { count: consentCookies.length, names: consentCookies.map(c => c.name) });
+          }
+        } catch (e) {
+          logger.warn('consent-cookie-clear-failed', { error: e.message });
+        }
+      }
+    } else {
+      // ── LEGACY FLOW: Used by consent-simulator-v1.js which has its own incognito context ──
+      try {
+        const consentCookiePatterns = ['CookieScriptConsent', 'cookieconsent_status',
+          'CookieConsent', 'OptanonConsent', 'eupubconsent', 'CookiebotConsent',
+          'didomi_token', 'iubenda_cs', 'cmplz_'];
+        const currentCookies = await page.cookies();
+        const consentCookies = currentCookies.filter(c =>
+          consentCookiePatterns.some(p => c.name.includes(p))
+        );
+        if (consentCookies.length > 0) {
+          await page.deleteCookie(...consentCookies);
+          logger.info('cleared-consent-cookies', { count: consentCookies.length, names: consentCookies.map(c => c.name) });
+        }
+      } catch (e) {
+        logger.warn('consent-cookie-clear-failed', { error: e.message });
+      }
+
+      // Simulate mouse movement to trigger lazy-loaded CMPs
+      try {
+        await analysisPage.mouse.move(100, 100, { steps: 5 });
+        await analysisPage.mouse.move(300, 300, { steps: 5 });
+      } catch (e) {
+        // Non-critical — some pages may not support mouse events
+      }
+    }
+
+    // Detect banner with mobile viewport retry
+    const hints = options.bannerAppearTime ? { bannerAppearTime: options.bannerAppearTime } : {};
+    const bannerDetectionStatus = await detectBannerWithRetry(analysisPage, 15000, hints);
+    logger.info('banner-detection-result', {
+      auditId,
+      found: bannerDetectionStatus.found,
+      viewport: bannerDetectionStatus.viewport,
+      selector: bannerDetectionStatus.selector,
+      location: bannerDetectionStatus.location,
+      timeMs: bannerDetectionStatus.timeMs
+    });
+
+    // Gate: If no banner detected at any viewport, skip all violation checks
+    if (!bannerDetectionStatus.found) {
+      logger.warn('banner-not-detected', {
+        auditId,
+        desktopViewport: 'not found',
+        mobileViewport: bannerDetectionStatus.viewport === 'mobile' ? 'not found' : 'not attempted'
+      });
+
+      // Clean up incognito context before early return
+      if (incognitoContext) {
+        try { await incognitoContext.close(); } catch (e) {}
+        logger.info('banner-incognito-closed', { auditId });
+      }
+
+      return {
+        bannerDetected: false,
+        bannerDetectionStatus,
+        violations: [],
+        passedChecks: [],
+        skippedChecks: [],
+        overallResult: {
+          finding: 'BANNER_NOT_DETECTED',
+          description: 'No cookie consent banner was detected at desktop or mobile viewports. This is a GDPR violation: no consent mechanism was presented to the user.',
+          severity: 'critical',
+          gdprArticles: ['Art. 6(1)(a)', 'Art. 7', 'ePrivacy Art. 5(3)']
+        },
+        totalChecks: noybViolations.violations.length,
+        passedCount: 0,
+        violationCount: 0,
+        skippedCount: noybViolations.violations.length,
+        compliancePercentage: 0,
+        checksRun: 0,
+        hasCriticalViolations: false,
+        debugSessionId: DEBUG_VIOLATIONS ? debugSessionId : null
+      };
+    }
+
     const violations = [];
     const passedChecks = [];
     const skippedChecks = [];
     const debugLogs = [];
 
+    // Add BANNER_MOBILE_ONLY finding if banner found only on mobile
+    if (bannerDetectionStatus.found && bannerDetectionStatus.viewport === 'mobile') {
+      violations.push({
+        id: 'BANNER_MOBILE_ONLY',
+        name: 'Banner renders only on mobile viewport',
+        severity: 'high',
+        description: 'Cookie consent banner renders only on mobile viewport. Desktop users are not presented with a consent mechanism.',
+        legal_basis: 'GDPR Art. 7, ePrivacy Art. 5(3)',
+        evidence: {
+          message: 'Banner detected at mobile viewport (375x812) but not at desktop viewport',
+          viewport: 'mobile',
+          selector: bannerDetectionStatus.selector,
+          location: bannerDetectionStatus.location
+        }
+      });
+      logger.warn('banner-mobile-only', { auditId, selector: bannerDetectionStatus.selector });
+    }
+
+    // === DIAGNOSTIC: Is the banner actually in the DOM when checks start? ===
+    const bannerDOMState = await analysisPage.evaluate((sel) => {
+      if (!sel) return { selector: null, inDOM: false, visible: false };
+      const el = document.querySelector(sel);
+      if (!el) return { selector: sel, inDOM: false, visible: false };
+      const rect = el.getBoundingClientRect();
+      return {
+        selector: sel,
+        inDOM: true,
+        isConnected: el.isConnected,
+        visible: rect.width > 0 && rect.height > 0,
+        dimensions: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
+        display: getComputedStyle(el).display,
+        visibility: getComputedStyle(el).visibility,
+        childCount: el.children.length
+      };
+    }, bannerDetectionStatus.selector);
+    logger.debug('noyb-banner-pre-check', { auditId, ...bannerDOMState });
+    if (!bannerDOMState.inDOM) {
+      logger.warn('noyb-banner-missing', { auditId, selector: bannerDOMState.selector, message: 'Banner NOT in DOM when NOYB checks start — all checks may auto-pass!' });
+    } else if (!bannerDOMState.visible) {
+      logger.warn('noyb-banner-hidden', { auditId, selector: bannerDOMState.selector, message: 'Banner in DOM but NOT visible (0x0 or display:none) — checks may search wrong scope' });
+    }
+
+    const checkDiagnostics = []; // Track scopedTo for each check
+
     // Check each violation type
     for (const violation of noybViolations.violations) {
-      const result = await checkViolation(page, violation, debugSessionId, cookies);
+      const result = await checkViolation(analysisPage, violation, debugSessionId, cookies, bannerDetectionStatus.selector);
+
+      // Track diagnostic: did this check actually scope to the banner?
+      checkDiagnostics.push({
+        id: violation.id,
+        detected: result.detected,
+        skipped: result.skipped || false,
+        scopedTo: result.evidence?.scopedTo || result.scopedTo || 'unknown',
+        hadContainer: result.evidence?.scopedTo !== 'document' && result.scopedTo !== 'document'
+      });
 
       if (result.skipped) {
         skippedChecks.push({
@@ -201,6 +817,47 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
       }
     }
 
+    // === DIAGNOSTIC SUMMARY: Which checks actually validated the banner? ===
+    const passedWithoutContainer = checkDiagnostics
+      .filter(d => !d.detected && !d.skipped && !d.hadContainer)
+      .map(d => d.id);
+    logger.debug('noyb-checks-summary', {
+      auditId,
+      bannerSelector: bannerDetectionStatus.selector,
+      bannerInDOM: bannerDOMState.inDOM,
+      bannerVisible: bannerDOMState.visible,
+      checksRun: checkDiagnostics.length,
+      passed: passedChecks.map(c => c.id),
+      failed: violations.map(v => v.id),
+      skipped: skippedChecks.map(c => c.id),
+      passedWithoutContainer
+    });
+    if (passedWithoutContainer.length > 0) {
+      logger.warn('noyb-rubber-stamp-warning', {
+        auditId,
+        message: `${passedWithoutContainer.length} checks PASSED without finding banner container — results may be unreliable`,
+        checks: passedWithoutContainer
+      });
+    }
+
+    // Restore desktop viewport if we switched to mobile for banner detection
+    if (bannerDetectionStatus.viewport === 'mobile' && bannerDetectionStatus.originalViewport) {
+      await analysisPage.setViewport(bannerDetectionStatus.originalViewport);
+      await new Promise(r => setTimeout(r, 500));
+      logger.info('viewport-restored', { viewport: bannerDetectionStatus.originalViewport });
+    }
+
+    // Clean up incognito context (fresh page no longer needed after checks complete)
+    if (incognitoContext) {
+      try {
+        await incognitoContext.close();
+        logger.info('banner-incognito-closed', { auditId });
+      } catch (e) {
+        logger.warn('banner-incognito-close-failed', { auditId, error: e.message });
+      }
+      incognitoContext = null;
+    }
+
     const totalChecks = noybViolations.violations.length;
     const passedCount = passedChecks.length;
     const violationCount = violations.length;
@@ -232,6 +889,8 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
     }
 
     return {
+      bannerDetected: bannerDetectionStatus.found,
+      bannerDetectionStatus,
       violations,
       passedChecks,
       skippedChecks,
@@ -245,6 +904,11 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
     };
   } catch (error) {
     logger.error('banner-analysis-failed', { error: '❌ ' + error.message, auditId, stack: error.stack });
+
+    // Clean up incognito context on error
+    if (incognitoContext) {
+      try { await incognitoContext.close(); } catch (e) {}
+    }
 
     // Log error if debug enabled
     if (DEBUG_VIOLATIONS && debugSessionId) {
@@ -266,37 +930,31 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null) {
  * @param {Array} cookies - Cookies array for Type I check (optional)
  * @returns {Promise<Object>} Detection result
  */
-async function checkViolation(page, violation, debugSessionId = null, cookies = null) {
+async function checkViolation(page, violation, debugSessionId = null, cookies = null, bannerSelector = null) {
   try {
     let result;
 
     switch (violation.id) {
       case 'type_a':
-        result = await checkNoRejectButton(page, violation, debugSessionId);
+        result = await checkNoRejectButton(page, violation, bannerSelector);
         break;
       case 'type_b':
-        result = await checkPreTickedBoxes(page, violation, debugSessionId);
+        result = await checkPreTickedBoxes(page, violation, bannerSelector);
         break;
       case 'type_c':
-        result = await checkDeceptiveLinkDesign(page, violation, debugSessionId);
+        result = await checkDeceptiveLinkDesign(page, violation, bannerSelector);
         break;
       case 'type_d':
-        result = await checkDeceptiveButtonColors(page, violation, debugSessionId);
+        result = await checkDeceptiveButtonColors(page, violation, bannerSelector);
         break;
       case 'type_e':
-        result = await checkDeceptiveButtonContrast(page, violation, debugSessionId);
+        result = await checkDeceptiveButtonContrast(page, violation, bannerSelector);
         break;
       case 'type_h':
         result = await checkLegitimateInterestForAds(page, violation, debugSessionId);
         break;
       case 'type_i':
-        // Type I (Misclassified Cookies) - DISABLED for now
-        result = {
-          detected: false,
-          skipped: true,
-          skipReason: 'Type I check disabled - requires CMP-specific category extraction',
-          evidence: null
-        };
+        result = checkMisclassifiedEssentialCookies(cookies, violation);
         break;
       case 'type_k':
         result = await checkDifficultConsentWithdrawal(page, violation, debugSessionId);
@@ -338,40 +996,23 @@ async function checkViolation(page, violation, debugSessionId = null, cookies = 
 /**
  * Type A: No Reject Button on First Layer
  */
-async function checkNoRejectButton(page, violation) {
+async function checkNoRejectButton(page, violation, bannerSelector = null) {
   try {
-    // STEP 1: Wait for cookie banner to be visible (universal approach)
-    const bannerResult = await waitForBannerVisible(page, 10000);
-
-    if (!bannerResult.visible) {
-      logger.warn('banner-not-visible', { check: 'Type-A' });
-    } else {
-      logger.info('banner-visible', { check: 'Type-A', method: bannerResult.method });
-    }
-
-    // STEP 2: Search for buttons in ALL contexts (main doc + iframes + shadow DOM)
-    const result = await page.evaluate((keywords) => {
+    // Search for buttons SCOPED to banner container (not entire page)
+    const result = await page.evaluate((keywords, selector) => {
+      const btnQuery = 'button, a, div[role="button"], span[role="button"]';
       const buttons = [];
 
-      // Context 1: Main document
-      buttons.push(...Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]')));
+      // Scope to banner container if selector is available
+      const container = selector ? document.querySelector(selector) : null;
+      const searchRoot = container || document;
 
-      // Context 2: All accessible iframes (same-origin only)
-      document.querySelectorAll('iframe').forEach(iframe => {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            buttons.push(...Array.from(iframeDoc.querySelectorAll('button, a, div[role="button"], span[role="button"]')));
-          }
-        } catch (e) {
-          // Cross-origin iframe, cannot access (expected for some cases)
-        }
-      });
+      buttons.push(...Array.from(searchRoot.querySelectorAll(btnQuery)));
 
-      // Context 3: Shadow DOM elements
-      document.querySelectorAll('*').forEach(el => {
+      // Pierce shadow DOM inside the search root
+      searchRoot.querySelectorAll('*').forEach(el => {
         if (el.shadowRoot) {
-          buttons.push(...Array.from(el.shadowRoot.querySelectorAll('button, a, div[role="button"], span[role="button"]')));
+          buttons.push(...Array.from(el.shadowRoot.querySelectorAll(btnQuery)));
         }
       });
 
@@ -396,7 +1037,7 @@ async function checkNoRejectButton(page, violation) {
       // Find reject button using multiple strategies
       let rejectButton = null;
 
-      // Strategy 1: CSS attribute/class selectors (expanded for better coverage)
+      // Strategy 1: CSS attribute/class selectors
       rejectButton = buttons.find(b =>
         b.getAttribute('data-action') === 'reject' ||
         b.getAttribute('data-action') === 'deny' ||
@@ -408,7 +1049,7 @@ async function checkNoRejectButton(page, violation) {
         b.className?.toLowerCase().includes('deny')
       );
 
-      // Strategy 2: Text content matching (multi-language, more flexible)
+      // Strategy 2: Text content matching (multi-language)
       if (!rejectButton) {
         rejectButton = buttons.find(b => {
           const text = b.textContent?.toLowerCase().trim() || '';
@@ -422,15 +1063,10 @@ async function checkNoRejectButton(page, violation) {
         acceptText: acceptButton?.textContent?.trim() || '',
         rejectText: rejectButton?.textContent?.trim() || '',
         totalButtonsFound: buttons.length,
-        contextsSearched: {
-          mainDoc: true,
-          iframes: document.querySelectorAll('iframe').length,
-          shadowDoms: Array.from(document.querySelectorAll('*')).filter(el => el.shadowRoot).length
-        }
+        scopedTo: container ? selector : 'document'
       };
-    }, BUTTON_KEYWORDS);
+    }, BUTTON_KEYWORDS, bannerSelector);
 
-    // DEBUG: Log button detection results
     logger.debug('button-detection-results', {
       check: 'Type-A',
       totalButtons: result.totalButtonsFound,
@@ -438,19 +1074,25 @@ async function checkNoRejectButton(page, violation) {
       acceptText: result.acceptText,
       hasReject: result.hasRejectButton,
       rejectText: result.rejectText,
-      iframes: result.contextsSearched.iframes,
-      shadowDoms: result.contextsSearched.shadowDoms
+      scopedTo: result.scopedTo
     });
+
+    if (result.scopedTo === 'document') {
+      logger.warn('noyb-type-a-no-container', { message: 'Type A: banner container NOT found, searched entire document instead' });
+    }
 
     // Violation detected if accept button exists but reject button doesn't
     const detected = result.hasAcceptButton && !result.hasRejectButton;
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Accept button found without equally prominent Reject button',
         acceptButton: result.acceptText,
-        rejectButton: result.rejectText || 'Not found'
+        rejectButton: result.rejectText || 'Not found',
+        scopedTo: result.scopedTo,
+        totalButtonsInBanner: result.totalButtonsFound
       } : null
     };
   } catch (error) {
@@ -467,10 +1109,18 @@ async function checkNoRejectButton(page, violation) {
 /**
  * Type B: Pre-ticked Boxes
  */
-async function checkPreTickedBoxes(page, violation) {
+async function checkPreTickedBoxes(page, violation, bannerSelector = null) {
   try {
-    const result = await page.evaluate(() => {
-      const checkedBoxes = Array.from(document.querySelectorAll('input[type="checkbox"]:checked'));
+    const result = await page.evaluate((selector) => {
+      const container = selector ? document.querySelector(selector) : null;
+      const searchRoot = container || document;
+
+      // Collect checkboxes including those inside shadow DOM
+      const allChecked = [...searchRoot.querySelectorAll('input[type="checkbox"]:checked')];
+      searchRoot.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) allChecked.push(...el.shadowRoot.querySelectorAll('input[type="checkbox"]:checked'));
+      });
+      const checkedBoxes = allChecked;
 
       // Filter out essential checkboxes (typically have 'necessary', 'essential', 'required' in label/name)
       const nonEssentialChecked = checkedBoxes.filter(cb => {
@@ -489,6 +1139,7 @@ async function checkPreTickedBoxes(page, violation) {
       });
 
       return {
+        scopedTo: container ? selector : 'document',
         totalChecked: checkedBoxes.length,
         nonEssentialChecked: nonEssentialChecked.length,
         details: nonEssentialChecked.map(cb => ({
@@ -497,12 +1148,19 @@ async function checkPreTickedBoxes(page, violation) {
           label: cb.labels?.[0]?.textContent.trim()
         }))
       };
+    }, bannerSelector);
+
+    logger.debug('noyb-type-b-result', {
+      scopedTo: result.scopedTo,
+      totalChecked: result.totalChecked,
+      nonEssentialChecked: result.nonEssentialChecked
     });
 
     const detected = result.nonEssentialChecked > 0;
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: `${result.nonEssentialChecked} non-essential checkboxes are pre-ticked`,
         preTickedBoxes: result.details
@@ -522,11 +1180,17 @@ async function checkPreTickedBoxes(page, violation) {
 /**
  * Type C: Deceptive Link Design
  */
-async function checkDeceptiveLinkDesign(page, violation) {
+async function checkDeceptiveLinkDesign(page, violation, bannerSelector = null) {
   try {
-    const result = await page.evaluate((keywords) => {
-      // Find accept button using multi-language text matching
-      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+    const result = await page.evaluate((keywords, selector) => {
+      const container = selector ? document.querySelector(selector) : null;
+      const searchRoot = container || document;
+      const btnQuery = 'button, a, div[role="button"]';
+      // Find buttons including shadow DOM
+      const buttons = [...searchRoot.querySelectorAll(btnQuery)];
+      searchRoot.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) buttons.push(...el.shadowRoot.querySelectorAll(btnQuery));
+      });
       const acceptButton = buttons.find(b => {
         const text = b.textContent.toLowerCase().trim();
         return keywords.accept.some(keyword => text.includes(keyword.toLowerCase()));
@@ -540,8 +1204,10 @@ async function checkDeceptiveLinkDesign(page, violation) {
                tagName === 'a'; // It's a link, not a button
       });
 
+      const scopedTo = container ? selector : 'document';
+
       if (!acceptButton || !settingsLink) {
-        return { mismatch: false };
+        return { mismatch: false, scopedTo, acceptFound: !!acceptButton, settingsFound: !!settingsLink };
       }
 
       const acceptStyle = window.getComputedStyle(acceptButton);
@@ -553,13 +1219,22 @@ async function checkDeceptiveLinkDesign(page, violation) {
 
       return {
         mismatch: true,
+        scopedTo,
         acceptTagName: acceptButton.tagName,
         settingsTagName: settingsLink.tagName,
         fontSizeRatio: fontSizeRatio,
         acceptFontSize: acceptFontSize,
         settingsFontSize: settingsFontSize
       };
-    }, BUTTON_KEYWORDS);
+    }, BUTTON_KEYWORDS, bannerSelector);
+
+    logger.debug('noyb-type-c-result', {
+      scopedTo: result.scopedTo,
+      acceptFound: result.acceptFound !== undefined ? result.acceptFound : true,
+      settingsFound: result.settingsFound !== undefined ? result.settingsFound : true,
+      mismatch: result.mismatch,
+      fontSizeRatio: result.fontSizeRatio
+    });
 
     // Violation if settings is a link while accept is a button AND font size ratio < 0.7
     const detected = result.mismatch &&
@@ -569,11 +1244,13 @@ async function checkDeceptiveLinkDesign(page, violation) {
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Settings link is significantly smaller than Accept button',
         acceptElement: result.acceptTagName,
         settingsElement: result.settingsTagName,
-        fontSizeRatio: result.fontSizeRatio.toFixed(2)
+        fontSizeRatio: result.fontSizeRatio.toFixed(2),
+        scopedTo: result.scopedTo
       } : null
     };
   } catch (error) {
@@ -591,10 +1268,16 @@ async function checkDeceptiveLinkDesign(page, violation) {
  * Type D: Deceptive Button Colors
  * Uses HSL-based color similarity detection instead of exact matching
  */
-async function checkDeceptiveButtonColors(page, violation) {
+async function checkDeceptiveButtonColors(page, violation, bannerSelector = null) {
   try {
     const result = await page.evaluate((data) => {
-      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+      const container = data.selector ? document.querySelector(data.selector) : null;
+      const searchRoot = container || document;
+      const btnQuery = 'button, a, div[role="button"]';
+      const buttons = [...searchRoot.querySelectorAll(btnQuery)];
+      searchRoot.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) buttons.push(...el.shadowRoot.querySelectorAll(btnQuery));
+      });
 
       const acceptButton = buttons.find(b => {
         const text = b.textContent.toLowerCase().trim();
@@ -606,8 +1289,10 @@ async function checkDeceptiveButtonColors(page, violation) {
         return data.keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
+      const scopedTo = container ? data.selector : 'document';
+
       if (!acceptButton || !rejectButton) {
-        return { hasButtons: false };
+        return { hasButtons: false, scopedTo, acceptFound: !!acceptButton, rejectFound: !!rejectButton };
       }
 
       const acceptBg = window.getComputedStyle(acceptButton).backgroundColor;
@@ -651,15 +1336,27 @@ async function checkDeceptiveButtonColors(page, violation) {
 
       return {
         hasButtons: true,
+        scopedTo,
         acceptColor: rgbToHex(acceptBg),
         rejectColor: rgbToHex(rejectBg),
         acceptHsl: rgbToHsl(acceptBg),
         rejectHsl: rgbToHsl(rejectBg)
       };
-    }, { keywords: BUTTON_KEYWORDS, colorPatterns: violation.color_patterns });
+    }, { keywords: BUTTON_KEYWORDS, colorPatterns: violation.color_patterns, selector: bannerSelector });
+
+    logger.debug('noyb-type-d-result', {
+      hasButtons: result.hasButtons,
+      scopedTo: result.scopedTo,
+      acceptFound: result.acceptFound,
+      rejectFound: result.rejectFound,
+      acceptColor: result.acceptColor,
+      rejectColor: result.rejectColor,
+      acceptHsl: result.acceptHsl,
+      rejectHsl: result.rejectHsl
+    });
 
     if (!result.hasButtons) {
-      return { detected: false, evidence: null };
+      return { detected: false, scopedTo: result.scopedTo, evidence: null };
     }
 
     // Strategy 1: Exact match (legacy)
@@ -703,13 +1400,15 @@ async function checkDeceptiveButtonColors(page, violation) {
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Accept button uses attractive color while Reject is muted',
         acceptColor: result.acceptColor,
         rejectColor: result.rejectColor,
         acceptHsl: result.acceptHsl,
         rejectHsl: result.rejectHsl,
-        detectionMethod: exactMatch ? 'exact_match' : 'hsl_similarity'
+        detectionMethod: exactMatch ? 'exact_match' : 'hsl_similarity',
+        scopedTo: result.scopedTo
       } : null
     };
   } catch (error) {
@@ -726,10 +1425,16 @@ async function checkDeceptiveButtonColors(page, violation) {
 /**
  * Type E: Deceptive Button Contrast
  */
-async function checkDeceptiveButtonContrast(page, violation) {
+async function checkDeceptiveButtonContrast(page, violation, bannerSelector = null) {
   try {
-    const result = await page.evaluate((keywords) => {
-      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+    const result = await page.evaluate((keywords, selector) => {
+      const container = selector ? document.querySelector(selector) : null;
+      const searchRoot = container || document;
+      const btnQuery = 'button, a, div[role="button"]';
+      const buttons = [...searchRoot.querySelectorAll(btnQuery)];
+      searchRoot.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) buttons.push(...el.shadowRoot.querySelectorAll(btnQuery));
+      });
 
       const acceptButton = buttons.find(b => {
         const text = b.textContent.toLowerCase().trim();
@@ -741,8 +1446,10 @@ async function checkDeceptiveButtonContrast(page, violation) {
         return keywords.reject.some(keyword => text.includes(keyword.toLowerCase()));
       });
 
+      const scopedTo = container ? selector : 'document';
+
       if (!acceptButton || !rejectButton) {
-        return { hasButtons: false };
+        return { hasButtons: false, scopedTo, acceptFound: !!acceptButton, rejectFound: !!rejectButton };
       }
 
       const acceptStyle = window.getComputedStyle(acceptButton);
@@ -767,16 +1474,28 @@ async function checkDeceptiveButtonContrast(page, violation) {
 
       return {
         hasButtons: true,
+        scopedTo,
         sizeRatio,
         weightDiff,
         paddingRatio,
         acceptSize: acceptArea,
         rejectSize: rejectArea
       };
-    }, BUTTON_KEYWORDS);
+    }, BUTTON_KEYWORDS, bannerSelector);
+
+    logger.debug('noyb-type-e-result', {
+      hasButtons: result.hasButtons,
+      scopedTo: result.scopedTo,
+      acceptFound: result.acceptFound,
+      rejectFound: result.rejectFound,
+      sizeRatio: result.sizeRatio,
+      weightDiff: result.weightDiff,
+      acceptSize: result.acceptSize,
+      rejectSize: result.rejectSize
+    });
 
     if (!result.hasButtons) {
-      return { detected: false, evidence: null };
+      return { detected: false, scopedTo: result.scopedTo, evidence: null };
     }
 
     // Check if accept is significantly more prominent
@@ -788,6 +1507,7 @@ async function checkDeceptiveButtonContrast(page, violation) {
 
     return {
       detected,
+      scopedTo: result.scopedTo,
       evidence: detected ? {
         message: 'Accept button is significantly more prominent than Reject',
         sizeRatio: result.sizeRatio.toFixed(2),
@@ -841,9 +1561,17 @@ async function checkLegitimateInterestForAds(page, violation) {
       const hasAdContext = adKeywords.some(keyword => bodyText.includes(keyword));
 
       return {
-        found: hasLegitimateInterest && hasAdContext
+        found: hasLegitimateInterest && hasAdContext,
+        hasLegitimateInterest,
+        hasAdContext
       };
     }, violation.text_patterns);
+
+    logger.debug('noyb-type-h-result', {
+      found: result.found,
+      hasLegitimateInterest: result.hasLegitimateInterest,
+      hasAdContext: result.hasAdContext
+    });
 
     return {
       detected: result.found,
@@ -889,6 +1617,13 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
       return violation.tracking_patterns_forbidden.some(pattern =>
         cookie.name.includes(pattern)
       );
+    });
+
+    logger.debug('noyb-type-i-result', {
+      cookiesProvided: cookies.length,
+      essentialCount: essentialCookies.length,
+      misclassifiedCount: misclassified.length,
+      misclassifiedNames: misclassified.map(c => c.name)
     });
 
     const detected = misclassified.length > 0;
@@ -967,6 +1702,12 @@ async function checkDifficultConsentWithdrawal(page, violation) {
         settingsLinksCount: settingsLinks.length
       };
     }, BUTTON_KEYWORDS);
+
+    logger.debug('noyb-type-k-result', {
+      hasWithdrawalMechanism: result.hasWithdrawalMechanism,
+      foundElements: result.foundElements,
+      settingsLinksCount: result.settingsLinksCount
+    });
 
     const detected = !result.hasWithdrawalMechanism;
 
