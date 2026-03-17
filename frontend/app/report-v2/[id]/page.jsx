@@ -152,11 +152,7 @@ export default function ReportV2Page() {
             <CookieInventory cookies={reportData.cookies} />
             <ComplianceMatrix complianceMatrix={reportData.complianceMatrix} />
             <GdprPrecedents gdprPrecedents={reportData.gdprPrecedents} />
-            <Roadmap
-              executive={reportData.executive}
-              consentChecklist={reportData.consentChecklist}
-              riskBreakdown={reportData.riskBreakdown}
-            />
+            <Roadmap roadmap={reportData.roadmap} />
             <NextSteps
               meta={reportData.meta}
               executive={reportData.executive}

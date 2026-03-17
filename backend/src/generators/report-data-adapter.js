@@ -91,6 +91,7 @@ async function adaptAuditDataToReportModel(auditUid) {
     consentModeV2: buildConsentModeV2Section(consentModeStatus),
     humanAssisted: buildHumanAssistedSection(consentSimulation),
     riskBreakdown: buildRiskBreakdown(scanResults, bannerViolations, privacyAnalysis, cookieComparisonData, cookies),
+    roadmap: buildRoadmap(scanResults, bannerViolations, consentModeStatus, privacyAnalysis, cookieComparisonData, cookies),
     bannerDetection,
     gdprPrecedents
   };
@@ -649,6 +650,115 @@ function buildConsentModeV2Section(consentModeStatus) {
     issues: consentModeStatus.issues || [],
     ga4Present: consentModeStatus.ga4Present || false
   };
+}
+
+function buildRoadmap(scanResults, bannerViolations, consentModeStatus, privacyAnalysis, cookieComparison, cookies) {
+  const phases = [];
+
+  // --- Phase 1: Critical — Stop Unlawful Tracking ---
+  const phase1Deliverables = [];
+  const hasPreConsentTracking = !!scanResults?.tracking_before_consent;
+  const consentModeNonCompliant = consentModeStatus && !consentModeStatus.compliant;
+
+  if (hasPreConsentTracking) {
+    phase1Deliverables.push('Disable all non-essential scripts pending consent');
+    phase1Deliverables.push('Configure tag manager to respect consent signals before firing');
+    phase1Deliverables.push('Verify no tracking requests fire before user interaction');
+  }
+  if (consentModeNonCompliant) {
+    phase1Deliverables.push("Set Google Consent Mode V2 defaults to 'denied'");
+  }
+
+  if (phase1Deliverables.length > 0) {
+    phases.push({
+      id: 'phase-1',
+      label: 'Phase 1',
+      timeline: '0 - 48 hours',
+      title: 'Stop Unlawful Tracking',
+      severity: 'critical',
+      deliverables: phase1Deliverables,
+      effort: 'Medium',
+      owner: 'Development Team + CMP Administrator'
+    });
+  }
+
+  // --- Phase 2: High — Banner & Consent UX Compliance ---
+  const phase2Deliverables = [];
+
+  // Helper: check if a specific violation ID was detected
+  const hasViolation = (id) => bannerViolations.some(v =>
+    v.id === id || v.id === id.replace('type_', '') ||
+    (id === 'type_a' && (v.id === 'reject_button' || v.description?.toLowerCase().includes('reject')))
+  );
+
+  if (hasViolation('type_a')) {
+    phase2Deliverables.push("Add 'Reject All' button with equal visual prominence on first layer");
+  }
+  if (hasViolation('type_b')) {
+    phase2Deliverables.push('Implement granular category controls (Necessary, Analytics, Marketing, Social)');
+  }
+  // type_c, type_d, type_e — deceptive design
+  if (hasViolation('type_c') || hasViolation('type_d') || hasViolation('type_e')) {
+    phase2Deliverables.push('Redesign consent buttons with equal visual prominence (size, colour, weight)');
+  }
+  if (hasViolation('type_k')) {
+    phase2Deliverables.push('Ensure consent withdrawal is accessible from every page');
+  }
+
+  if (phase2Deliverables.length > 0) {
+    phases.push({
+      id: 'phase-2',
+      label: 'Phase 2',
+      timeline: '0 - 14 days',
+      title: 'Banner & Consent UX Compliance',
+      severity: 'high',
+      deliverables: phase2Deliverables,
+      effort: 'Small-Medium',
+      owner: 'UX Designer + CMP Administrator'
+    });
+  }
+
+  // --- Phase 3: Medium — Policy, Declaration & Governance ---
+  const phase3Deliverables = [];
+  const privacyScore = privacyAnalysis?.percentage || 0;
+  const undeclaredCount = cookieComparison?.undeclared?.length || 0;
+  const hasThirdPartyCookies = cookies.some(c =>
+    c.category?.toLowerCase().includes('advertising') ||
+    c.category?.toLowerCase().includes('social media') ||
+    c.category?.toLowerCase().includes('marketing')
+  );
+
+  if (privacyScore < 50) {
+    phase3Deliverables.push('Draft GDPR-compliant privacy policy covering all Art. 12-14 requirements');
+  }
+  if (undeclaredCount > 0) {
+    phase3Deliverables.push(`Publish comprehensive cookie policy with all ${cookies.length} cookies declared`);
+  }
+  if (hasThirdPartyCookies) {
+    phase3Deliverables.push('Establish Data Processing Agreements (DPAs) with all third-party vendors');
+  }
+  if (hasViolation('type_i') || hasViolation('type_h')) {
+    phase3Deliverables.push('Review cookie categorisation and legal basis claims for accuracy');
+  }
+  // Governance best practice — only if there are other Phase 3 items
+  if (phase3Deliverables.length > 0) {
+    phase3Deliverables.push('Implement quarterly cookie audit and compliance review process');
+  }
+
+  if (phase3Deliverables.length > 0) {
+    phases.push({
+      id: 'phase-3',
+      label: 'Phase 3',
+      timeline: '0 - 30 days',
+      title: 'Policy, Declaration & Governance',
+      severity: 'medium',
+      deliverables: phase3Deliverables,
+      effort: 'Medium-Large',
+      owner: 'Legal / DPO + Development Team'
+    });
+  }
+
+  return phases;
 }
 
 // ============================================================

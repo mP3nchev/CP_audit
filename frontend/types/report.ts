@@ -151,6 +151,17 @@ export interface GdprPrecedentsData {
   cases: GdprPrecedent[];
 }
 
+export interface RoadmapPhase {
+  id: string;
+  label: string;
+  timeline: string;
+  title: string;
+  severity: 'critical' | 'high' | 'medium';
+  deliverables: string[];
+  effort: string;
+  owner: string;
+}
+
 export interface ReportData {
   meta: ReportMeta;
   executive: ExecutiveSummary;
@@ -163,6 +174,7 @@ export interface ReportData {
   privacyPolicyAnalysis: PrivacyPolicyAnalysis;
   consentChecklist: ConsentChecklistItem[];
   riskBreakdown: RiskBreakdownItem[];
+  roadmap: RoadmapPhase[];
   consentModeV2?: ConsentModeV2Data | null;
   gdprPrecedents?: GdprPrecedentsData | null;
 }
