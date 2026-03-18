@@ -600,6 +600,19 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null, options
         const loadTimeMs = Date.now() - loadStart;
         logger.info('banner-incognito-loaded', { auditId, url: options.url, loadTimeMs });
 
+        // Extract cookies from incognito page for type_i banner context merge
+        try {
+          const incognitoCookies = await analysisPage.cookies();
+          const bannerCookies = incognitoCookies.map(c => ({ ...c, originContext: 'banner' }));
+          if (options.context) {
+            options.context.bannerContextCookies = bannerCookies;
+          }
+          logger.debug('banner-incognito-cookies', { auditId, count: bannerCookies.length });
+        } catch (cookieErr) {
+          logger.warn('banner-incognito-cookies-failed', { auditId, error: cookieErr.message });
+          // bannerContextCookies stays [] — type_i falls back to main context cookies only
+        }
+
         if (options.bannerAppearTime) {
           logger.info('banner-hint-available', { auditId, bannerAppearTimeMs: options.bannerAppearTime });
         }
@@ -760,9 +773,31 @@ async function analyzeCookieBanner(page, auditId = null, cookies = null, options
 
     const checkDiagnostics = []; // Track scopedTo for each check
 
+    // Build merged cookie list for type_i check: main context + banner incognito context.
+    // Main context cookies take priority on name collision (deduplication by name).
+    const mainCookiesWithContext = (cookies || []).map(c => ({ ...c, originContext: 'main' }));
+    const bannerContextCookies = (options.context && options.context.bannerContextCookies) || [];
+    const namesSeen = new Set(mainCookiesWithContext.map(c => c.name));
+    const uniqueBannerCookies = bannerContextCookies.filter(c => {
+      if (namesSeen.has(c.name)) {
+        logger.debug('type-i-cookie-dedup', { auditId, cookieName: c.name, kept: 'main' });
+        return false;
+      }
+      return true;
+    });
+    const mergedCookies = [...mainCookiesWithContext, ...uniqueBannerCookies];
+    if (bannerContextCookies.length > 0) {
+      logger.debug('type-i-merged-cookies', {
+        auditId,
+        mainCount: mainCookiesWithContext.length,
+        bannerCount: bannerContextCookies.length,
+        mergedCount: mergedCookies.length
+      });
+    }
+
     // Check each violation type
     for (const violation of noybViolations.violations) {
-      const result = await checkViolation(analysisPage, violation, debugSessionId, cookies, bannerDetectionStatus.selector);
+      const result = await checkViolation(analysisPage, violation, debugSessionId, mergedCookies, bannerDetectionStatus.selector);
 
       // Track diagnostic: did this check actually scope to the banner?
       checkDiagnostics.push({
@@ -1623,7 +1658,8 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
       cookiesProvided: cookies.length,
       essentialCount: essentialCookies.length,
       misclassifiedCount: misclassified.length,
-      misclassifiedNames: misclassified.map(c => c.name)
+      misclassifiedNames: misclassified.map(c => c.name),
+      cookieOrigins: cookies.map(c => ({ name: c.name, originContext: c.originContext || 'main' }))
     });
 
     const detected = misclassified.length > 0;
@@ -1636,7 +1672,8 @@ function checkMisclassifiedEssentialCookies(cookies, violation) {
           name: c.name,
           domain: c.domain,
           markedAs: 'essential',
-          actualType: 'tracking'
+          actualType: 'tracking',
+          originContext: c.originContext || 'main'
         }))
       } : null
     };
