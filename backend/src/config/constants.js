@@ -14,6 +14,7 @@ module.exports = {
   CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
   CLAUDE_MODEL: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
   CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
+  CLAUDE_MAX_TOKENS: parseInt(process.env.CLAUDE_MAX_TOKENS) || 8192,
   DAILY_BUDGET_USD: parseFloat(process.env.DAILY_BUDGET_USD) || 10.0,
 
   // Vercel Blob
