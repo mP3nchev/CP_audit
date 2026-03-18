@@ -76,6 +76,10 @@ function createScanContext(auditId, auditUid, websiteUrl) {
     // Screenshots (currently disabled)
     screenshotUrls: {},
 
+    // Banner incognito cookie context (set by stepBannerCompliance / analyzeCookieBanner)
+    // Used to merge with main context cookies for type_i misclassification check
+    bannerContextCookies: [],
+
     // Consent simulation (set by stepConsentSimulation)
     consentSimulation: null,
 

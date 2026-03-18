@@ -153,7 +153,8 @@ const stepBannerCompliance = {
     context.bannerAnalysis = await analyzeCookieBanner(context.page, context.auditId, context.cookies, {
       browser: context.browser,
       url: context.websiteUrl,
-      bannerAppearTime: context.bannerAppearTime
+      bannerAppearTime: context.bannerAppearTime,
+      context: context  // allows analyzeCookieBanner to populate context.bannerContextCookies
     });
 
     logger.debug('scan-progress', { message: `Violations found: ${context.bannerAnalysis.violationCount}/${context.bannerAnalysis.totalChecks}`, auditId: context.auditId });
