@@ -184,6 +184,85 @@ function loadPrivacyPolicyPrompt() {
 }
 
 /**
+ * Generic Claude API call — used by solution-generator, cookie-policy-comparator, etc.
+ *
+ * @param {string} prompt - User prompt text
+ * @param {Object} options
+ * @param {number} [options.maxTokens]   - Max output tokens (default: CLAUDE_MAX_TOKENS)
+ * @param {number} [options.temperature] - Sampling temperature (0–1, default: 0.3)
+ * @param {boolean} [options.useCache]   - Enable prompt caching (default: false)
+ * @returns {Promise<{ text: string, usage: Object }>}
+ */
+async function analyzeWithClaude(prompt, options = {}) {
+  const maxTokens = options.maxTokens || constants.CLAUDE_MAX_TOKENS;
+  const temperature = options.temperature !== undefined ? options.temperature : 0.3;
+  const startTime = Date.now();
+
+  if (!constants.CLAUDE_API_KEY || constants.CLAUDE_API_KEY === 'sk-ant-api03-placeholder') {
+    throw new Error('Claude API key not configured. Please set CLAUDE_API_KEY in .env');
+  }
+
+  const messageContent = options.useCache
+    ? [{ type: 'text', text: prompt, cache_control: { type: 'ephemeral' } }]
+    : prompt;
+
+  const requestBody = {
+    model: constants.CLAUDE_MODEL,
+    max_tokens: maxTokens,
+    temperature,
+    messages: [{ role: 'user', content: messageContent }]
+  };
+
+  const response = await claudeBreaker.call(() =>
+    fetchWithTimeout(constants.CLAUDE_API_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': constants.CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    }, CLAUDE_TIMEOUT_MS)
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logger.error('api-request-failed', { status: response.status, error: errorText.substring(0, 200) });
+    throw new Error(`Claude API error: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const usage = data.usage || {};
+  const cost = calculateCost(usage);
+
+  trackSpending(cost);
+
+  logger.info('api-usage', {
+    maxTokens,
+    inputTokens: usage.input_tokens || 0,
+    outputTokens: usage.output_tokens || 0,
+    cost: cost.toFixed(4),
+    durationMs: Date.now() - startTime
+  });
+
+  const text = data.content?.[0]?.text;
+  if (!text) {
+    throw new Error('No response text from Claude API');
+  }
+
+  return {
+    text,
+    usage: {
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      cached_tokens: usage.cache_read_input_tokens || 0,
+      cost_usd: cost,
+      model: constants.CLAUDE_MODEL
+    }
+  };
+}
+
+/**
  * Analyze privacy policy using Claude API
  * @param {string} policyText - Privacy policy text to analyze
  * @param {Object} options - Analysis options
@@ -209,7 +288,7 @@ async function analyzePrivacyPolicy(policyText, options = {}) {
     // Prepare the request
     const requestBody = {
       model: constants.CLAUDE_MODEL,
-      max_tokens: 4096,
+      max_tokens: constants.CLAUDE_MAX_TOKENS,
       system: [
         {
           type: 'text',
@@ -421,6 +500,7 @@ function buildFallbackAnalysis() {
 }
 
 module.exports = {
+  analyzeWithClaude,
   analyzePrivacyPolicy,
   testClaudeConnection,
   calculateCost,
