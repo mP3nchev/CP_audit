@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { getDatabase } = require('../database/db');
-const { scanWebsite } = require('../scanners/website-scanner');
+const { fork } = require('child_process');
+const path = require('path');
 const { analyzePolicyFile, getPolicyAnalysis } = require('../analyzers/privacy-policy-analyzer');
 const { uploadMultipleFiles } = require('../middleware/file-upload');
 const { compareCookiePolicy, saveComparison } = require('../analyzers/cookie-policy-comparator');
@@ -16,6 +17,54 @@ const crypto = require('crypto');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('audit');
+
+/**
+ * Fork an isolated child process to run the scan.
+ * If Puppeteer crashes or the worker is OOM-killed, only the child dies —
+ * the Express server remains alive.
+ *
+ * @param {string} websiteUrl
+ * @param {number} auditId   - numeric DB row id
+ * @param {string} auditUid  - human-readable uid for logging
+ */
+function forkScanWorker(websiteUrl, auditId, auditUid) {
+  const workerPath = path.join(__dirname, '../scanners/scan-worker.js');
+  const worker = fork(workerPath, [], { env: process.env });
+
+  worker.send({ websiteUrl, auditId, auditUid });
+
+  worker.on('message', (msg) => {
+    if (msg.type === 'paused') {
+      logger.info('audit-paused', { auditId: auditUid, reason: 'awaiting_manual_consent' });
+    } else if (msg.type === 'completed') {
+      logger.info('audit-completed', { auditId: auditUid });
+    } else if (msg.type === 'failed') {
+      logger.error('audit-failed', { auditId: auditUid, error: msg.error });
+    }
+  });
+
+  // Handle worker killed by signal (OOM, uncaught crash)
+  worker.on('exit', (code, signal) => {
+    if (signal) {
+      logger.error('worker-killed', { auditId: auditUid, signal, pid: worker.pid });
+      try {
+        const db = getDatabase();
+        db.prepare(`
+          UPDATE audits
+          SET status = ?,
+              error_message = ?
+          WHERE id = ?
+        `).run(constants.AUDIT_STATUS.FAILED, `Worker killed: ${signal}`, auditId);
+      } catch (dbError) {
+        logger.error('worker-db-update-failed', { error: dbError.message });
+      }
+    }
+  });
+
+  worker.on('error', (error) => {
+    logger.error('worker-spawn-error', { auditId: auditUid, error: error.message });
+  });
+}
 
 /**
  * Start a new audit
@@ -80,42 +129,8 @@ router.post('/api/audit/start', async (req, res) => {
 
     logger.info('audit-created', { auditId: auditUid, dbId: auditId, url: website_url });
 
-    // Start scanning asynchronously
-    scanWebsite(website_url, auditId, auditUid)
-      .then(scanResults => {
-        // Check if audit was paused (waiting for manual consent)
-        if (scanResults && scanResults.paused) {
-          logger.info('audit-paused', { auditId: auditUid, reason: 'awaiting_manual_consent' });
-          return; // Don't mark as completed
-        }
-
-        // Update audit status to completed
-        const updateStmt = db.prepare(`
-          UPDATE audits
-          SET status = ?,
-              completed_at = datetime('now')
-          WHERE id = ?
-        `);
-        updateStmt.run(constants.AUDIT_STATUS.COMPLETED, auditId);
-
-        logger.info('audit-completed', { auditId: auditUid });
-      })
-      .catch(error => {
-        // Update audit status to failed
-        const updateStmt = db.prepare(`
-          UPDATE audits
-          SET status = ?,
-              error_message = ?
-          WHERE id = ?
-        `);
-        updateStmt.run(
-          constants.AUDIT_STATUS.FAILED,
-          error.message,
-          auditId
-        );
-
-        logger.error('audit-failed', { auditId: auditUid, error: error.message });
-      });
+    // Start scanning in an isolated child process
+    forkScanWorker(website_url, auditId, auditUid);
 
     // Return immediate response
     res.status(200).json({
